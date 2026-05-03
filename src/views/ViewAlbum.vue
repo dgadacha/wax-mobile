@@ -435,9 +435,17 @@ function goBack() {
                   <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
                 </button>
               </div>
+              <img
+                v-if="coverUrl"
+                class="track-thumb"
+                :src="coverUrl"
+                :alt="entry.title"
+                loading="lazy"
+              />
               <div
+                v-else
                 class="track-thumb album-other-thumb"
-                :style="{ backgroundImage: coverUrl ? `url('${coverUrl}')` : heroBg }"
+                :style="{ backgroundImage: heroBg }"
               ></div>
               <div class="track-meta">
                 <div class="track-title">{{ entry.title }}</div>
