@@ -7,12 +7,17 @@ import { useStreamsStore } from '@/stores/streams';
 import { fmtDuration, gradientFromString, parseTrackTitle, normalizeArtistKey } from '@/lib/format';
 import { api } from '@/lib/api';
 import { t } from '@/lib/i18n';
+import { showToast } from '@/lib/toast';
+import { promptModal } from '@/lib/modal';
+import { usePlaylistsStore } from '@/stores/playlists';
+import { ICON_HEART, ICON_HEART_OUTLINE, ICON_QUEUE_ADD } from '@/lib/icons';
 import TrackRow from '@/components/TrackRow.vue';
 
 const view = useViewStore();
 const lib = useLibraryStore();
 const player = usePlayerStore();
 const streams = useStreamsStore();
+const playlists = usePlaylistsStore();
 
 // Resolve the album from the active selectedAlbumKey. We pull the full
 // list of tracks fresh from `lib.tracks` so renames / additions reflect
@@ -47,9 +52,14 @@ const heroBg = computed(() =>
 // Cover URL: prefer Cover Art Archive (release-group), fall back to the
 // first library track's YouTube thumbnail when CAA 404s. We track a
 // `coverFailed` flag flipped by @error so the fallback kicks in only
-// when the primary src actually fails.
+// when the primary src actually fails. `coverLoading` drives the
+// shimmer overlay until the chosen src actually loads.
 const coverFailed = ref(false);
-watch(() => view.selectedAlbumKey, () => { coverFailed.value = false; });
+const coverLoading = ref(true);
+watch(() => view.selectedAlbumKey, () => {
+  coverFailed.value = false;
+  coverLoading.value = true;
+});
 const coverUrl = computed(() => {
   if (!album.value) return '';
   if (album.value.releaseGroupId && !coverFailed.value) {
@@ -57,6 +67,7 @@ const coverUrl = computed(() => {
   }
   return album.value.libTracks[0]?.thumbnail || '';
 });
+watch(coverUrl, () => { coverLoading.value = true; });
 
 // ──────────────────────────────────────────────────────────────────
 // "Other tracks from this album" — load the full MB tracklist for the
@@ -144,6 +155,135 @@ function playAll() {
   player.playFromList(libQueueIds.value[0], libQueueIds.value);
 }
 
+// Resolve a missing track to a real YouTube ID via /api/search and
+// return the top result. Result is memoized on the entry so subsequent
+// actions on the same row reuse it.
+async function resolveYoutubeFor(entry) {
+  if (entry._yt) return entry._yt;
+  const { results } = await api(
+    `/api/search?q=${encodeURIComponent(`${album.value.artist} ${entry.title}`)}`,
+  );
+  const top = (results || [])[0];
+  if (!top) return null;
+  entry._yt = top;
+  return top;
+}
+
+// Heart action on a missing track — resolves YT, adds to library
+// (liked: true), then patches the entry locally so the row can re-
+// render (the next album.libTracks pass will hoist it into the
+// "In your library" section automatically since lib.tracks updated).
+const heartingIdx = ref(new Set());
+async function heartMissing(entry, idx) {
+  if (heartingIdx.value.has(idx)) return;
+  heartingIdx.value = new Set([...heartingIdx.value, idx]);
+  try {
+    const yt = await resolveYoutubeFor(entry);
+    if (!yt) {
+      showToast(t('toast.no_match'), 'error');
+      return;
+    }
+    await lib.add(
+      {
+        id: yt.id, ytId: yt.id, title: yt.title, uploader: yt.uploader || '',
+        duration: yt.duration, thumbnail: yt.thumbnail,
+        url: `https://www.youtube.com/watch?v=${yt.id}`,
+      },
+      { liked: true, silent: false },
+    );
+  } finally {
+    const next = new Set(heartingIdx.value);
+    next.delete(idx);
+    heartingIdx.value = next;
+  }
+}
+
+// Add a missing track to the player queue — same resolve + add to
+// streams pattern, then call player.addToQueue.
+async function queueMissing(entry, idx) {
+  if (heartingIdx.value.has(idx)) return; // reuse the spinner state
+  heartingIdx.value = new Set([...heartingIdx.value, idx]);
+  try {
+    const yt = await resolveYoutubeFor(entry);
+    if (!yt) {
+      showToast(t('toast.no_match'), 'error');
+      return;
+    }
+    const streamId = `stream-${yt.id}`;
+    if (!streams.get(streamId)) {
+      streams.set(streamId, {
+        id: streamId, title: yt.title, uploader: yt.uploader || '',
+        duration: yt.duration, thumbnail: yt.thumbnail,
+        file: `/api/stream/${yt.id}`, ytId: yt.id, isStream: true,
+      });
+    }
+    player.addToQueue(streamId);
+  } finally {
+    const next = new Set(heartingIdx.value);
+    next.delete(idx);
+    heartingIdx.value = next;
+  }
+}
+
+// Save the entire album as a new playlist. Resolves YouTube IDs for
+// every missing track in series (rate-limited at the server's yt-dlp
+// semaphore), adds them to the library silently, then bulk-attaches
+// every track id (lib + freshly added) to a new playlist named after
+// the album. Switches to the playlist on success.
+const savingAsPlaylist = ref(false);
+const saveProgress = ref({ done: 0, total: 0 });
+async function saveAsPlaylist() {
+  if (!album.value || savingAsPlaylist.value) return;
+  const name = await promptModal({
+    title: t('album.save_as_playlist_title'),
+    defaultValue: album.value.name,
+    confirmLabel: t('common.create'),
+  });
+  if (!name) return;
+  savingAsPlaylist.value = true;
+  saveProgress.value = { done: 0, total: otherTracks.value.length };
+  try {
+    // Step 1 — resolve + add every missing track. Sequential so the
+    // server semaphore handles parallelism; UI shows a counter.
+    const newLibIds = [];
+    for (let i = 0; i < otherTracks.value.length; i++) {
+      const entry = otherTracks.value[i];
+      try {
+        const yt = await resolveYoutubeFor(entry);
+        if (yt) {
+          const added = await lib.add(
+            {
+              id: yt.id, ytId: yt.id, title: yt.title, uploader: yt.uploader || '',
+              duration: yt.duration, thumbnail: yt.thumbnail,
+              url: `https://www.youtube.com/watch?v=${yt.id}`,
+            },
+            { liked: false, silent: true },
+          );
+          if (added && added.id) newLibIds.push(added.id);
+        }
+      } catch {}
+      saveProgress.value = { done: i + 1, total: otherTracks.value.length };
+    }
+    // Step 2 — create the playlist with name + bulk-attach the union
+    // of (existing library tracks for this album) + (newly added).
+    const allIds = [...album.value.libTracks.map((tr) => tr.id), ...newLibIds];
+    const { playlist } = await api('/api/playlists', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    playlists.items.push(playlist);
+    if (allIds.length > 0) {
+      await playlists.addTracksBulk(playlist.id, allIds);
+    }
+    showToast(t('album.save_as_playlist_done', { name }), 'success');
+    view.switchTo('playlist', playlist.id);
+  } catch (e) {
+    showToast(e.message || t('common.error'), 'error');
+  } finally {
+    savingAsPlaylist.value = false;
+  }
+}
+
 function goBack() {
   view.back();
 }
@@ -164,14 +304,16 @@ function goBack() {
           </svg>
         </button>
         <div class="hero-content hero-content--with-avatar">
-          <img
-            v-if="coverUrl"
-            class="hero-cover"
-            :src="coverUrl"
-            :alt="album.name"
-            loading="lazy"
-            @error="coverFailed = true"
-          />
+          <div v-if="coverUrl" class="hero-cover-wrap" :class="{ 'cover-loading': coverLoading }">
+            <img
+              class="hero-cover"
+              :src="coverUrl"
+              :alt="album.name"
+              loading="lazy"
+              @error="coverFailed = true; coverLoading = false"
+              @load="coverLoading = false"
+            />
+          </div>
           <div class="hero-text">
             <span class="eyebrow">{{ t('album.eyebrow') }}</span>
             <h1>{{ album.name }}</h1>
@@ -189,6 +331,18 @@ function goBack() {
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>
+          </button>
+          <button
+            class="btn-ghost"
+            :disabled="savingAsPlaylist"
+            :title="t('album.save_as_playlist')"
+            @click="saveAsPlaylist"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span v-if="!savingAsPlaylist">{{ t('album.save_as_playlist') }}</span>
+            <span v-else>{{ t('album.saving', { done: saveProgress.done, total: saveProgress.total }) }}</span>
           </button>
         </div>
         <h3 v-if="otherTracks.length > 0 || tracklistLoading" class="section-heading">{{ t('album.in_library') }}</h3>
@@ -247,7 +401,22 @@ function goBack() {
               <span class="track-album track-album-empty"></span>
               <span class="track-offline-indicator empty"></span>
               <span class="track-duration">{{ entry.length ? fmtDuration(entry.length / 1000) : '—' }}</span>
-              <span class="track-actions"></span>
+              <div class="track-actions">
+                <button
+                  class="icon-btn like-btn"
+                  :disabled="heartingIdx.has(i)"
+                  :title="t('player.add_to_favorites')"
+                  @click.stop="heartMissing(entry, i)"
+                  v-html="ICON_HEART_OUTLINE"
+                ></button>
+                <button
+                  class="icon-btn queue-add-btn"
+                  :disabled="heartingIdx.has(i)"
+                  :title="t('track.add_queue')"
+                  @click.stop="queueMissing(entry, i)"
+                  v-html="ICON_QUEUE_ADD"
+                ></button>
+              </div>
             </li>
           </ul>
           <p v-else-if="tracklistError" class="empty-state">

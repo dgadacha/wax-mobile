@@ -23,6 +23,18 @@ function markCaaFailed(key) {
   caaFailed.value = next;
 }
 
+// Shimmer overlay flag per album. We track the set of *loaded* keys
+// (default empty) and treat anything not in it as still-loading. New
+// albums that arrive via SSE start out as loading naturally.
+const loaded = ref(new Set());
+function isLoading(album) { return !loaded.value.has(album.key); }
+function markLoaded(key) {
+  if (loaded.value.has(key)) return;
+  const next = new Set(loaded.value);
+  next.add(key);
+  loaded.value = next;
+}
+
 function caaUrl(album) {
   if (album.releaseGroupId && !caaFailed.value.has(album.key)) {
     return `/api/album-cover/${album.releaseGroupId}`;
@@ -83,7 +95,10 @@ function onCaaError(album) {
         >
           <div
             class="album-cover"
-            :class="{ 'album-cover-grid': !caaUrl(album) && fallbackCovers(album).length === 4 }"
+            :class="{
+              'album-cover-grid': !caaUrl(album) && fallbackCovers(album).length === 4,
+              'cover-loading': isLoading(album),
+            }"
             :style="{ backgroundImage: gradientFromString(album.name) }"
           >
             <!-- CAA cover (full image) when available. -->
@@ -93,6 +108,7 @@ function onCaaError(album) {
               :alt="album.name"
               loading="lazy"
               @error="onCaaError(album)"
+              @load="markLoaded(album.key)"
             />
             <!-- Fallback: 2x2 mosaic of library track thumbs when CAA
                  missed and we have 2+ tracks. Single thumb when 1. -->
@@ -103,6 +119,7 @@ function onCaaError(album) {
                 :src="c"
                 :alt="album.name"
                 loading="lazy"
+                @load="markLoaded(album.key)"
               />
             </template>
             <img
@@ -110,6 +127,7 @@ function onCaaError(album) {
               :src="fallbackCovers(album)[0]"
               :alt="album.name"
               loading="lazy"
+              @load="markLoaded(album.key)"
             />
           </div>
           <div class="album-meta">
