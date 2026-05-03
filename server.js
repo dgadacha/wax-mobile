@@ -1449,6 +1449,15 @@ app.get('/api/album-progress', (req, res) => {
   });
 });
 
+// Manual trigger — same logic as autoBackfillOnStartup, exposed as an
+// endpoint so the user can re-run the scan from the UI without
+// restarting the dev server. Returns immediately with the queue count;
+// progress is visible via SSE on /api/album-progress.
+app.post('/api/library/rescan-albums', (req, res) => {
+  const queued = autoBackfillOnStartup();
+  res.json({ queued });
+});
+
 // Auto-backfill at startup — schedule a lookup for every library track
 // that's either missing the `album` field outright OR has an album but
 // no `albumReleaseId` (older entries written before that field shipped;
@@ -1472,6 +1481,7 @@ function autoBackfillOnStartup() {
   if (triggered > 0) {
     console.log(`[album] queued ${triggered} library track(s) for MusicBrainz lookup`);
   }
+  return triggered;
 }
 
 app.post('/api/library/:trackId/download', (req, res) => {

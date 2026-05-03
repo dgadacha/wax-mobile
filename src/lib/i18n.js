@@ -156,6 +156,11 @@ const messages = {
     'album.in_library': 'In your library',
     'album.other_tracks': 'Other tracks from this album',
     'album.tracklist_error': "Couldn't load the album tracklist.",
+    'settings.albums_rescan_blurb': 'Re-fetch album metadata for tracks added before this feature shipped.',
+    'settings.albums_rescan': 'Re-scan',
+    'settings.albums_rescan_running': 'Scanning…',
+    'settings.albums_rescan_done': (n) => `Queued ${n} track${n === 1 ? '' : 's'} for lookup. Watch the album info populate.`,
+    'settings.albums_rescan_error': 'Re-scan failed — make sure the dev server has been restarted.',
 
     // Settings — tabs
     'settings.title': 'Settings',
@@ -459,6 +464,11 @@ const messages = {
     'album.in_library': 'Dans ta bibliothèque',
     'album.other_tracks': 'Autres pistes de cet album',
     'album.tracklist_error': "Impossible de charger la liste des pistes.",
+    'settings.albums_rescan_blurb': "Relance la récupération des métadonnées d'album pour les pistes ajoutées avant cette feature.",
+    'settings.albums_rescan': 'Re-scanner',
+    'settings.albums_rescan_running': 'Scan en cours…',
+    'settings.albums_rescan_done': (n) => `${n} piste${n === 1 ? '' : 's'} en queue. Les infos d'album vont se remplir progressivement.`,
+    'settings.albums_rescan_error': "Échec — vérifie que tu as bien redémarré npm run dev.",
 
     // Settings — tabs
     'settings.title': 'Paramètres',

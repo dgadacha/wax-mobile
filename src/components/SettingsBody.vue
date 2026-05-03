@@ -170,6 +170,24 @@ const orphanCount = computed(() => {
   const playlistTrackIds = new Set(pls.items.flatMap((pl) => pl.trackIds));
   return lib.tracks.filter((t) => t.liked === false && !playlistTrackIds.has(t.id)).length;
 });
+const rescanning = ref(false);
+async function rescanAlbums() {
+  rescanning.value = true;
+  try {
+    const res = await fetch('/api/library/rescan-albums', { method: 'POST' });
+    if (!res.ok) {
+      showToast(t('settings.albums_rescan_error'), 'error');
+      return;
+    }
+    const data = await res.json();
+    showToast(t('settings.albums_rescan_done', data.queued || 0), 'success');
+  } catch {
+    showToast(t('settings.albums_rescan_error'), 'error');
+  } finally {
+    rescanning.value = false;
+  }
+}
+
 const purging = ref(false);
 async function purge() {
   purging.value = true;
@@ -374,6 +392,17 @@ async function purge() {
             @click="purge"
           >
             {{ purging ? t('settings.library.cleaning') : t('settings.library.clean') }}
+          </button>
+        </div>
+        <div class="settings-clean-row" style="margin-top: 12px">
+          <span class="settings-orphan-count">{{ t('settings.albums_rescan_blurb') }}</span>
+          <button
+            type="button"
+            class="settings-clean-btn"
+            :disabled="rescanning"
+            @click="rescanAlbums"
+          >
+            {{ rescanning ? t('settings.albums_rescan_running') : t('settings.albums_rescan') }}
           </button>
         </div>
       </div>
