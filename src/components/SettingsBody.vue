@@ -428,10 +428,16 @@ pollBackfill();
             {{ t('settings.albums_run') }}
           </button>
         </div>
-        <div v-if="backfillState.running" class="settings-progress-row" style="margin-top: 12px">
-          <div class="settings-progress" role="progressbar" :aria-valuenow="Math.round((backfillState.done / Math.max(1, backfillState.total)) * 100)">
-            <div class="settings-progress-fill" :style="{ width: `${(backfillState.done / Math.max(1, backfillState.total)) * 100}%` }"></div>
+        <div v-if="backfillState.running || backfillState.total > 0" class="settings-progress">
+          <div class="progress-bar">
+            <div
+              class="progress-fill"
+              :style="{ width: `${Math.min(100, (backfillState.done / Math.max(1, backfillState.total)) * 100)}%` }"
+            ></div>
           </div>
+          <span class="settings-progress-label">
+            {{ Math.round((backfillState.done / Math.max(1, backfillState.total)) * 100) }}%
+          </span>
         </div>
       </div>
 
