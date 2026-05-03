@@ -1385,7 +1385,7 @@ app.post('/api/library/add', (req, res) => {
   // hits short-circuit, so this is cheap when the library is mostly
   // resolved and meaningful when it isn't.
   scheduleAlbumBackfill(track);
-  setImmediate(() => autoBackfillOnStartup());
+  scheduleAutoBackfill();
 });
 
 // SSE listeners for live album-resolved events. The client subscribes
@@ -1406,6 +1406,11 @@ function broadcastAlbumEvent(payload) {
 // library on success, finds the track by id, and only persists if it's
 // still there. `onComplete` fires after every attempt (hit or miss) so
 // the rescan endpoint can drive a progress bar.
+//
+// Skip-write optimization: when the lookup result matches what's
+// already on the track (cache-hit case where we re-process tracks
+// during a debounced rescan), we don't re-write library.json or
+// broadcast — saves disk I/O + saves the client from no-op patches.
 function scheduleAlbumBackfill(track, onComplete) {
   const parsed = parseTrackTitle(track.title, track.uploader);
   if (!parsed.artist || !parsed.song) {
@@ -1418,24 +1423,48 @@ function scheduleAlbumBackfill(track, onComplete) {
         const fresh = readJson(LIBRARY_FILE);
         const idx = fresh.findIndex((t) => t.id === track.id);
         if (idx !== -1) {
-          fresh[idx].album = album.album;
-          fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
-          fresh[idx].albumReleaseId = album.releaseId || null;
-          fresh[idx].albumReleaseDate = album.releaseDate || null;
-          saveLibrary(fresh);
-          broadcastAlbumEvent({
-            type: 'album',
-            trackId: track.id,
-            album: album.album,
-            albumReleaseGroupId: album.releaseGroupId || null,
-            albumReleaseId: album.releaseId || null,
-            albumReleaseDate: album.releaseDate || null,
-          });
+          const cur = fresh[idx];
+          const newRgId = album.releaseGroupId || null;
+          const newRId = album.releaseId || null;
+          const newDate = album.releaseDate || null;
+          const unchanged =
+            cur.album === album.album &&
+            (cur.albumReleaseGroupId || null) === newRgId &&
+            (cur.albumReleaseId || null) === newRId &&
+            (cur.albumReleaseDate || null) === newDate;
+          if (!unchanged) {
+            cur.album = album.album;
+            cur.albumReleaseGroupId = newRgId;
+            cur.albumReleaseId = newRId;
+            cur.albumReleaseDate = newDate;
+            saveLibrary(fresh);
+            broadcastAlbumEvent({
+              type: 'album',
+              trackId: track.id,
+              album: album.album,
+              albumReleaseGroupId: newRgId,
+              albumReleaseId: newRId,
+              albumReleaseDate: newDate,
+            });
+          }
         }
       }
       if (onComplete) onComplete();
     })
     .catch(() => { if (onComplete) onComplete(); });
+}
+
+// Trailing-edge debounce around autoBackfillOnStartup so multiple
+// engagement events in the same window (e.g. a bulk drag-drop of 20
+// tracks into a playlist) coalesce into one library walk instead of
+// firing 20 of them.
+let backfillDebounceTimer = null;
+function scheduleAutoBackfill() {
+  if (backfillDebounceTimer) return; // a tick is already queued
+  backfillDebounceTimer = setTimeout(() => {
+    backfillDebounceTimer = null;
+    autoBackfillOnStartup();
+  }, 2000);
 }
 
 // SSE endpoint — clients subscribe once on app mount and stay connected
@@ -1588,7 +1617,7 @@ app.patch('/api/library/:id', (req, res) => {
   // with this" signal — re-trigger the album scan so anything still
   // missing metadata gets another shot. Cheap (cache-hit dominated).
   if (req.body?.liked === true && !wasLiked) {
-    setImmediate(() => autoBackfillOnStartup());
+    scheduleAutoBackfill();
   }
 });
 
@@ -1677,7 +1706,7 @@ app.post('/api/playlists/:id/tracks', (req, res) => {
   res.json({ playlist: pl });
   // Adding to a playlist is a "user cares about this" signal — give
   // any still-pending album lookups another shot.
-  setImmediate(() => autoBackfillOnStartup());
+  scheduleAutoBackfill();
 });
 
 app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
@@ -1697,7 +1726,7 @@ app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
   }
   savePlaylists(pls);
   res.json({ playlist: pl, added });
-  if (added > 0) setImmediate(() => autoBackfillOnStartup());
+  if (added > 0) scheduleAutoBackfill();
 });
 
 app.delete('/api/playlists/:plId/tracks/:trackId', (req, res) => {

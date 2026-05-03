@@ -380,20 +380,48 @@ export const useLibraryStore = defineStore('library', {
     // album column on TrackRow, the sidebar Albums entry, and ViewAlbum
     // all update without a full library refetch. Reconnects on error
     // because EventSource silently fails on macOS sleep / network blips.
+    //
+    // Performance: incoming album events are coalesced via
+    // requestAnimationFrame. During the boot-time backfill the server
+    // can fire ~50 events/sec, each of which triggers Vue reactivity
+    // (lib.albums getter, sidebar mosaics, TrackRow album columns).
+    // Batching them into one frame's worth of mutations cuts the
+    // re-render storm to one flush per frame (~60 Hz max).
     _listenAlbumProgress() {
       if (this._albumEs) return;
       const es = new EventSource('/api/album-progress');
       this._albumEs = es;
-      es.onmessage = (event) => {
-        let data;
-        try { data = JSON.parse(event.data); } catch { return; }
-        if (data.type === 'album' && data.trackId) {
-          const track = this.findById(data.trackId);
-          if (!track) return;
+      const pendingAlbums = new Map(); // trackId -> latest payload
+      let flushScheduled = false;
+      const flush = () => {
+        flushScheduled = false;
+        for (const [trackId, data] of pendingAlbums) {
+          const track = this.findById(trackId);
+          if (!track) continue;
           track.album = data.album;
           track.albumReleaseGroupId = data.albumReleaseGroupId || null;
           track.albumReleaseId = data.albumReleaseId || null;
           track.albumReleaseDate = data.albumReleaseDate || null;
+        }
+        pendingAlbums.clear();
+      };
+      const scheduleFlush = () => {
+        if (flushScheduled) return;
+        flushScheduled = true;
+        if (typeof requestAnimationFrame !== 'undefined') {
+          requestAnimationFrame(flush);
+        } else {
+          setTimeout(flush, 16);
+        }
+      };
+      es.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        if (data.type === 'album' && data.trackId) {
+          // Latest event wins per trackId — multiple album events for
+          // the same track within a frame collapse to one mutation.
+          pendingAlbums.set(data.trackId, data);
+          scheduleFlush();
         } else if (data.type === 'rescan') {
           this.albumRescan = {
             running: !!data.running,
