@@ -206,6 +206,7 @@ function togglePlaylistTrack(id) { search.togglePlaylistTrack(id); }
           <span class="skeleton-block skel-num"></span>
           <span class="skeleton-block skel-thumb"></span>
           <span class="skeleton-block skel-title"></span>
+          <span class="skeleton-block skel-album"></span>
           <span class="skeleton-block skel-indicator"></span>
           <span class="skeleton-block skel-duration"></span>
           <span class="skeleton-block skel-actions"></span>

@@ -1334,13 +1334,35 @@ input:focus, input:focus-visible { outline: none; }
 }
 .track {
   display: grid;
-  grid-template-columns: 32px 48px 1fr 20px auto auto;
+  grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px auto auto;
   gap: 12px;
   align-items: center;
   padding: 6px 16px;
   border-radius: 4px;
   transition: background 0.1s ease;
   position: relative;
+}
+/* Album column: hidden by default if no track in the list has album info,
+   but the grid column is always reserved so alignment stays consistent.
+   Per-cell empty state is just an invisible span. */
+.track-album {
+  font-size: 0.85rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.track-album:hover { color: var(--accent); text-decoration: underline; }
+.track-album-empty { color: transparent; pointer-events: none; }
+/* Below 1100px the album column starts cramping the layout — collapse it. */
+@media (max-width: 1100px) {
+  .track {
+    grid-template-columns: 32px 48px minmax(0, 1fr) 20px auto auto;
+  }
+  .track-album { display: none; }
+  .track-skeleton .skel-album { display: none; }
 }
 
 /* Search loading: shimmer skeleton rows with the same .track grid. */
@@ -1361,6 +1383,7 @@ input:focus, input:focus-visible { outline: none; }
 .skel-num { height: 14px; width: 16px; justify-self: center; }
 .skel-thumb { height: 40px; width: 40px; border-radius: 4px; }
 .skel-title { height: 14px; width: 55%; }
+.skel-album { height: 12px; width: 80%; }
 .skel-indicator { height: 16px; width: 16px; border-radius: 50%; }
 .skel-duration { height: 12px; width: 36px; }
 .skel-actions { height: 28px; width: 144px; border-radius: 14px; }

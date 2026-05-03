@@ -72,6 +72,20 @@ function openArtistView(e) {
   view.switchTo('artist', parsedArtist.value);
 }
 
+// Album column — clickable when present, opens ViewAlbum. Key matches
+// the lib.albums getter (releaseGroupId when MB resolved one, otherwise
+// a synthetic `normalizedArtist::albumName`).
+const albumKey = computed(() => {
+  if (!props.track.album) return null;
+  return props.track.albumReleaseGroupId
+    || `${normalizeArtistKey(parsedArtist.value)}::${props.track.album}`;
+});
+function openAlbumView(e) {
+  e.stopPropagation();
+  if (!albumKey.value) return;
+  view.switchTo('album', albumKey.value);
+}
+
 function playThis() {
   if (isCurrent.value) player.togglePlay();
   else player.playFromList(props.track.id, props.queue.length ? props.queue : lib.tracks.map((t) => t.id));
@@ -191,6 +205,13 @@ onMounted(() => {
         <span v-else>{{ track.uploader || '' }}</span>
       </div>
     </div>
+    <span
+      v-if="track.album"
+      class="track-album"
+      :title="t('album.go_to', track.album)"
+      @click="openAlbumView"
+    >{{ track.album }}</span>
+    <span v-else class="track-album track-album-empty"></span>
     <!-- Persistent offline indicator (always visible) -->
     <span v-if="track.isStream" class="track-offline-indicator empty"></span>
     <span
