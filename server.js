@@ -1450,17 +1450,21 @@ app.get('/api/album-progress', (req, res) => {
 });
 
 // Auto-backfill at startup — schedule a lookup for every library track
-// missing an `album` field. Throttled by `mbThrottle` to 1 req/sec.
-// Runs in the background, fully non-blocking. Idempotent: tracks that
-// already resolved won't be re-queried (the cache short-circuits) and
-// tracks where MB had no match get a `.miss` sentinel that's only
-// re-tried after 7 days, so this never spams the API.
+// that's either missing the `album` field outright OR has an album but
+// no `albumReleaseId` (older entries written before that field shipped;
+// without it, ViewAlbum can't fetch the tracklist). Throttled by
+// `mbThrottle` to 1 req/sec. Runs in the background, fully non-blocking.
+// Idempotent: tracks that already resolved get cache hits with no MB
+// call — they just receive an SSE event so the client picks up any
+// missing fields. Tracks where MB had no match get a `.miss` sentinel
+// that's only re-tried after 7 days, so this never spams the API.
 function autoBackfillOnStartup() {
   let triggered = 0;
   try {
     const lib = readJson(LIBRARY_FILE);
     for (const track of lib) {
-      if (track.album) continue;
+      const needsRescan = !track.album || !track.albumReleaseId;
+      if (!needsRescan) continue;
       scheduleAlbumBackfill(track);
       triggered++;
     }

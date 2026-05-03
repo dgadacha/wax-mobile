@@ -858,6 +858,9 @@ html.light .hero-cover {
   cursor: pointer;
   color: inherit;
   transition: transform 0.15s;
+  /* Grid items default to min-width: auto, which prevents flex/grid
+     children from clipping text via ellipsis. Force shrinkability. */
+  min-width: 0;
 }
 .album-card:hover { transform: translateY(-2px); }
 .album-cover {
@@ -890,6 +893,7 @@ html.light .hero-cover {
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text);
+  max-width: 100%;
 }
 .album-sub {
   font-size: 0.82rem;
@@ -897,6 +901,7 @@ html.light .hero-cover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 .album-count {
   font-size: 0.75rem;
