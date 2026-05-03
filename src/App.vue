@@ -55,6 +55,9 @@ onMounted(async () => {
   await library.fetch();
   player.restorePlayerState();
   playlists.fetch();
+  // Subscribe to album-resolved SSE so MusicBrainz lookups completed
+  // server-side stream into the local library state in real time.
+  library._listenAlbumProgress();
   // Populate Découverte once the library is loaded — no-op if empty.
   discover.refresh();
 

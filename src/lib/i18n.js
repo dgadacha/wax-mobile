@@ -153,11 +153,6 @@ const messages = {
     'album.eyebrow': 'Album',
     'album.not_found': 'Album not found.',
     'album.go_to': (name) => `View album: ${name}`,
-    'settings.albums_section': 'Albums metadata',
-    'settings.albums_blurb': 'Look up album info for every library track via MusicBrainz. Runs in the background, ~1 second per track.',
-    'settings.albums_run': 'Backfill albums',
-    'settings.albums_running': ({ done, total }) => `Looking up… ${done} / ${total}`,
-    'settings.albums_done': ({ found, total }) => `Done — ${found} albums resolved out of ${total} tracks.`,
 
     // Settings — tabs
     'settings.title': 'Settings',
@@ -458,11 +453,6 @@ const messages = {
     'album.eyebrow': 'Album',
     'album.not_found': 'Album introuvable.',
     'album.go_to': (name) => `Voir l'album : ${name}`,
-    'settings.albums_section': "Métadonnées d'album",
-    'settings.albums_blurb': 'Récupère les infos d\'album pour chaque piste via MusicBrainz. Tourne en arrière-plan, ~1 seconde par piste.',
-    'settings.albums_run': 'Lancer le backfill',
-    'settings.albums_running': ({ done, total }) => `Recherche en cours… ${done} / ${total}`,
-    'settings.albums_done': ({ found, total }) => `Terminé — ${found} albums résolus sur ${total} pistes.`,
 
     // Settings — tabs
     'settings.title': 'Paramètres',

@@ -184,34 +184,6 @@ async function purge() {
   }
 }
 
-// Albums backfill — kicks off /api/library/backfill-albums, then polls
-// /api/library/backfill-albums (GET) once a second to update progress.
-// Server-side rate limiter caps MB at 1 req/sec, so for a 200-track
-// library the user is looking at ~3-4 minutes. We don't block the modal —
-// the user can close it; the backfill keeps running.
-const backfillState = ref({ running: false, total: 0, done: 0, found: 0 });
-let backfillPoll = null;
-async function pollBackfill() {
-  try {
-    const res = await fetch('/api/library/backfill-albums');
-    backfillState.value = await res.json();
-    if (!backfillState.value.running && backfillState.value.total > 0) {
-      // Done — refresh the library so the new album fields are reflected
-      // immediately on the artist + albums views.
-      await lib.fetch();
-      clearInterval(backfillPoll);
-      backfillPoll = null;
-    }
-  } catch {}
-}
-async function startBackfill() {
-  await fetch('/api/library/backfill-albums', { method: 'POST' });
-  await pollBackfill();
-  if (!backfillPoll) backfillPoll = setInterval(pollBackfill, 1500);
-}
-// Initial state on mount so a backfill kicked off in another modal
-// session shows up correctly when the user re-opens Settings.
-pollBackfill();
 </script>
 
 <template>
@@ -406,40 +378,6 @@ pollBackfill();
         </div>
       </div>
 
-      <!-- Albums backfill -->
-      <div class="settings-section settings-section--top-border">
-        <h4>{{ t('settings.albums_section') }}</h4>
-        <p class="settings-help">{{ t('settings.albums_blurb') }}</p>
-        <div class="settings-clean-row">
-          <span class="settings-orphan-count">
-            <template v-if="backfillState.running">
-              {{ t('settings.albums_running', { done: backfillState.done, total: backfillState.total }) }}
-            </template>
-            <template v-else-if="backfillState.total > 0">
-              {{ t('settings.albums_done', { found: backfillState.found, total: backfillState.total }) }}
-            </template>
-          </span>
-          <button
-            type="button"
-            class="settings-clean-btn"
-            :disabled="backfillState.running"
-            @click="startBackfill"
-          >
-            {{ t('settings.albums_run') }}
-          </button>
-        </div>
-        <div v-if="backfillState.running || backfillState.total > 0" class="settings-progress">
-          <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{ width: `${Math.min(100, (backfillState.done / Math.max(1, backfillState.total)) * 100)}%` }"
-            ></div>
-          </div>
-          <span class="settings-progress-label">
-            {{ Math.round((backfillState.done / Math.max(1, backfillState.total)) * 100) }}%
-          </span>
-        </div>
-      </div>
 
       <!-- Danger zone: factory reset -->
       <div class="settings-section settings-section--top-border">

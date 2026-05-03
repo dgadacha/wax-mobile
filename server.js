@@ -1336,13 +1336,24 @@ app.post('/api/library/add', (req, res) => {
   scheduleAlbumBackfill(track);
 });
 
+// SSE listeners for live album-resolved events. The client subscribes
+// to `/api/album-progress` once on mount; when a backfill resolves an
+// album, every connected client gets a `{type:'album', trackId, album,
+// albumReleaseGroupId, albumReleaseDate}` event and patches its local
+// state without a full library refetch.
+const albumSseClients = new Set();
+function broadcastAlbumEvent(payload) {
+  const line = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const client of albumSseClients) {
+    try { client.write(line); } catch {}
+  }
+}
+
 // Backfill helpers — run an album lookup, write the result back into
-// library.json. Tolerant of races: re-reads the library on success,
-// finds the track by id, and only persists if it's still there.
+// library.json + broadcast over SSE. Tolerant of races: re-reads the
+// library on success, finds the track by id, and only persists if it's
+// still there.
 function scheduleAlbumBackfill(track) {
-  // Use the cleaned artist/title pair (parseTrackTitle handles the
-  // "Artist - Song (Official)" pattern; falls back to uploader for the
-  // artist column when the title has no separator).
   const parsed = parseTrackTitle(track.title, track.uploader);
   if (!parsed.artist || !parsed.song) return;
   resolveAlbum(parsed.artist, parsed.song)
@@ -1351,63 +1362,60 @@ function scheduleAlbumBackfill(track) {
       const fresh = readJson(LIBRARY_FILE);
       const idx = fresh.findIndex((t) => t.id === track.id);
       if (idx === -1) return;
-      // Only the user-facing fields land on the track — the full MB
-      // payload stays in library/albums/<key>.json for later inspection.
       fresh[idx].album = album.album;
       fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
       fresh[idx].albumReleaseDate = album.releaseDate || null;
       saveLibrary(fresh);
+      broadcastAlbumEvent({
+        type: 'album',
+        trackId: track.id,
+        album: album.album,
+        albumReleaseGroupId: album.releaseGroupId || null,
+        albumReleaseDate: album.releaseDate || null,
+      });
     })
     .catch(() => {});
 }
 
-// Bulk backfill — walk every library track that's missing the `album`
-// field, queue MB lookups (rate-limited to 1 req/sec). State exposed
-// via GET so the Settings UI can show a progress bar. Idempotent: a
-// POST while a backfill is already running just returns the running
-// state. Tracks with a previous .miss cache hit get re-tried (we want
-// the "Refresh" button to actually retry them).
-const albumBackfillState = { running: false, total: 0, done: 0, found: 0 };
-
-app.get('/api/library/backfill-albums', (req, res) => {
-  res.json(albumBackfillState);
+// SSE endpoint — clients subscribe once on app mount and stay connected
+// for the lifetime of the page. We send a comment-only heartbeat every
+// 25 s so middleboxes don't kill idle connections.
+app.get('/api/album-progress', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+  albumSseClients.add(res);
+  const heartbeat = setInterval(() => {
+    try { res.write(': hb\n\n'); } catch {}
+  }, 25_000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    albumSseClients.delete(res);
+  });
 });
 
-app.post('/api/library/backfill-albums', async (req, res) => {
-  if (albumBackfillState.running) return res.json(albumBackfillState);
-  const lib = readJson(LIBRARY_FILE);
-  const targets = lib.filter((t) => !t.album);
-  albumBackfillState.running = true;
-  albumBackfillState.total = targets.length;
-  albumBackfillState.done = 0;
-  albumBackfillState.found = 0;
-  res.json({ ...albumBackfillState, started: true });
-  // Run sequentially via mbThrottle — no need to spawn a child or worker,
-  // the whole thing is I/O bound and the rate limit serializes us anyway.
-  (async () => {
-    for (const track of targets) {
-      const parsed = parseTrackTitle(track.title, track.uploader);
-      if (parsed.artist && parsed.song) {
-        try {
-          const album = await resolveAlbum(parsed.artist, parsed.song);
-          if (album) {
-            const fresh = readJson(LIBRARY_FILE);
-            const idx = fresh.findIndex((t) => t.id === track.id);
-            if (idx !== -1) {
-              fresh[idx].album = album.album;
-              fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
-              fresh[idx].albumReleaseDate = album.releaseDate || null;
-              saveLibrary(fresh);
-              albumBackfillState.found++;
-            }
-          }
-        } catch {}
-      }
-      albumBackfillState.done++;
+// Auto-backfill at startup — schedule a lookup for every library track
+// missing an `album` field. Throttled by `mbThrottle` to 1 req/sec.
+// Runs in the background, fully non-blocking. Idempotent: tracks that
+// already resolved won't be re-queried (the cache short-circuits) and
+// tracks where MB had no match get a `.miss` sentinel that's only
+// re-tried after 7 days, so this never spams the API.
+function autoBackfillOnStartup() {
+  let triggered = 0;
+  try {
+    const lib = readJson(LIBRARY_FILE);
+    for (const track of lib) {
+      if (track.album) continue;
+      scheduleAlbumBackfill(track);
+      triggered++;
     }
-    albumBackfillState.running = false;
-  })();
-});
+  } catch {}
+  if (triggered > 0) {
+    console.log(`[album] queued ${triggered} library track(s) for MusicBrainz lookup`);
+  }
+}
 
 app.post('/api/library/:trackId/download', (req, res) => {
   const lib = getLibrary();
@@ -1588,4 +1596,8 @@ app.delete('/api/playlists/:plId/tracks/:trackId', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Serveur lancé sur http://localhost:${PORT}`);
+  // Kick off album resolution for any track that doesn't already have
+  // metadata. Throttled, fire-and-forget, broadcasts via SSE as each
+  // track resolves so connected clients update in place.
+  autoBackfillOnStartup();
 });

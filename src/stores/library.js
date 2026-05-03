@@ -370,6 +370,35 @@ export const useLibraryStore = defineStore('library', {
       };
       es.onerror = () => es.close();
     },
+    // Subscribe once on app boot to the album-resolved stream. The
+    // server auto-backfills missing metadata at startup + on every track
+    // add; we patch the track in place when each event arrives so the
+    // album column on TrackRow, the sidebar Albums entry, and ViewAlbum
+    // all update without a full library refetch. Reconnects on error
+    // because EventSource silently fails on macOS sleep / network blips.
+    _listenAlbumProgress() {
+      if (this._albumEs) return;
+      const es = new EventSource('/api/album-progress');
+      this._albumEs = es;
+      es.onmessage = (event) => {
+        let data;
+        try { data = JSON.parse(event.data); } catch { return; }
+        if (data.type === 'album' && data.trackId) {
+          const track = this.findById(data.trackId);
+          if (!track) return;
+          track.album = data.album;
+          track.albumReleaseGroupId = data.albumReleaseGroupId || null;
+          track.albumReleaseDate = data.albumReleaseDate || null;
+        }
+      };
+      es.onerror = () => {
+        es.close();
+        this._albumEs = null;
+        // Reconnect after 5 s; server's heartbeat keeps the stream
+        // healthy in steady state, this only fires on real disconnect.
+        setTimeout(() => this._listenAlbumProgress(), 5_000);
+      };
+    },
   },
 });
 
