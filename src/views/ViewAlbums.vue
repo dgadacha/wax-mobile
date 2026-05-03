@@ -14,13 +14,14 @@ function open(album) {
   view.switchTo('album', album.key);
 }
 
-// Track which release-groups have failed CAA so we fall back to a
-// 2x2 mosaic of the album's library tracks (or single thumb when 1).
-const caaFailed = ref(new Set());
-function markCaaFailed(key) {
-  const next = new Set(caaFailed.value);
+// Track which Deezer cover URLs have failed (404 / network) so we fall
+// back to a 2x2 mosaic of the album's library tracks. Keyed by album
+// key so swapping artists doesn't poison the failure set.
+const coverFailed = ref(new Set());
+function markCoverFailed(key) {
+  const next = new Set(coverFailed.value);
   next.add(key);
-  caaFailed.value = next;
+  coverFailed.value = next;
 }
 
 // Shimmer overlay flag per album. We track the set of *loaded* keys
@@ -35,16 +36,15 @@ function markLoaded(key) {
   loaded.value = next;
 }
 
-function caaUrl(album) {
-  if (album.releaseGroupId && !caaFailed.value.has(album.key)) {
-    return `/api/album-cover/${album.releaseGroupId}`;
+function primaryCover(album) {
+  if (album.albumCoverUrl && !coverFailed.value.has(album.key)) {
+    return album.albumCoverUrl;
   }
   return null;
 }
 
-// Build a 2x2 mosaic from the album's library tracks when CAA fails
-// and the album has 2+ tracks. Identical pattern to the playlist
-// fallback in Sidebar.
+// Build a 2x2 mosaic from the album's library tracks when Deezer's
+// cover URL fails and the album has 2+ tracks. Same logic as Sidebar.
 function fallbackCovers(album) {
   if (album.tracks.length === 0) return [];
   if (album.tracks.length === 1) return [album.tracks[0]?.thumbnail].filter(Boolean);
@@ -66,8 +66,8 @@ function fallbackCovers(album) {
   return grid;
 }
 
-function onCaaError(album) {
-  markCaaFailed(album.key);
+function onCoverError(album) {
+  markCoverFailed(album.key);
 }
 </script>
 
@@ -96,22 +96,22 @@ function onCaaError(album) {
           <div
             class="album-cover"
             :class="{
-              'album-cover-grid': !caaUrl(album) && fallbackCovers(album).length === 4,
+              'album-cover-grid': !primaryCover(album) && fallbackCovers(album).length === 4,
               'cover-loading': isLoading(album),
             }"
             :style="{ backgroundImage: gradientFromString(album.name) }"
           >
-            <!-- CAA cover (full image) when available. -->
+            <!-- Deezer cover (full image) when available. -->
             <img
-              v-if="caaUrl(album)"
-              :src="caaUrl(album)"
+              v-if="primaryCover(album)"
+              :src="primaryCover(album)"
               :alt="album.name"
               loading="lazy"
-              @error="onCaaError(album)"
+              @error="onCoverError(album)"
               @load="markLoaded(album.key)"
             />
-            <!-- Fallback: 2x2 mosaic of library track thumbs when CAA
-                 missed and we have 2+ tracks. Single thumb when 1. -->
+            <!-- Fallback: 2x2 mosaic of library track thumbs when the
+                 cover URL is missing or 404'd. -->
             <template v-else-if="fallbackCovers(album).length === 4">
               <img
                 v-for="(c, idx) in fallbackCovers(album)"

@@ -32,8 +32,8 @@ const album = computed(() => {
     key,
     name: first.album,
     artist: parseTrackTitle(first).artist || first.uploader || '',
-    releaseGroupId: first.albumReleaseGroupId || null,
-    releaseId: first.albumReleaseId || null,
+    albumId: first.albumId || null,
+    coverUrl: first.albumCoverUrl || null,
     releaseDate: first.albumReleaseDate || null,
     libTracks,
   };
@@ -49,11 +49,10 @@ const heroBg = computed(() =>
   album.value ? gradientFromString(album.value.name) : '',
 );
 
-// Cover URL: prefer Cover Art Archive (release-group), fall back to the
-// first library track's YouTube thumbnail when CAA 404s. We track a
-// `coverFailed` flag flipped by @error so the fallback kicks in only
-// when the primary src actually fails. `coverLoading` drives the
-// shimmer overlay until the chosen src actually loads.
+// Cover URL: Deezer cover URL when present, fall back to the first
+// library track's YouTube thumbnail. `coverFailed` flips on @error so
+// a 404 from Deezer's CDN demotes us to the fallback. `coverLoading`
+// drives the shimmer overlay until the chosen src loads.
 const coverFailed = ref(false);
 const coverLoading = ref(true);
 watch(() => view.selectedAlbumKey, () => {
@@ -62,23 +61,21 @@ watch(() => view.selectedAlbumKey, () => {
 });
 const coverUrl = computed(() => {
   if (!album.value) return '';
-  if (album.value.releaseGroupId && !coverFailed.value) {
-    return `/api/album-cover/${album.value.releaseGroupId}`;
-  }
+  if (album.value.coverUrl && !coverFailed.value) return album.value.coverUrl;
   return album.value.libTracks[0]?.thumbnail || '';
 });
 watch(coverUrl, () => { coverLoading.value = true; });
 
 // ──────────────────────────────────────────────────────────────────
-// Unified album tracklist. We pull the full MB recording list and, for
-// each entry, attach the matching library track if one exists (fuzzy
-// title comparison after stripping featuring credits / non-alphanum).
-// The view renders a single ordered list — no separate "library" vs
-// "other" sections — so the user reads the album front to back.
+// Unified album tracklist via Deezer. Pulls every track of the album
+// in canonical position order; for each entry, attaches the matching
+// library track when one exists (fuzzy title compare after stripping
+// featuring credits / non-alphanum). One ordered list, front to back.
 // ──────────────────────────────────────────────────────────────────
 const tracklistLoading = ref(false);
 const tracklistError = ref(false);
-const mbTracks = ref([]); // raw MB tracklist [{position, title, length, recordingId}]
+const remoteTracks = ref([]); // [{position, title, length, recordingId}]
+const remoteReleaseDate = ref(null);
 
 function normalizeTitle(s) {
   return String(s || '')
@@ -87,34 +84,33 @@ function normalizeTitle(s) {
     .replace(/[^a-z0-9]/g, '');
 }
 
-// One flat list in MB position order: each entry carries the MB
-// metadata + a `libTrack` reference when a library match exists.
 const albumEntries = computed(() => {
-  if (!album.value || mbTracks.value.length === 0) return [];
-  // Index lib tracks by normalized parsed-song title for cheap lookup.
+  if (!album.value || remoteTracks.value.length === 0) return [];
   const byTitle = new Map();
   for (const tr of album.value.libTracks) {
     byTitle.set(normalizeTitle(parseTrackTitle(tr).song), tr);
   }
-  return mbTracks.value.map((mb, i) => ({
-    key: `${mb.recordingId || mb.title}-${i}`,
+  return remoteTracks.value.map((r, i) => ({
+    key: `${r.recordingId || r.title}-${i}`,
     index: i,
-    position: i + 1,
-    title: mb.title,
-    length: mb.length,
-    libTrack: byTitle.get(normalizeTitle(mb.title)) || null,
+    position: r.position || i + 1,
+    title: r.title,
+    length: r.length,
+    libTrack: byTitle.get(normalizeTitle(r.title)) || null,
   }));
 });
 
 async function loadTracklist() {
-  mbTracks.value = [];
+  remoteTracks.value = [];
+  remoteReleaseDate.value = null;
   tracklistError.value = false;
-  if (!album.value || !album.value.releaseId) return;
+  if (!album.value || !album.value.albumId) return;
   tracklistLoading.value = true;
   try {
-    const { tracks } = await api(`/api/album-tracklist?releaseId=${album.value.releaseId}`);
-    if (!Array.isArray(tracks)) throw new Error('bad payload');
-    mbTracks.value = tracks;
+    const data = await api(`/api/album-tracklist?albumId=${album.value.albumId}`);
+    if (!Array.isArray(data.tracks)) throw new Error('bad payload');
+    remoteTracks.value = data.tracks;
+    remoteReleaseDate.value = data.releaseDate || null;
   } catch {
     tracklistError.value = true;
   } finally {
@@ -371,7 +367,7 @@ function goBack() {
             <h1>{{ album.name }}</h1>
             <p class="hero-meta">
               {{ album.artist
-              }}<span v-if="album.releaseDate"> · {{ album.releaseDate.slice(0, 4) }}</span>
+              }}<span v-if="album.releaseDate || remoteReleaseDate"> · {{ (album.releaseDate || remoteReleaseDate).slice(0, 4) }}</span>
               · {{ t('common.tracks', albumEntries.length || album.libTracks.length) }}<span v-if="totalDuration"> · {{ fmtDuration(totalDuration) }}</span>
             </p>
           </div>

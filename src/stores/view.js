@@ -8,7 +8,7 @@ export const useViewStore = defineStore('view', {
     name: 'download', // 'download' | 'library' | 'playlist' | 'mix' | 'artist' | 'albums' | 'album'
     selectedPlaylistId: null,
     selectedArtist: null, // string (display name) when name === 'artist'
-    selectedAlbumKey: null, // album key (releaseGroupId or normalizedArtist::albumName) when name === 'album'
+    selectedAlbumKey: null, // album key (deezer:<id> or normalizedArtist::albumName) when name === 'album'
     // Stack of { name, arg } describing where we came from. Pushed by
     // `switchTo`, popped by `back`. Capped soft at 50 entries to avoid
     // unbounded growth on heavy navigation sessions.

@@ -77,12 +77,13 @@ function openArtistView(e) {
 }
 
 // Album column — clickable when present, opens ViewAlbum. Key matches
-// the lib.albums getter (releaseGroupId when MB resolved one, otherwise
-// a synthetic `normalizedArtist::albumName`).
+// the lib.albums getter: Deezer albumId when present, otherwise a
+// synthetic `normalizedArtist::albumName`.
 const albumKey = computed(() => {
   if (!props.track.album) return null;
-  return props.track.albumReleaseGroupId
-    || `${normalizeArtistKey(parsedArtist.value)}::${props.track.album}`;
+  return props.track.albumId
+    ? `deezer:${props.track.albumId}`
+    : `${normalizeArtistKey(parsedArtist.value)}::${props.track.album}`;
 });
 function openAlbumView(e) {
   e.stopPropagation();

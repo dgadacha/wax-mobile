@@ -48,22 +48,24 @@ export const useLibraryStore = defineStore('library', {
       });
     },
     // Group library tracks by `album`. Tracks without album metadata
-    // (the field arrives later via the MusicBrainz backfill) are excluded
-    // from this view. Returns a Map keyed by releaseGroupId (so an album
-    // with the same name by two artists doesn't collapse into one entry)
-    // with { name, artist, releaseGroupId, tracks[] }.
+    // (resolved later via the Deezer backfill) are excluded.
+    // Map key = albumId (stable Deezer numeric ID) when present, falling
+    // back to a synthetic `normalizedArtist::albumName` so an album with
+    // the same name by two artists doesn't collapse into one entry.
     albums(state) {
       const map = new Map();
       for (const tr of state.tracks) {
         if (!tr.album) continue;
-        const key = tr.albumReleaseGroupId || `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
+        const key = tr.albumId
+          ? `deezer:${tr.albumId}`
+          : `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
         if (!map.has(key)) {
           map.set(key, {
             key,
             name: tr.album,
             artist: parseTrackTitle(tr).artist,
-            releaseGroupId: tr.albumReleaseGroupId || null,
-            releaseId: tr.albumReleaseId || null,
+            albumId: tr.albumId || null,
+            albumCoverUrl: tr.albumCoverUrl || null,
             releaseDate: tr.albumReleaseDate || null,
             tracks: [],
           });
@@ -71,7 +73,6 @@ export const useLibraryStore = defineStore('library', {
         map.get(key).tracks.push(tr);
       }
       return Array.from(map.values()).sort((a, b) => {
-        // Newest first, then alphabetical.
         const ad = a.releaseDate || '0';
         const bd = b.releaseDate || '0';
         if (ad !== bd) return bd.localeCompare(ad);
@@ -80,7 +81,9 @@ export const useLibraryStore = defineStore('library', {
     },
     albumByKey: (state) => (key) => state.tracks.filter((tr) => {
       if (!tr.album) return false;
-      const trackKey = tr.albumReleaseGroupId || `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
+      const trackKey = tr.albumId
+        ? `deezer:${tr.albumId}`
+        : `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
       return trackKey === key;
     }),
   },
@@ -406,9 +409,12 @@ export const useLibraryStore = defineStore('library', {
           const track = this.findById(trackId);
           if (track) {
             track.album = entry.album;
-            track.albumReleaseGroupId = entry.albumReleaseGroupId || null;
-            track.albumReleaseId = entry.albumReleaseId || null;
+            track.albumId = entry.albumId || null;
+            track.albumCoverUrl = entry.albumCoverUrl || null;
             track.albumReleaseDate = entry.albumReleaseDate || null;
+            // Strip stale MB-shaped fields if they're still around.
+            track.albumReleaseGroupId = null;
+            track.albumReleaseId = null;
             pendingAlbums.delete(trackId);
           } else if (entry.retries < 5) {
             entry.retries++;
@@ -435,8 +441,6 @@ export const useLibraryStore = defineStore('library', {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'album' && data.trackId) {
-          // Latest event wins per trackId — multiple album events for
-          // the same track within a frame collapse to one mutation.
           pendingAlbums.set(data.trackId, { ...data, retries: 0 });
           scheduleFlush();
         } else if (data.type === 'rescan') {
