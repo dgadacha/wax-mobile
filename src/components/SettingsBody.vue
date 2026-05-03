@@ -183,6 +183,9 @@ const rescanPct = computed(() => {
 });
 async function rescanAlbums() {
   posting.value = true;
+  // Snapshot of how many tracks have an album right now — used at
+  // completion to compute "X new albums resolved" for the toast.
+  const beforeResolved = lib.tracks.filter((t) => t.album).length;
   try {
     const res = await fetch('/api/library/rescan-albums', { method: 'POST' });
     if (!res.ok) {
@@ -194,23 +197,27 @@ async function rescanAlbums() {
       showToast(t('settings.albums_rescan_nothing'), 'success');
       return;
     }
-    // Seed defensively (don't move the bar backward if SSE has already
-    // raced ahead) — and start a polling fallback in case SSE is broken
-    // (Vite HMR disconnect, sleep, etc.). Poll wins the race against a
-    // dropped SSE connection — the user always sees progress.
+    // Immediate confirmation — even when the rescan completes in <10 ms
+    // (every track is a cached miss), the user gets an unmistakable
+    // "yes I did something" signal here.
+    showToast(t('settings.albums_rescan_started', data.total), 'success');
+    // Seed bar only if we'd actually advance the state forward.
     const current = lib.albumRescan;
     const shouldSeed =
-      !current.running ||
       current.total !== data.total ||
-      current.done < (data.done || 0);
+      (current.done < data.total && !current.running);
     if (shouldSeed) {
-      lib.albumRescan = {
-        running: true,
-        done: data.done || 0,
-        total: data.total,
-      };
+      lib.albumRescan = { running: true, done: data.done || 0, total: data.total };
     }
-    pollRescanState();
+    pollRescanState(() => {
+      // Final summary — fires once the server reports running=false.
+      const newlyResolved = lib.tracks.filter((t) => t.album).length - beforeResolved;
+      if (newlyResolved > 0) {
+        showToast(t('settings.albums_rescan_resolved', newlyResolved), 'success');
+      } else {
+        showToast(t('settings.albums_rescan_no_new'), 'success');
+      }
+    });
   } catch {
     showToast(t('settings.albums_rescan_error'), 'error');
   } finally {
@@ -219,19 +226,19 @@ async function rescanAlbums() {
 }
 
 // Polling fallback — resyncs lib.albumRescan from the server every 2 s
-// while running. Does NOT replace SSE; it's a backstop when SSE drops
-// (the EventSource closes silently on Vite HMR + macOS sleep). When
-// SSE is healthy, it just confirms what we already know. Stops once
-// the server reports running=false or after 60 s as a safety net.
+// while running. Backstop for when SSE drops (EventSource closes
+// silently on Vite HMR + macOS sleep). Optional onDone fires once
+// when the server reports running=false (or the 60 s timeout hits).
 let rescanPollTimer = null;
-async function pollRescanState() {
+let rescanOnDone = null;
+async function pollRescanState(onDone) {
+  if (typeof onDone === 'function') rescanOnDone = onDone;
   if (rescanPollTimer) return;
   const start = Date.now();
   const tick = async () => {
     try {
       const res = await fetch('/api/library/rescan-albums');
       const data = await res.json();
-      // Only move forward — SSE may have already advanced past this.
       if ((data.done || 0) > lib.albumRescan.done || data.total !== lib.albumRescan.total) {
         lib.albumRescan = {
           running: !!data.running,
@@ -239,12 +246,16 @@ async function pollRescanState() {
           total: data.total || 0,
         };
       } else if (!data.running && lib.albumRescan.running) {
-        // Server says we're done — flip the local flag.
         lib.albumRescan = { ...lib.albumRescan, running: false };
       }
       if (!data.running || Date.now() - start > 60_000) {
         clearInterval(rescanPollTimer);
         rescanPollTimer = null;
+        if (rescanOnDone) {
+          const cb = rescanOnDone;
+          rescanOnDone = null;
+          cb();
+        }
         return;
       }
     } catch {}

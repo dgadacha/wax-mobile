@@ -166,6 +166,9 @@ const messages = {
     'settings.albums_rescan_done': (n) => `Queued ${n} track${n === 1 ? '' : 's'} for lookup. Watch the album info populate.`,
     'settings.albums_rescan_nothing': 'Every track already has album metadata.',
     'settings.albums_rescan_error': 'Re-scan failed — make sure the dev server has been restarted.',
+    'settings.albums_rescan_started': (n) => `Re-scanning ${n} track${n === 1 ? '' : 's'}…`,
+    'settings.albums_rescan_resolved': (n) => `Resolved ${n} new album${n === 1 ? '' : 's'}.`,
+    'settings.albums_rescan_no_new': 'No new albums found. The remaining tracks will be retried in 7 days.',
 
     // Settings — tabs
     'settings.title': 'Settings',
@@ -479,6 +482,9 @@ const messages = {
     'settings.albums_rescan_done': (n) => `${n} piste${n === 1 ? '' : 's'} en queue. Les infos d'album vont se remplir progressivement.`,
     'settings.albums_rescan_nothing': 'Toutes les pistes ont déjà leurs métadonnées d\'album.',
     'settings.albums_rescan_error': "Échec — vérifie que tu as bien redémarré npm run dev.",
+    'settings.albums_rescan_started': (n) => `Re-scan de ${n} piste${n === 1 ? '' : 's'} en cours…`,
+    'settings.albums_rescan_resolved': (n) => `${n} nouvel${n === 1 ? '' : 's'} album${n === 1 ? '' : 's'} résolu${n === 1 ? '' : 's'}.`,
+    'settings.albums_rescan_no_new': 'Aucun nouvel album trouvé. Les pistes restantes seront re-tentées dans 7 jours.',
 
     // Settings — tabs
     'settings.title': 'Paramètres',
