@@ -410,8 +410,8 @@ function goBack() {
           </li>
         </ul>
         <template v-else-if="albumEntries.length > 0">
-        <TrackListHeader />
-        <ul class="track-list">
+        <TrackListHeader no-album />
+        <ul class="track-list track-list--no-album">
           <template v-for="(entry, i) in albumEntries" :key="entry.key">
             <!-- Library match: full TrackRow with all standard actions. -->
             <TrackRow
@@ -479,8 +479,8 @@ function goBack() {
         </template>
         <!-- No MB tracklist available: fall back to library-only list. -->
         <template v-else-if="album.libTracks.length > 0">
-        <TrackListHeader />
-        <ul class="track-list">
+        <TrackListHeader no-album />
+        <ul class="track-list track-list--no-album">
           <TrackRow
             v-for="(tr, i) in album.libTracks"
             :key="tr.id"

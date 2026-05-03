@@ -1385,10 +1385,11 @@ input:focus, input:focus-visible { outline: none; }
   margin-top: 8px;
 }
 /* Sticky-ish column labels above each track-list. Matches the .track
-   grid template exactly so labels line up with row content. */
+   grid template exactly (same fixed widths on every column) so labels
+   line up with row content underneath. */
 .track-list-header {
   display: grid;
-  grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px auto auto;
+  grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px 56px 248px;
   gap: 12px;
   align-items: center;
   padding: 6px 16px 8px;
@@ -1401,16 +1402,19 @@ input:focus, input:focus-visible { outline: none; }
   letter-spacing: 0.06em;
   user-select: none;
 }
+.track-list-header.track-list-header--no-album {
+  grid-template-columns: 32px 48px minmax(0, 1fr) 20px 56px 248px;
+}
+.track-list-header.track-list-header--no-album .track-list-header-album { display: none; }
 .track-list-header-num { text-align: center; }
 .track-list-header-duration {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  min-width: 48px;
+  justify-content: flex-start;
 }
 @media (max-width: 1100px) {
   .track-list-header {
-    grid-template-columns: 32px 48px minmax(0, 1fr) 20px auto auto;
+    grid-template-columns: 32px 48px minmax(0, 1fr) 20px 56px 248px;
   }
   .track-list-header-album { display: none; }
 }
@@ -1427,7 +1431,11 @@ input:focus, input:focus-visible { outline: none; }
 }
 .track {
   display: grid;
-  grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px auto auto;
+  /* Fixed widths on the duration + actions columns so the header above
+     the list (which has empty content in those cells) lines up with row
+     content. Track-actions reserves 248px regardless, so we hard-code
+     it here. */
+  grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px 56px 248px;
   gap: 12px;
   align-items: center;
   padding: 6px 16px;
@@ -1435,6 +1443,13 @@ input:focus, input:focus-visible { outline: none; }
   transition: background 0.1s ease;
   position: relative;
 }
+/* When the parent ul has the --no-album modifier (e.g. ViewAlbum where
+   every track shares the same album) we drop the album column entirely
+   and reclaim the space for the title. */
+.track-list--no-album .track {
+  grid-template-columns: 32px 48px minmax(0, 1fr) 20px 56px 248px;
+}
+.track-list--no-album .track-album { display: none; }
 /* Album column: hidden by default if no track in the list has album info,
    but the grid column is always reserved so alignment stays consistent.
    Per-cell empty state is just an invisible span. */
