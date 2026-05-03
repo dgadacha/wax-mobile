@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useLibraryStore } from '@/stores/library';
 import { useViewStore } from '@/stores/view';
 import { t } from '@/lib/i18n';
@@ -14,11 +14,31 @@ function open(album) {
   view.switchTo('album', album.key);
 }
 
-// Cover URL for an album: prefer the MusicBrainz/Cover Art Archive image
-// when we have a release-group id, fall back to the first track's cover.
+// Track which release-groups have failed CAA so we fall back to the
+// first track's YouTube thumbnail. Reactive set so the v-bind picks it
+// up. Avoids a permanent broken-image icon when CAA doesn't have art.
+const caaFailed = ref(new Set());
+function markCaaFailed(key) {
+  const next = new Set(caaFailed.value);
+  next.add(key);
+  caaFailed.value = next;
+}
+
 function coverFor(album) {
-  if (album.releaseGroupId) return `/api/album-cover/${album.releaseGroupId}`;
+  if (album.releaseGroupId && !caaFailed.value.has(album.key)) {
+    return `/api/album-cover/${album.releaseGroupId}`;
+  }
   return album.tracks[0]?.thumbnail || '';
+}
+
+function onImgError(e, album) {
+  // Mark this release-group as CAA-missing so we fall back to the
+  // YouTube thumb. The img re-renders via :src reactivity.
+  markCaaFailed(album.key);
+  // If even the YouTube thumb fails, hide the img and show the gradient.
+  if (!album.tracks[0]?.thumbnail) {
+    e.target.style.display = 'none';
+  }
 }
 </script>
 
@@ -46,14 +66,14 @@ function coverFor(album) {
         >
           <div
             class="album-cover"
-            :style="album.releaseGroupId ? null : { backgroundImage: gradientFromString(album.name) }"
+            :style="{ backgroundImage: gradientFromString(album.name) }"
           >
             <img
-              v-if="album.releaseGroupId"
+              v-if="coverFor(album)"
               :src="coverFor(album)"
               :alt="album.name"
               loading="lazy"
-              @error="(e) => { e.target.style.display = 'none'; e.target.parentElement.style.backgroundImage = gradientFromString(album.name); }"
+              @error="(e) => onImgError(e, album)"
             />
           </div>
           <div class="album-meta">

@@ -902,6 +902,20 @@ html.light .hero-cover {
   font-size: 0.75rem;
   color: var(--text-muted);
 }
+
+/* "Other tracks" rows on ViewAlbum — slimmer than a real TrackRow
+   since we have no per-track YouTube data yet. Reuses the .track grid
+   so the columns line up with library rows above. */
+.album-other-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--card);
+}
+.album-other-track .track-meta { color: var(--text-soft); }
+.album-other-track .track-title { font-weight: 500; }
 .hero-back {
   position: absolute;
   top: 24px;

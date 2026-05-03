@@ -153,6 +153,9 @@ const messages = {
     'album.eyebrow': 'Album',
     'album.not_found': 'Album not found.',
     'album.go_to': (name) => `View album: ${name}`,
+    'album.in_library': 'In your library',
+    'album.other_tracks': 'Other tracks from this album',
+    'album.tracklist_error': "Couldn't load the album tracklist.",
 
     // Settings — tabs
     'settings.title': 'Settings',
@@ -453,6 +456,9 @@ const messages = {
     'album.eyebrow': 'Album',
     'album.not_found': 'Album introuvable.',
     'album.go_to': (name) => `Voir l'album : ${name}`,
+    'album.in_library': 'Dans ta bibliothèque',
+    'album.other_tracks': 'Autres pistes de cet album',
+    'album.tracklist_error': "Impossible de charger la liste des pistes.",
 
     // Settings — tabs
     'settings.title': 'Paramètres',

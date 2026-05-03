@@ -60,6 +60,7 @@ export const useLibraryStore = defineStore('library', {
             name: tr.album,
             artist: parseTrackTitle(tr).artist,
             releaseGroupId: tr.albumReleaseGroupId || null,
+            releaseId: tr.albumReleaseId || null,
             releaseDate: tr.albumReleaseDate || null,
             tracks: [],
           });
@@ -388,6 +389,7 @@ export const useLibraryStore = defineStore('library', {
           if (!track) return;
           track.album = data.album;
           track.albumReleaseGroupId = data.albumReleaseGroupId || null;
+          track.albumReleaseId = data.albumReleaseId || null;
           track.albumReleaseDate = data.albumReleaseDate || null;
         }
       };

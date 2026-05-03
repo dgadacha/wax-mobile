@@ -751,6 +751,57 @@ app.get('/api/album-cover/:mbid', async (req, res) => {
   res.status(404).end();
 });
 
+// Album tracklist — given a MusicBrainz release id, return the full
+// list of recordings on that release. The client uses this to surface
+// "Other tracks from this album" alongside whatever the user already
+// has in their library. Each entry carries title + position + length;
+// the client resolves YouTube IDs lazily on play (one yt-dlp search at
+// click time, no upfront cost).
+const albumTracklistCache = new Map(); // releaseId -> Promise<tracks[]>
+
+async function fetchAlbumTracklist(releaseId) {
+  // MB release endpoint with `inc=recordings` returns every track in
+  // every disc/medium of the release. We flatten them into a single
+  // ordered list so a multi-disc release just shows as one tracklist.
+  const url = `https://musicbrainz.org/ws/2/release/${releaseId}?inc=recordings&fmt=json`;
+  const data = await mbFetchJson(url).catch(() => null);
+  if (!data || !Array.isArray(data.media)) return null;
+  const out = [];
+  for (const medium of data.media) {
+    for (const tr of medium.tracks || []) {
+      out.push({
+        position: tr.position,
+        title: tr.title || (tr.recording && tr.recording.title) || '',
+        length: tr.length || (tr.recording && tr.recording.length) || null,
+        recordingId: tr.recording && tr.recording.id,
+      });
+    }
+  }
+  return out;
+}
+
+app.get('/api/album-tracklist', async (req, res) => {
+  const releaseId = String(req.query.releaseId || '').trim();
+  if (!/^[a-f0-9-]{36}$/i.test(releaseId)) {
+    return res.status(400).json({ error: 'releaseId required' });
+  }
+  // In-memory cache for the lifetime of the process — MB results don't
+  // change often and the client may hit the same release multiple times
+  // when navigating between albums.
+  let inflight = albumTracklistCache.get(releaseId);
+  if (!inflight) {
+    inflight = fetchAlbumTracklist(releaseId);
+    albumTracklistCache.set(releaseId, inflight);
+  }
+  try {
+    const tracks = await inflight;
+    if (!tracks) return res.status(404).json({ error: 'Tracklist not available' });
+    res.json({ tracks });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'lookup failed' });
+  }
+});
+
 const getLibrary = () => readJson(LIBRARY_FILE).map(t => ({
   ...t,
   // Funnel every thumbnail through the local cover endpoint — works offline
@@ -1364,6 +1415,7 @@ function scheduleAlbumBackfill(track) {
       if (idx === -1) return;
       fresh[idx].album = album.album;
       fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
+      fresh[idx].albumReleaseId = album.releaseId || null;
       fresh[idx].albumReleaseDate = album.releaseDate || null;
       saveLibrary(fresh);
       broadcastAlbumEvent({
@@ -1371,6 +1423,7 @@ function scheduleAlbumBackfill(track) {
         trackId: track.id,
         album: album.album,
         albumReleaseGroupId: album.releaseGroupId || null,
+        albumReleaseId: album.releaseId || null,
         albumReleaseDate: album.releaseDate || null,
       });
     })
