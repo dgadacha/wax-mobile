@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, onMounted } from 'vue';
-import { fmtDuration, onThumbError, onThumbLoad, parseTrackTitle } from '@/lib/format';
+import { fmtDuration, onThumbError, onThumbLoad, parseTrackTitle, normalizeArtistKey } from '@/lib/format';
 import {
   ICON_PLAY,
   ICON_PAUSE,
@@ -48,7 +48,23 @@ const dl = computed(() => lib.libraryDownloads.get(props.track.id));
 // Parsed artist (cleaned up from "Artist - Song (Official Video)" titles).
 // Falls back to uploader when no separator is found, then to '' if uploader
 // is empty too. Used for the clickable artist link below the track title.
-const parsedArtist = computed(() => parseTrackTitle(props.track).artist);
+const parsed = computed(() => parseTrackTitle(props.track));
+const parsedArtist = computed(() => parsed.value.artist);
+
+// On the artist view itself, the "Artist" sub link below each track is
+// redundant — the user is already looking at that artist. We swap to a
+// cleaner display: the parsed song title alone in the track-title slot,
+// no sub. In every other view we keep the original (full) title + the
+// clickable artist sub.
+const isInArtistView = computed(() => {
+  if (view.name !== 'artist' || !view.selectedArtist) return false;
+  if (!parsedArtist.value) return false;
+  return normalizeArtistKey(parsedArtist.value) === normalizeArtistKey(view.selectedArtist);
+});
+const displayTitle = computed(() => {
+  if (isInArtistView.value && parsed.value.song) return parsed.value.song;
+  return props.track.title;
+});
 
 function openArtistView(e) {
   e.stopPropagation();
@@ -164,8 +180,8 @@ onMounted(() => {
     </div>
     <img class="track-thumb" :src="track.thumbnail || ''" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
     <div class="track-meta">
-      <div class="track-title">{{ track.title }}</div>
-      <div class="track-sub">
+      <div class="track-title">{{ displayTitle }}</div>
+      <div v-if="!isInArtistView" class="track-sub">
         <a
           v-if="parsedArtist"
           class="track-artist-link"

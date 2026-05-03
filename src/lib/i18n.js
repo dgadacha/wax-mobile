@@ -136,6 +136,13 @@ const messages = {
     'artist.eyebrow': 'Artist',
     'artist.go_to': (name) => `View all tracks by ${name}`,
     'artist.empty': 'No tracks by this artist in your library yet.',
+    'artist.in_library': 'In your library',
+    'artist.discover_heading': (name) => `More from ${name}`,
+    'artist.discover_empty': 'No other tracks found from this artist.',
+    'artist.discover_error': 'Could not load recommendations.',
+    'artist.back': 'Back',
+    'artist.add_all': 'Add all to favorites',
+    'artist.add_all_done': (n) => `Added ${n} track${n === 1 ? '' : 's'} to your library.`,
 
     // Settings — tabs
     'settings.title': 'Settings',
@@ -419,6 +426,13 @@ const messages = {
     'artist.eyebrow': 'Artiste',
     'artist.go_to': (name) => `Voir toutes les pistes de ${name}`,
     'artist.empty': "Aucune piste de cet artiste dans ta bibliothèque pour l'instant.",
+    'artist.in_library': 'Dans ta bibliothèque',
+    'artist.discover_heading': (name) => `Plus de ${name}`,
+    'artist.discover_empty': "Pas d'autre piste trouvée pour cet artiste.",
+    'artist.discover_error': 'Impossible de charger les recommandations.',
+    'artist.back': 'Retour',
+    'artist.add_all': 'Tout ajouter aux favoris',
+    'artist.add_all_done': (n) => `${n} piste${n === 1 ? '' : 's'} ajoutée${n === 1 ? '' : 's'} à ta bibliothèque.`,
 
     // Settings — tabs
     'settings.title': 'Paramètres',

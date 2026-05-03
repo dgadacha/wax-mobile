@@ -4,6 +4,7 @@ node_modules/
 library/audio/
 library/previews/
 library/covers/
+library/artists/
 library/library.json
 library/playlists.json
 

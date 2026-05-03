@@ -87,12 +87,14 @@ const LIBRARY_DIR = process.env.WAX_LIBRARY_DIR || path.join(ROOT, 'library');
 const AUDIO_DIR = path.join(LIBRARY_DIR, 'audio');
 const PREVIEW_DIR = path.join(LIBRARY_DIR, 'previews');
 const COVERS_DIR = path.join(LIBRARY_DIR, 'covers');
+const ARTISTS_DIR = path.join(LIBRARY_DIR, 'artists');
 const LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 const PLAYLISTS_FILE = path.join(LIBRARY_DIR, 'playlists.json');
 
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
 fs.mkdirSync(PREVIEW_DIR, { recursive: true });
 fs.mkdirSync(COVERS_DIR, { recursive: true });
+fs.mkdirSync(ARTISTS_DIR, { recursive: true });
 if (!fs.existsSync(LIBRARY_FILE)) fs.writeFileSync(LIBRARY_FILE, '[]');
 if (!fs.existsSync(PLAYLISTS_FILE)) fs.writeFileSync(PLAYLISTS_FILE, '[]');
 
@@ -184,6 +186,214 @@ app.get('/api/cover/:ytId', async (req, res) => {
     return res.sendFile(cached);
   }
   // All variants failed — client falls back to its placeholder.
+  res.status(404).end();
+});
+
+// ----------------------------------------------------------------
+// Artist photo pipeline — `/api/artist-photo/:name`.
+//
+// Two-step scrape via yt-dlp:
+//   1. ytsearch1:<name> → grab the top video result, read its `channel_url`
+//   2. <channel_url> with --playlist-items 0 -J → channel-level JSON,
+//      contains a `thumbnails` array (the avatar in multiple sizes).
+// We pick the largest thumbnail, download it, cache to disk under
+// `library/artists/<key>.jpg` (key = normalized lowercase alphanum,
+// matches client-side normalizeArtistKey() so the same artist clusters
+// under one cache file regardless of the spelling we look up).
+// 404 on failure → client falls back to the gradient hero.
+// ----------------------------------------------------------------
+
+function normalizeArtistKey(name) {
+  return (name || '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s*[-—]\s*topic$/i, '')
+    .replace(/\s*(vevo|official|music|tv|hd|records?)$/i, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+// In-flight dedupe so concurrent hits on the same artist only fire one yt-dlp.
+const artistPhotoInflight = new Map(); // key -> Promise<localPath|null>
+
+function fetchArtistPhotoFromYouTube(name) {
+  return new Promise((resolve) => {
+    // Step 1: search for 5 videos, look at every distinct channel that
+    // produced a hit, and pick the one whose name best matches the artist
+    // (via normalizeArtistKey). Cheap fan-channel / lyrics-channel filter:
+    // unrelated channels score 0, exact-match scores 100, "<name> - Topic"
+    // (YouTube's auto-generated official artist page) and VEVO variants
+    // score high too. Without this we'd often pick the first result's
+    // uploader, which is regularly some random reaction/lyrics account.
+    const queryKey = normalizeArtistKey(name);
+    runYtDlp(() => new Promise((r1) => {
+      const ytdlp = spawn(YT_DLP_BIN, [
+        '--no-warnings',
+        '--skip-download',
+        '--flat-playlist',
+        '--print', '%(channel)s|||%(channel_url)s|||%(uploader)s|||%(uploader_url)s|||%(channel_id)s|||%(uploader_id)s',
+        '--playlist-end', '5',
+        `ytsearch5:${name}`,
+      ]);
+      let out = '', err = '';
+      ytdlp.stdout.on('data', d => { out += d; });
+      ytdlp.stderr.on('data', d => { err += d; });
+      ytdlp.on('error', () => r1(null));
+      ytdlp.on('close', code => {
+        if (code !== 0) return r1(null);
+        const seen = new Map(); // url -> {url, score, rank}
+        const lines = out.split('\n').filter((l) => l.trim());
+        lines.forEach((line, rank) => {
+          const parts = line.split('|||').map((s) => (s === 'NA' ? '' : s));
+          const [chName, chUrl, upName, upUrl, chId, upId] = parts;
+          let url = chUrl || upUrl;
+          if (!url && chId && /^UC[\w-]+$/.test(chId)) url = `https://www.youtube.com/channel/${chId}`;
+          if (!url && upId && /^UC[\w-]+$/.test(upId)) url = `https://www.youtube.com/channel/${upId}`;
+          if (!url) return;
+          const candidateName = chName || upName || '';
+          const cKey = normalizeArtistKey(candidateName);
+          let score = 0;
+          if (cKey && cKey === queryKey) score = 100;
+          // partial match — covers "ArtistVEVO", "ArtistOfficial", etc. that
+          // normalizeArtistKey already strips, so this fires only for distinct
+          // suffixes still attached after normalization.
+          else if (cKey && (cKey.startsWith(queryKey) || queryKey.startsWith(cKey))) score = 70;
+          else if (cKey && cKey.includes(queryKey)) score = 40;
+          // First search hits get a tiny rank tiebreaker.
+          score += Math.max(0, 5 - rank);
+          const prev = seen.get(url);
+          if (!prev || prev.score < score) seen.set(url, { url, score });
+        });
+        const sorted = Array.from(seen.values()).sort((a, b) => b.score - a.score);
+        // Demand a positive score: we'd rather 404 than serve the avatar of
+        // a random reaction channel that happened to top the results.
+        const winner = sorted[0];
+        r1(winner && winner.score >= 40 ? winner.url : null);
+      });
+    })).then((channelUrl) => {
+      if (!channelUrl) return resolve(null);
+      // Step 2: pull the full channel JSON. The `thumbnails` array mixes
+      // banner shots (wide aspect) with avatars; we filter to avatar-only
+      // by preferring entries explicitly tagged `avatar_uncropped`, then
+      // any square entry (width === height), and pick the largest.
+      runYtDlp(() => new Promise((r2) => {
+        const ytdlp = spawn(YT_DLP_BIN, [
+          '--no-warnings',
+          '--skip-download',
+          '--playlist-items', '0',
+          '-J',
+          channelUrl,
+        ]);
+        let out = '', err = '';
+        ytdlp.stdout.on('data', d => { out += d; });
+        ytdlp.stderr.on('data', d => { err += d; });
+        ytdlp.on('error', () => r2(null));
+        ytdlp.on('close', code => {
+          if (code !== 0) return r2(null);
+          try {
+            const data = JSON.parse(out);
+            const thumbs = (data && data.thumbnails) || [];
+            // Tier 1: explicit avatar entry.
+            let best = thumbs.find((th) => th && th.id === 'avatar_uncropped');
+            // Tier 2: largest square entry.
+            if (!best) {
+              const squares = thumbs.filter((th) => th && th.url && th.width && th.height && th.width === th.height);
+              squares.sort((a, b) => (b.width || 0) - (a.width || 0));
+              best = squares[0];
+            }
+            // Tier 3: anything tagged with "avatar" in id, fallback last resort.
+            if (!best) {
+              best = thumbs.find((th) => th && th.url && /avatar/i.test(String(th.id || '')));
+            }
+            r2(best && best.url ? best.url : null);
+          } catch {
+            r2(null);
+          }
+        });
+      })).then((photoUrl) => {
+        // Last-ditch fallback: scrape the channel page HTML for the
+        // <meta property="og:image"> tag — YouTube always populates that
+        // with the channel avatar, even when yt-dlp's JSON returns only
+        // banner thumbnails.
+        if (photoUrl) return photoUrl;
+        return new Promise((r3) => {
+          https.get(channelUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
+            if (r.statusCode !== 200) { r.resume(); return r3(null); }
+            let html = '';
+            r.setEncoding('utf8');
+            r.on('data', (c) => { html += c; if (html.length > 500_000) { r.destroy(); } });
+            r.on('end', () => {
+              const m = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i);
+              r3(m ? m[1] : null);
+            });
+            r.on('close', () => {
+              if (!html) return r3(null);
+              const m = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i);
+              r3(m ? m[1] : null);
+            });
+            r.on('error', () => r3(null));
+          }).on('error', () => r3(null));
+        });
+      }).then((photoUrl) => {
+        if (!photoUrl) return resolve(null);
+        // Download the picked URL to disk.
+        const dest = path.join(ARTISTS_DIR, `${normalizeArtistKey(name)}.jpg`);
+        https.get(photoUrl, (r) => {
+          if (r.statusCode !== 200) {
+            r.resume();
+            return resolve(null);
+          }
+          const chunks = [];
+          r.on('data', (c) => chunks.push(c));
+          r.on('end', () => {
+            const buf = Buffer.concat(chunks);
+            if (buf.length < 500) return resolve(null); // likely a placeholder
+            try {
+              fs.writeFileSync(dest, buf);
+              resolve(dest);
+            } catch {
+              resolve(null);
+            }
+          });
+          r.on('error', () => resolve(null));
+        }).on('error', () => resolve(null));
+      });
+    });
+  });
+}
+
+app.get('/api/artist-photo/:name', async (req, res) => {
+  const name = String(req.params.name || '').trim();
+  if (!name) return res.status(400).end();
+  const key = normalizeArtistKey(name);
+  if (!key) return res.status(400).end();
+  const localPath = path.join(ARTISTS_DIR, `${key}.jpg`);
+  if (fs.existsSync(localPath)) {
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    return res.sendFile(localPath);
+  }
+  // Negative cache: a `.miss` sentinel lives next to a real .jpg when the
+  // last lookup failed. Spares us re-running yt-dlp on every page visit
+  // for an artist YouTube genuinely doesn't have a photo for.
+  const missPath = path.join(ARTISTS_DIR, `${key}.miss`);
+  if (fs.existsSync(missPath)) {
+    // Re-try after 24h.
+    const age = Date.now() - fs.statSync(missPath).mtimeMs;
+    if (age < 86400_000) return res.status(404).end();
+    try { fs.unlinkSync(missPath); } catch {}
+  }
+  let inflight = artistPhotoInflight.get(key);
+  if (!inflight) {
+    inflight = fetchArtistPhotoFromYouTube(name).finally(() => {
+      artistPhotoInflight.delete(key);
+    });
+    artistPhotoInflight.set(key, inflight);
+  }
+  const cached = await inflight;
+  if (cached) {
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    return res.sendFile(cached);
+  }
+  try { fs.writeFileSync(missPath, ''); } catch {}
   res.status(404).end();
 });
 
