@@ -194,11 +194,10 @@ async function rescanAlbums() {
       showToast(t('settings.albums_rescan_nothing'), 'success');
       return;
     }
-    // Seed the bar — but defensively. Skip the seed if SSE events have
-    // already raced ahead of the HTTP response (server's setImmediate
-    // makes this unlikely, but on flaky networks the events from this
-    // very rescan can land first). Only reset when we'd actually be
-    // moving the bar forward, never backward.
+    // Seed defensively (don't move the bar backward if SSE has already
+    // raced ahead) — and start a polling fallback in case SSE is broken
+    // (Vite HMR disconnect, sleep, etc.). Poll wins the race against a
+    // dropped SSE connection — the user always sees progress.
     const current = lib.albumRescan;
     const shouldSeed =
       !current.running ||
@@ -211,11 +210,47 @@ async function rescanAlbums() {
         total: data.total,
       };
     }
+    pollRescanState();
   } catch {
     showToast(t('settings.albums_rescan_error'), 'error');
   } finally {
     posting.value = false;
   }
+}
+
+// Polling fallback — resyncs lib.albumRescan from the server every 2 s
+// while running. Does NOT replace SSE; it's a backstop when SSE drops
+// (the EventSource closes silently on Vite HMR + macOS sleep). When
+// SSE is healthy, it just confirms what we already know. Stops once
+// the server reports running=false or after 60 s as a safety net.
+let rescanPollTimer = null;
+async function pollRescanState() {
+  if (rescanPollTimer) return;
+  const start = Date.now();
+  const tick = async () => {
+    try {
+      const res = await fetch('/api/library/rescan-albums');
+      const data = await res.json();
+      // Only move forward — SSE may have already advanced past this.
+      if ((data.done || 0) > lib.albumRescan.done || data.total !== lib.albumRescan.total) {
+        lib.albumRescan = {
+          running: !!data.running,
+          done: data.done || 0,
+          total: data.total || 0,
+        };
+      } else if (!data.running && lib.albumRescan.running) {
+        // Server says we're done — flip the local flag.
+        lib.albumRescan = { ...lib.albumRescan, running: false };
+      }
+      if (!data.running || Date.now() - start > 60_000) {
+        clearInterval(rescanPollTimer);
+        rescanPollTimer = null;
+        return;
+      }
+    } catch {}
+  };
+  rescanPollTimer = setInterval(tick, 2000);
+  tick();
 }
 
 const purging = ref(false);
