@@ -8,6 +8,7 @@ import { showToast } from '@/lib/toast';
 import { fmtDuration, gradientFromString } from '@/lib/format';
 import { t } from '@/lib/i18n';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 import { openComponentModal, closeModal } from '@/lib/modal';
 import BulkAddBody from '@/components/BulkAddBody.vue';
 
@@ -137,6 +138,7 @@ async function downloadAll() {
           </svg>
         </button>
       </div>
+      <TrackListHeader />
       <ul class="track-list">
         <TrackRow
           v-for="(t, i) in tracks"

@@ -9,6 +9,7 @@ import { fmtDuration, gradientFromString, parseTrackTitle, normalizeArtistKey } 
 import { t } from '@/lib/i18n';
 import { showToast } from '@/lib/toast';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 
 const view = useViewStore();
 const lib = useLibraryStore();
@@ -183,6 +184,7 @@ watch(
           </button>
         </div>
         <h3 class="section-heading">{{ t('artist.in_library') }}</h3>
+        <TrackListHeader />
         <ul class="track-list">
           <TrackRow
             v-for="(tr, i) in libraryTracks"
@@ -223,15 +225,18 @@ watch(
           <span class="skeleton-block skel-actions"></span>
         </li>
       </ul>
-      <ul v-else-if="recommendations.length > 0" class="track-list">
-        <TrackRow
-          v-for="(tr, i) in recommendations"
-          :key="tr.id"
-          :track="tr"
-          :index="i"
-          :queue="recommendationQueueIds"
-        />
-      </ul>
+      <template v-else-if="recommendations.length > 0">
+        <TrackListHeader />
+        <ul class="track-list">
+          <TrackRow
+            v-for="(tr, i) in recommendations"
+            :key="tr.id"
+            :track="tr"
+            :index="i"
+            :queue="recommendationQueueIds"
+          />
+        </ul>
+      </template>
       <p v-else-if="recsError" class="empty-state">
         {{ t('artist.discover_error') }}
       </p>

@@ -12,6 +12,7 @@ import { promptModal } from '@/lib/modal';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { ICON_HEART, ICON_HEART_OUTLINE, ICON_QUEUE_ADD } from '@/lib/icons';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 
 const view = useViewStore();
 const lib = useLibraryStore();
@@ -408,7 +409,9 @@ function goBack() {
             <span class="skeleton-block skel-actions"></span>
           </li>
         </ul>
-        <ul v-else-if="albumEntries.length > 0" class="track-list">
+        <template v-else-if="albumEntries.length > 0">
+        <TrackListHeader />
+        <ul class="track-list">
           <template v-for="(entry, i) in albumEntries" :key="entry.key">
             <!-- Library match: full TrackRow with all standard actions. -->
             <TrackRow
@@ -473,8 +476,11 @@ function goBack() {
             </li>
           </template>
         </ul>
+        </template>
         <!-- No MB tracklist available: fall back to library-only list. -->
-        <ul v-else-if="album.libTracks.length > 0" class="track-list">
+        <template v-else-if="album.libTracks.length > 0">
+        <TrackListHeader />
+        <ul class="track-list">
           <TrackRow
             v-for="(tr, i) in album.libTracks"
             :key="tr.id"
@@ -484,6 +490,7 @@ function goBack() {
             :thumb-override="coverUrl"
           />
         </ul>
+        </template>
         <p v-else-if="tracklistError" class="empty-state">
           {{ t('album.tracklist_error') }}
         </p>

@@ -6,6 +6,7 @@ import { useStreamsStore } from '@/stores/streams';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/lib/i18n';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 
 const mix = useMixStore();
 const view = useViewStore();
@@ -77,6 +78,7 @@ function close() {
           </svg>
         </button>
       </div>
+      <TrackListHeader />
       <ul class="track-list">
         <TrackRow
           v-for="(t, i) in tracks"

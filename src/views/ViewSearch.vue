@@ -10,6 +10,7 @@ import { showToast } from '@/lib/toast';
 import { t } from '@/lib/i18n';
 import JobItem from '@/components/JobItem.vue';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 import DiscoverGrid from '@/components/DiscoverGrid.vue';
 
 const search = useSearchStore();
@@ -231,6 +232,7 @@ function togglePlaylistTrack(id) { search.togglePlaylistTrack(id); }
         <p>{{ t('search.no_results', search.inputValue) }}</p>
       </div>
 
+      <TrackListHeader v-if="search.status !== 'searching' && searchTracks.length > 0" />
       <ul
         class="track-list"
         v-if="search.status !== 'searching' && searchTracks.length > 0"

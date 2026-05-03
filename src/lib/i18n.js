@@ -101,6 +101,8 @@ const messages = {
 
     // Track row
     'track.play': 'Play',
+    'track.col_title': 'Title',
+    'track.col_album': 'Album',
     'track.add_playlist': 'Add to a playlist',
     'track.rename': 'Rename',
     'track.download_offline': 'Download for offline listening',
@@ -417,6 +419,8 @@ const messages = {
 
     // Track row
     'track.play': 'Lire',
+    'track.col_title': 'Titre',
+    'track.col_album': 'Album',
     'track.add_playlist': 'Ajouter à une playlist',
     'track.rename': 'Renommer',
     'track.download_offline': "Télécharger pour l'écoute hors ligne",

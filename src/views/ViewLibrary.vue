@@ -4,6 +4,7 @@ import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { t } from '@/lib/i18n';
 import TrackRow from '@/components/TrackRow.vue';
+import TrackListHeader from '@/components/TrackListHeader.vue';
 
 const lib = useLibraryStore();
 const player = usePlayerStore();
@@ -58,6 +59,7 @@ function skSubW() { return 30 + Math.random() * 25; }
           @input="onSearchInput"
         />
       </div>
+      <TrackListHeader />
       <ul id="library-list" class="track-list">
         <li v-for="(_, i) in skeletonRows" :key="'sk' + i" class="skeleton-track">
           <span class="skeleton sk-num"></span>
