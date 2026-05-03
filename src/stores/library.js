@@ -16,6 +16,9 @@ export const useLibraryStore = defineStore('library', {
     search: '',                 // current filter
     libraryDownloads: new Map(), // trackId -> { progress, phase }
     ytdlpStatus: { active: 0, queued: 0 },
+    // Album rescan progress driven by the server's SSE rescan events.
+    // Settings UI watches this for the progress bar.
+    albumRescan: { running: false, done: 0, total: 0 },
   }),
   getters: {
     inLibraryByYtId: (state) => (ytId) => state.tracks.some((t) => t.ytId === ytId),
@@ -391,6 +394,12 @@ export const useLibraryStore = defineStore('library', {
           track.albumReleaseGroupId = data.albumReleaseGroupId || null;
           track.albumReleaseId = data.albumReleaseId || null;
           track.albumReleaseDate = data.albumReleaseDate || null;
+        } else if (data.type === 'rescan') {
+          this.albumRescan = {
+            running: !!data.running,
+            done: data.done || 0,
+            total: data.total || 0,
+          };
         }
       };
       es.onerror = () => {

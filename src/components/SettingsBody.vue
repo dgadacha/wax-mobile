@@ -170,9 +170,19 @@ const orphanCount = computed(() => {
   const playlistTrackIds = new Set(pls.items.flatMap((pl) => pl.trackIds));
   return lib.tracks.filter((t) => t.liked === false && !playlistTrackIds.has(t.id)).length;
 });
-const rescanning = ref(false);
+// Album rescan — fire the POST, then read live progress from the
+// library store (driven by the server's SSE rescan events). The local
+// `posting` flag covers only the request flight; once the server
+// confirms, the progress bar takes over.
+const posting = ref(false);
+const rescanning = computed(() => posting.value || lib.albumRescan.running);
+const rescanPct = computed(() => {
+  const r = lib.albumRescan;
+  if (!r.total) return 0;
+  return Math.min(100, Math.round((r.done / r.total) * 100));
+});
 async function rescanAlbums() {
-  rescanning.value = true;
+  posting.value = true;
   try {
     const res = await fetch('/api/library/rescan-albums', { method: 'POST' });
     if (!res.ok) {
@@ -180,11 +190,17 @@ async function rescanAlbums() {
       return;
     }
     const data = await res.json();
-    showToast(t('settings.albums_rescan_done', data.queued || 0), 'success');
+    if ((data.total || 0) === 0) {
+      showToast(t('settings.albums_rescan_nothing'), 'success');
+      return;
+    }
+    // Seed the local state immediately so the bar shows up at 0/total
+    // without waiting for the first SSE tick.
+    lib.albumRescan = { running: true, done: 0, total: data.total };
   } catch {
     showToast(t('settings.albums_rescan_error'), 'error');
   } finally {
-    rescanning.value = false;
+    posting.value = false;
   }
 }
 
@@ -404,6 +420,14 @@ async function purge() {
           >
             {{ rescanning ? t('settings.albums_rescan_running') : t('settings.albums_rescan') }}
           </button>
+        </div>
+        <div v-if="lib.albumRescan.running || (lib.albumRescan.total > 0 && lib.albumRescan.done < lib.albumRescan.total)" class="settings-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: rescanPct + '%' }"></div>
+          </div>
+          <span class="settings-progress-label">
+            {{ lib.albumRescan.done }} / {{ lib.albumRescan.total }}
+          </span>
         </div>
       </div>
 

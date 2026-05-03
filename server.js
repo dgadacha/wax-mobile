@@ -1403,31 +1403,38 @@ function broadcastAlbumEvent(payload) {
 // Backfill helpers — run an album lookup, write the result back into
 // library.json + broadcast over SSE. Tolerant of races: re-reads the
 // library on success, finds the track by id, and only persists if it's
-// still there.
-function scheduleAlbumBackfill(track) {
+// still there. `onComplete` fires after every attempt (hit or miss) so
+// the rescan endpoint can drive a progress bar.
+function scheduleAlbumBackfill(track, onComplete) {
   const parsed = parseTrackTitle(track.title, track.uploader);
-  if (!parsed.artist || !parsed.song) return;
+  if (!parsed.artist || !parsed.song) {
+    if (onComplete) onComplete();
+    return;
+  }
   resolveAlbum(parsed.artist, parsed.song)
     .then((album) => {
-      if (!album) return;
-      const fresh = readJson(LIBRARY_FILE);
-      const idx = fresh.findIndex((t) => t.id === track.id);
-      if (idx === -1) return;
-      fresh[idx].album = album.album;
-      fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
-      fresh[idx].albumReleaseId = album.releaseId || null;
-      fresh[idx].albumReleaseDate = album.releaseDate || null;
-      saveLibrary(fresh);
-      broadcastAlbumEvent({
-        type: 'album',
-        trackId: track.id,
-        album: album.album,
-        albumReleaseGroupId: album.releaseGroupId || null,
-        albumReleaseId: album.releaseId || null,
-        albumReleaseDate: album.releaseDate || null,
-      });
+      if (album) {
+        const fresh = readJson(LIBRARY_FILE);
+        const idx = fresh.findIndex((t) => t.id === track.id);
+        if (idx !== -1) {
+          fresh[idx].album = album.album;
+          fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
+          fresh[idx].albumReleaseId = album.releaseId || null;
+          fresh[idx].albumReleaseDate = album.releaseDate || null;
+          saveLibrary(fresh);
+          broadcastAlbumEvent({
+            type: 'album',
+            trackId: track.id,
+            album: album.album,
+            albumReleaseGroupId: album.releaseGroupId || null,
+            albumReleaseId: album.releaseId || null,
+            albumReleaseDate: album.releaseDate || null,
+          });
+        }
+      }
+      if (onComplete) onComplete();
     })
-    .catch(() => {});
+    .catch(() => { if (onComplete) onComplete(); });
 }
 
 // SSE endpoint — clients subscribe once on app mount and stay connected
@@ -1449,13 +1456,42 @@ app.get('/api/album-progress', (req, res) => {
   });
 });
 
-// Manual trigger — same logic as autoBackfillOnStartup, exposed as an
-// endpoint so the user can re-run the scan from the UI without
-// restarting the dev server. Returns immediately with the queue count;
-// progress is visible via SSE on /api/album-progress.
+// Manual rescan — same logic as autoBackfillOnStartup but driven from
+// the UI. Tracks progress in-process and broadcasts `{type:'rescan',
+// done, total}` SSE events after each lookup completes (hit or miss)
+// so the Settings UI can render a real progress bar. Idempotent: a
+// POST while another rescan is running just returns the live state.
+let albumRescanState = { running: false, done: 0, total: 0 };
+
+app.get('/api/library/rescan-albums', (req, res) => {
+  res.json(albumRescanState);
+});
+
 app.post('/api/library/rescan-albums', (req, res) => {
-  const queued = autoBackfillOnStartup();
-  res.json({ queued });
+  if (albumRescanState.running) return res.json(albumRescanState);
+  const lib = readJson(LIBRARY_FILE);
+  const targets = lib.filter((t) => !t.album || !t.albumReleaseId);
+  albumRescanState = { running: true, done: 0, total: targets.length };
+  res.json(albumRescanState);
+  if (targets.length === 0) {
+    albumRescanState.running = false;
+    broadcastAlbumEvent({ type: 'rescan', done: 0, total: 0, running: false });
+    return;
+  }
+  for (const track of targets) {
+    scheduleAlbumBackfill(track, () => {
+      albumRescanState.done++;
+      const finished = albumRescanState.done >= albumRescanState.total;
+      if (finished) albumRescanState.running = false;
+      broadcastAlbumEvent({
+        type: 'rescan',
+        done: albumRescanState.done,
+        total: albumRescanState.total,
+        running: !finished,
+      });
+    });
+  }
+  console.log(`[album] rescan queued ${targets.length} track(s)`);
 });
 
 // Auto-backfill at startup — schedule a lookup for every library track
