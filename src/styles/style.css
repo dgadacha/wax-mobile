@@ -841,37 +841,40 @@ html.light .hero-cover {
   .hero-cover { width: 160px; height: 160px; }
 }
 
-/* Album grid (ViewAlbums index page) */
+/* Album grid (ViewAlbums index page) — matches the Discover card style:
+   solid card background, padded interior, plain rounded cover with no
+   border or heavy shadow. */
 .album-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 16px;
 }
 .album-card {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 0;
-  background: transparent;
-  border: 0;
+  background: var(--card);
+  border: none;
+  border-radius: 8px;
+  padding: 12px;
   text-align: left;
   cursor: pointer;
+  font: inherit;
   color: inherit;
-  transition: transform 0.15s;
-  /* Grid items default to min-width: auto, which prevents flex/grid
-     children from clipping text via ellipsis. Force shrinkability. */
+  transition: background 0.15s ease, transform 0.15s ease;
   min-width: 0;
 }
-.album-card:hover { transform: translateY(-2px); }
+.album-card:hover {
+  background: var(--card-hover);
+  transform: translateY(-2px);
+}
 .album-cover {
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 8px;
+  border-radius: 4px;
   overflow: hidden;
   background-size: cover;
   background-position: center;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--border);
+  background-color: var(--card-hover);
   position: relative;
 }
 .album-cover img {
@@ -881,6 +884,7 @@ html.light .hero-cover {
   display: block;
 }
 .album-meta {
+  margin-top: 12px;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -888,24 +892,27 @@ html.light .hero-cover {
 }
 .album-title {
   font-weight: 600;
-  font-size: 0.95rem;
-  white-space: nowrap;
+  font-size: 0.9rem;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--text);
-  max-width: 100%;
 }
 .album-sub {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--text-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  margin-top: 4px;
 }
 .album-count {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
+  margin-top: 2px;
 }
 
 /* "Other tracks" rows on ViewAlbum — slimmer than a real TrackRow
