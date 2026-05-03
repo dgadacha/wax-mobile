@@ -4,7 +4,7 @@ import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { useViewStore } from '@/stores/view';
 import { useStreamsStore } from '@/stores/streams';
-import { ICON_HEART, ICON_NOTE } from '@/lib/icons';
+import { ICON_HEART, ICON_NOTE, ICON_DISC } from '@/lib/icons';
 import { gradientFromString, onThumbError, onThumbLoad } from '@/lib/format';
 import { openSettings } from './settings';
 import { showToast } from '@/lib/toast';
@@ -28,6 +28,18 @@ const items = computed(() => {
     iconHtml: ICON_HEART,
     iconClass: 'liked-icon',
   });
+  // Albums — only surfaces when the MusicBrainz backfill has populated
+  // at least one track's album field. Hidden on cold-start to avoid an
+  // empty section.
+  if (library.albums.length > 0) {
+    out.push({
+      kind: 'albums',
+      active: view.name === 'albums' || view.name === 'album',
+      name: t('albums.title'),
+      sub: t('albums.count_short', library.albums.length),
+      iconHtml: ICON_DISC,
+    });
+  }
   // User playlists
   for (const pl of playlists.items) {
     const tracks = pl.trackIds
@@ -50,6 +62,7 @@ const items = computed(() => {
 
 function clickItem(item) {
   if (item.kind === 'library') view.switchTo('library');
+  else if (item.kind === 'albums') view.switchTo('albums');
   else if (item.kind === 'playlist') view.switchTo('playlist', item.id);
 }
 

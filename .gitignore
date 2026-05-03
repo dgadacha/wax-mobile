@@ -5,6 +5,8 @@ library/audio/
 library/previews/
 library/covers/
 library/artists/
+library/albums/
+library/album-covers/
 library/library.json
 library/playlists.json
 

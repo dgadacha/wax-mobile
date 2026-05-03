@@ -44,6 +44,41 @@ export const useLibraryStore = defineStore('library', {
         return normalizeArtistKey(parsed.artist) === key;
       });
     },
+    // Group library tracks by `album`. Tracks without album metadata
+    // (the field arrives later via the MusicBrainz backfill) are excluded
+    // from this view. Returns a Map keyed by releaseGroupId (so an album
+    // with the same name by two artists doesn't collapse into one entry)
+    // with { name, artist, releaseGroupId, tracks[] }.
+    albums(state) {
+      const map = new Map();
+      for (const tr of state.tracks) {
+        if (!tr.album) continue;
+        const key = tr.albumReleaseGroupId || `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            name: tr.album,
+            artist: parseTrackTitle(tr).artist,
+            releaseGroupId: tr.albumReleaseGroupId || null,
+            releaseDate: tr.albumReleaseDate || null,
+            tracks: [],
+          });
+        }
+        map.get(key).tracks.push(tr);
+      }
+      return Array.from(map.values()).sort((a, b) => {
+        // Newest first, then alphabetical.
+        const ad = a.releaseDate || '0';
+        const bd = b.releaseDate || '0';
+        if (ad !== bd) return bd.localeCompare(ad);
+        return a.name.localeCompare(b.name);
+      });
+    },
+    albumByKey: (state) => (key) => state.tracks.filter((tr) => {
+      if (!tr.album) return false;
+      const trackKey = tr.albumReleaseGroupId || `${normalizeArtistKey(parseTrackTitle(tr).artist)}::${tr.album}`;
+      return trackKey === key;
+    }),
   },
   actions: {
     isInLibrary(track) {

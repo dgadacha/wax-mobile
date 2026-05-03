@@ -88,6 +88,8 @@ const AUDIO_DIR = path.join(LIBRARY_DIR, 'audio');
 const PREVIEW_DIR = path.join(LIBRARY_DIR, 'previews');
 const COVERS_DIR = path.join(LIBRARY_DIR, 'covers');
 const ARTISTS_DIR = path.join(LIBRARY_DIR, 'artists');
+const ALBUMS_DIR = path.join(LIBRARY_DIR, 'albums');           // MusicBrainz lookup JSON cache
+const ALBUM_COVERS_DIR = path.join(LIBRARY_DIR, 'album-covers'); // Cover Art Archive cache
 const LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
 const PLAYLISTS_FILE = path.join(LIBRARY_DIR, 'playlists.json');
 
@@ -95,6 +97,8 @@ fs.mkdirSync(AUDIO_DIR, { recursive: true });
 fs.mkdirSync(PREVIEW_DIR, { recursive: true });
 fs.mkdirSync(COVERS_DIR, { recursive: true });
 fs.mkdirSync(ARTISTS_DIR, { recursive: true });
+fs.mkdirSync(ALBUMS_DIR, { recursive: true });
+fs.mkdirSync(ALBUM_COVERS_DIR, { recursive: true });
 if (!fs.existsSync(LIBRARY_FILE)) fs.writeFileSync(LIBRARY_FILE, '[]');
 if (!fs.existsSync(PLAYLISTS_FILE)) fs.writeFileSync(PLAYLISTS_FILE, '[]');
 
@@ -387,6 +391,356 @@ app.get('/api/artist-photo/:name', async (req, res) => {
       artistPhotoInflight.delete(key);
     });
     artistPhotoInflight.set(key, inflight);
+  }
+  const cached = await inflight;
+  if (cached) {
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    return res.sendFile(cached);
+  }
+  try { fs.writeFileSync(missPath, ''); } catch {}
+  res.status(404).end();
+});
+
+// ----------------------------------------------------------------
+// Album metadata pipeline — `/api/album-lookup` + `/api/album-cover/:mbid`.
+//
+// yt-dlp doesn't expose an `album` field for YouTube videos (verified
+// across regular videos, Topic auto-channels, and music.youtube.com URLs
+// — every one returns NA). So we resolve album info via MusicBrainz:
+//   1. POST artist+title → /ws/2/recording?query=… → JSON results
+//   2. Filter to high-confidence matches (score >= 90)
+//   3. Pick the best release attached: prefer Album type over Single /
+//      Compilation / Soundtrack / EP, then earliest release date
+//   4. Cache result on disk by hash(normalized artist + title)
+//
+// Cover art comes from Cover Art Archive, MB's image partner, via
+//   https://coverartarchive.org/release-group/<mbid>/front
+// proxied through `/api/album-cover/:mbidGroup` so the client gets a
+// single stable URL and we keep one disk-cached copy.
+//
+// MB requires a real User-Agent + 1 req/sec rate limit. We honor both.
+// ----------------------------------------------------------------
+
+// Mirror of the client's parseTrackTitle (src/lib/format.js) so we can
+// clean up "Artist - Song (Official Video)" titles before querying MB.
+const SERVER_TITLE_CRUFT = /\s*[\[\(](?:slowed|reverb(?:ed)?|reverb|lyrics?|official|audio|video|hq|4k|hd|remaster(?:ed)?|m\/v|mv|live|acoustic|cover|extended|radio edit|version|sped[ -]?up|nightcore|8d|3d|bass boosted|visualizer|color(?:ed)? coded)[^)\]]*[\]\)]/gi;
+
+function parseTrackTitle(title, uploader) {
+  const raw = (title || '').trim();
+  const cleaned = raw.replace(SERVER_TITLE_CRUFT, '').replace(/\s+/g, ' ').trim();
+  const m = cleaned.match(/^(.+?)\s*[-–—|]\s*(.+)$/);
+  if (m) return { artist: m[1].trim(), song: m[2].trim() };
+  return { artist: uploader || '', song: cleaned };
+}
+
+// Strip parenthesized featuring noise so MusicBrainz matches on the
+// canonical title — "Blinding Lights (feat. ROSALIA)" → "Blinding Lights".
+function cleanTitleForMB(title) {
+  return String(title || '')
+    .replace(/\s*[\[\(](feat\.?|ft\.?|featuring|with|prod\.?\s*by)[^)\]]*[\]\)]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanArtistForMB(artist) {
+  // MB indexes "feat." / "ft." inside artist credits as separate entities.
+  // Clip at the first feat to keep the primary artist for our query.
+  return String(artist || '')
+    .replace(/\s+(feat\.?|ft\.?|with)\s+.*$/i, '')
+    .trim();
+}
+
+function albumCacheKey(artist, title) {
+  const base = `${normalizeArtistKey(artist)}|${cleanTitleForMB(title).toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+  return crypto.createHash('sha1').update(base).digest('hex').slice(0, 16);
+}
+
+// MusicBrainz rate limiter — they ask for 1 req/sec sustained. Queue any
+// request that would breach the gap and stagger them. Single-flight per
+// process is enough for our scale (background backfills + manual lookups).
+const MB_MIN_GAP_MS = 1100;
+let mbLastReq = 0;
+const mbQueue = [];
+let mbDraining = false;
+function mbThrottle(fn) {
+  return new Promise((resolve, reject) => {
+    mbQueue.push({ fn, resolve, reject });
+    drainMbQueue();
+  });
+}
+async function drainMbQueue() {
+  if (mbDraining) return;
+  mbDraining = true;
+  while (mbQueue.length) {
+    const { fn, resolve, reject } = mbQueue.shift();
+    const wait = Math.max(0, MB_MIN_GAP_MS - (Date.now() - mbLastReq));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    mbLastReq = Date.now();
+    try { resolve(await fn()); } catch (e) { reject(e); }
+  }
+  mbDraining = false;
+}
+
+// Read package.json once for User-Agent, MB rejects requests without one.
+let MB_UA = 'Wax/1.0.0 (https://github.com/dgadacha/wax)';
+try {
+  const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+  MB_UA = `Wax/${pkg.version} (https://github.com/dgadacha/wax)`;
+} catch {}
+
+function mbFetchJson(urlStr) {
+  return mbThrottle(() => new Promise((resolve, reject) => {
+    https.get(urlStr, { headers: { 'User-Agent': MB_UA, 'Accept': 'application/json' } }, (r) => {
+      if (r.statusCode === 503) {
+        // MB rate-limit response — back off and resolve as null so callers
+        // treat it as "no match for now" rather than a hard failure.
+        r.resume();
+        return resolve(null);
+      }
+      if (r.statusCode !== 200) {
+        r.resume();
+        return reject(new Error(`MB HTTP ${r.statusCode}`));
+      }
+      let data = '';
+      r.setEncoding('utf8');
+      r.on('data', (c) => { data += c; });
+      r.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  }));
+}
+
+// Score a release for "album-likeness". Higher = more canonical.
+// Albums by primary-type win, secondary-types like Compilation/Live/Remix
+// take big hits, and we award a small bonus for each recording from the
+// query that maps to this release-group (canonical albums appear across
+// many recordings; one-off compilations appear in only one).
+// Title-based deboost: many reissues, deluxe editions, soundtracks etc.
+// share an `Album` primary-type with no secondary-types set in MB. The
+// title is the only reliable signal we have to demote them in favor of
+// the canonical original release. Collectors / Anniversary / Remastered
+// edits are particularly common in the dataset for popular artists.
+const TITLE_DEMOTE = /\b(deluxe|collectors?\b|collector\s*'?s|anniversary|remastered?|special\s*edition|expanded|reissue|limited\s*edition|bonus\s*tracks?|extended\s*edition|complete\s*edition|original\s*soundtrack|full\s*soundtrack|\bost\b|motion\s*picture|video\s*game)/i;
+// Live bootleg recordings often have title formats like
+// "2003-06-04: Electric Lady Studios, NY" — sometimes with unicode
+// hyphens (U+2010) instead of ASCII. Match any non-digit separator.
+const TITLE_DATE_PREFIX = /^\s*\d{4}[^\d]\d{2}[^\d]\d{2}/;
+
+function scoreReleaseGroup(release, hits) {
+  const rg = release['release-group'] || {};
+  const t = String(rg['primary-type'] || '').toLowerCase();
+  const sec = (rg['secondary-types'] || []).map((s) => String(s).toLowerCase());
+  let s = 0;
+  if (t === 'album') s = 100;
+  else if (t === 'ep') s = 60;
+  else if (t === 'single') s = 50;
+  else if (t === 'soundtrack') s = 40;
+  else if (t === 'broadcast') s = 20;
+  else s = 10;
+  if (sec.includes('compilation')) s -= 60;
+  if (sec.includes('live')) s -= 35;
+  if (sec.includes('remix')) s -= 35;
+  if (sec.includes('soundtrack')) s -= 10;
+  if (sec.includes('mixtape/street')) s -= 25;
+  if (sec.includes('demo')) s -= 30;
+  // Title-based deboost — catches "DAMN. Collectors Edition" beating
+  // "DAMN.", "Piece by Piece Full Soundtrack" beating "Random Access
+  // Memories", etc.
+  const title = String(rg.title || release.title || '');
+  if (TITLE_DEMOTE.test(title)) s -= 40;
+  if (TITLE_DATE_PREFIX.test(title)) s -= 80;
+  s += Math.min(20, hits * 3);
+  return s;
+}
+
+async function lookupAlbumOnMB(artist, title) {
+  const cleanArtist = cleanArtistForMB(artist);
+  const cleanTitle = cleanTitleForMB(title);
+  if (!cleanArtist || !cleanTitle) return null;
+  // MB Lucene-style query. We use `artistname` instead of `artist` because
+  // multi-credit recordings (e.g. "Daft Punk feat. Pharrell Williams" on
+  // "Get Lucky") don't match a strict `artist:"Daft Punk"` query — that
+  // field is the canonical primary artist only. `artistname` matches any
+  // name in the artist-credit chain, which is what we want.
+  const esc = (s) => s.replace(/"/g, '\\"');
+  const baseQuery = `artistname:"${esc(cleanArtist)}" AND recording:"${esc(cleanTitle)}"`;
+  // We run both queries — the unfiltered baseline catches normal cases
+  // (Daft Punk's Random Access Memories, etc.) and the Live/Compilation
+  // exclusion saves us on bootleg-flooded artists (Radiohead, Phish,
+  // Grateful Dead) where MB's first 50 unfiltered hits are pure
+  // bootlegs. Both pools feed the same scoring; the highest scored
+  // release-group across the union wins. Costs ~1 s extra (rate-limit
+  // adds the gap) but the result is materially better.
+  const filteredQuery = `${baseQuery} AND NOT secondarytype:Live AND NOT secondarytype:Compilation`;
+  const [result, filtered] = await Promise.all([
+    tryMBQuery(baseQuery, cleanArtist),
+    tryMBQuery(filteredQuery, cleanArtist),
+  ]);
+  if (!result && !filtered) return null;
+  let winner = result;
+  if (!result) winner = filtered;
+  else if (filtered && (filtered._rgScore || 0) > (result._rgScore || 0)) winner = filtered;
+  // Strip the internal scoring field — caller only sees user-facing data.
+  if (winner) delete winner._rgScore;
+  return winner;
+}
+
+async function tryMBQuery(query, cleanArtist) {
+  const url = `https://musicbrainz.org/ws/2/recording?query=${encodeURIComponent(query)}&fmt=json&limit=15&inc=releases+release-groups+artist-credits`;
+  const data = await mbFetchJson(url).catch(() => null);
+  if (!data || !Array.isArray(data.recordings)) return null;
+  // Filter recordings: score >= 75 AND artist-credit normalizes to query
+  // artist. The artist filter is what saves us from "compilation X also
+  // contains a track called <Title>" — the compilation's artist-credit
+  // is "Various Artists", which won't match our query.
+  const queryKey = normalizeArtistKey(cleanArtist);
+  const matched = data.recordings.filter((rec) => {
+    if ((rec.score || 0) < 75) return false;
+    const credit = rec['artist-credit'] || [];
+    const names = credit.map((c) => (c && (c.name || (c.artist && c.artist.name))) || '').join(' ');
+    return queryKey && normalizeArtistKey(names).includes(queryKey);
+  });
+  if (matched.length === 0) return null;
+  // Aggregate releases across all matched recordings, grouped by
+  // release-group id. Track how many recordings reference each group —
+  // the canonical album of a popular track is referenced by many
+  // recordings (radio edit, remaster, deluxe, single, etc.).
+  const groups = new Map(); // groupId -> { release, hits }
+  matched.forEach((rec) => {
+    (rec.releases || []).forEach((release) => {
+      const gid = release['release-group'] && release['release-group'].id;
+      if (!gid) return;
+      const prev = groups.get(gid);
+      if (prev) prev.hits++;
+      else groups.set(gid, { release, hits: 1 });
+    });
+  });
+  if (groups.size === 0) return null;
+  const scored = Array.from(groups.values()).map(({ release, hits }) => ({
+    release, hits, score: scoreReleaseGroup(release, hits),
+  }));
+  scored.sort((a, b) => {
+    const ds = b.score - a.score;
+    if (ds !== 0) return ds;
+    // Tiebreaker: earliest release date wins (canonical original release
+    // beats reissues).
+    const ad = a.release.date || '9999';
+    const bd = b.release.date || '9999';
+    return ad.localeCompare(bd);
+  });
+  const best = scored[0];
+  if (!best || best.score < 30) return null; // reject all-bad pools
+  const release = best.release;
+  const topRecording = matched[0];
+  return {
+    album: release.title,
+    releaseDate: release.date || null,
+    releaseId: release.id,
+    releaseGroupId: (release['release-group'] && release['release-group'].id) || null,
+    _rgScore: best.score,
+    primaryType: (release['release-group'] && release['release-group']['primary-type']) || null,
+    artist: (topRecording['artist-credit'] && topRecording['artist-credit'][0] && topRecording['artist-credit'][0].name) || cleanArtist,
+    score: topRecording.score,
+  };
+}
+
+const albumLookupInflight = new Map(); // cacheKey -> Promise
+
+async function resolveAlbum(artist, title) {
+  if (!artist || !title) return null;
+  const key = albumCacheKey(artist, title);
+  const cachePath = path.join(ALBUMS_DIR, `${key}.json`);
+  if (fs.existsSync(cachePath)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+      // .miss === true → re-try after 7 days; otherwise treat as authoritative.
+      if (cached.miss) {
+        const age = Date.now() - (cached.cachedAt || 0);
+        if (age < 7 * 86400_000) return null;
+      } else {
+        return cached;
+      }
+    } catch {}
+  }
+  let inflight = albumLookupInflight.get(key);
+  if (!inflight) {
+    inflight = (async () => {
+      const result = await lookupAlbumOnMB(artist, title);
+      const payload = result ? { ...result, cachedAt: Date.now() } : { miss: true, cachedAt: Date.now() };
+      try { fs.writeFileSync(cachePath, JSON.stringify(payload)); } catch {}
+      return result;
+    })().finally(() => albumLookupInflight.delete(key));
+    albumLookupInflight.set(key, inflight);
+  }
+  return inflight;
+}
+
+app.get('/api/album-lookup', async (req, res) => {
+  const artist = String(req.query.artist || '').trim();
+  const title = String(req.query.title || '').trim();
+  if (!artist || !title) return res.status(400).json({ error: 'artist + title required' });
+  try {
+    const album = await resolveAlbum(artist, title);
+    if (!album) return res.status(404).json({ error: 'No album match' });
+    res.json(album);
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'lookup failed' });
+  }
+});
+
+// Cover Art Archive proxy — keeps one disk copy per release-group, gives
+// the client a stable `/api/album-cover/:id` URL. CAA returns a 307 to
+// the actual image; we follow it once and cache.
+function fetchAlbumCover(releaseGroupId) {
+  return new Promise((resolve) => {
+    const dest = path.join(ALBUM_COVERS_DIR, `${releaseGroupId}.jpg`);
+    const url = `https://coverartarchive.org/release-group/${releaseGroupId}/front-500`;
+    const follow = (u, hops = 0) => {
+      if (hops > 4) return resolve(null);
+      https.get(u, { headers: { 'User-Agent': MB_UA } }, (r) => {
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+          r.resume();
+          return follow(r.headers.location, hops + 1);
+        }
+        if (r.statusCode !== 200) {
+          r.resume();
+          return resolve(null);
+        }
+        const chunks = [];
+        r.on('data', (c) => chunks.push(c));
+        r.on('end', () => {
+          const buf = Buffer.concat(chunks);
+          if (buf.length < 500) return resolve(null);
+          try { fs.writeFileSync(dest, buf); resolve(dest); } catch { resolve(null); }
+        });
+        r.on('error', () => resolve(null));
+      }).on('error', () => resolve(null));
+    };
+    follow(url);
+  });
+}
+
+const albumCoverInflight = new Map();
+
+app.get('/api/album-cover/:mbid', async (req, res) => {
+  const mbid = String(req.params.mbid || '').trim();
+  if (!/^[a-f0-9-]{36}$/i.test(mbid)) return res.status(400).end();
+  const localPath = path.join(ALBUM_COVERS_DIR, `${mbid}.jpg`);
+  if (fs.existsSync(localPath)) {
+    res.setHeader('Cache-Control', 'public, max-age=604800');
+    return res.sendFile(localPath);
+  }
+  const missPath = path.join(ALBUM_COVERS_DIR, `${mbid}.miss`);
+  if (fs.existsSync(missPath)) {
+    const age = Date.now() - fs.statSync(missPath).mtimeMs;
+    if (age < 7 * 86400_000) return res.status(404).end();
+    try { fs.unlinkSync(missPath); } catch {}
+  }
+  let inflight = albumCoverInflight.get(mbid);
+  if (!inflight) {
+    inflight = fetchAlbumCover(mbid).finally(() => albumCoverInflight.delete(mbid));
+    albumCoverInflight.set(mbid, inflight);
   }
   const cached = await inflight;
   if (cached) {
@@ -975,6 +1329,84 @@ app.post('/api/library/add', (req, res) => {
   lib.unshift(track);
   saveLibrary(lib);
   res.json({ track });
+  // Fire-and-forget: resolve the album via MusicBrainz, persist on the
+  // track. Throttled to 1 req/sec by mbThrottle, runs entirely in the
+  // background. The client gets an album field on its next library
+  // refresh — or via SSE if we wire that up later.
+  scheduleAlbumBackfill(track);
+});
+
+// Backfill helpers — run an album lookup, write the result back into
+// library.json. Tolerant of races: re-reads the library on success,
+// finds the track by id, and only persists if it's still there.
+function scheduleAlbumBackfill(track) {
+  // Use the cleaned artist/title pair (parseTrackTitle handles the
+  // "Artist - Song (Official)" pattern; falls back to uploader for the
+  // artist column when the title has no separator).
+  const parsed = parseTrackTitle(track.title, track.uploader);
+  if (!parsed.artist || !parsed.song) return;
+  resolveAlbum(parsed.artist, parsed.song)
+    .then((album) => {
+      if (!album) return;
+      const fresh = readJson(LIBRARY_FILE);
+      const idx = fresh.findIndex((t) => t.id === track.id);
+      if (idx === -1) return;
+      // Only the user-facing fields land on the track — the full MB
+      // payload stays in library/albums/<key>.json for later inspection.
+      fresh[idx].album = album.album;
+      fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
+      fresh[idx].albumReleaseDate = album.releaseDate || null;
+      saveLibrary(fresh);
+    })
+    .catch(() => {});
+}
+
+// Bulk backfill — walk every library track that's missing the `album`
+// field, queue MB lookups (rate-limited to 1 req/sec). State exposed
+// via GET so the Settings UI can show a progress bar. Idempotent: a
+// POST while a backfill is already running just returns the running
+// state. Tracks with a previous .miss cache hit get re-tried (we want
+// the "Refresh" button to actually retry them).
+const albumBackfillState = { running: false, total: 0, done: 0, found: 0 };
+
+app.get('/api/library/backfill-albums', (req, res) => {
+  res.json(albumBackfillState);
+});
+
+app.post('/api/library/backfill-albums', async (req, res) => {
+  if (albumBackfillState.running) return res.json(albumBackfillState);
+  const lib = readJson(LIBRARY_FILE);
+  const targets = lib.filter((t) => !t.album);
+  albumBackfillState.running = true;
+  albumBackfillState.total = targets.length;
+  albumBackfillState.done = 0;
+  albumBackfillState.found = 0;
+  res.json({ ...albumBackfillState, started: true });
+  // Run sequentially via mbThrottle — no need to spawn a child or worker,
+  // the whole thing is I/O bound and the rate limit serializes us anyway.
+  (async () => {
+    for (const track of targets) {
+      const parsed = parseTrackTitle(track.title, track.uploader);
+      if (parsed.artist && parsed.song) {
+        try {
+          const album = await resolveAlbum(parsed.artist, parsed.song);
+          if (album) {
+            const fresh = readJson(LIBRARY_FILE);
+            const idx = fresh.findIndex((t) => t.id === track.id);
+            if (idx !== -1) {
+              fresh[idx].album = album.album;
+              fresh[idx].albumReleaseGroupId = album.releaseGroupId || null;
+              fresh[idx].albumReleaseDate = album.releaseDate || null;
+              saveLibrary(fresh);
+              albumBackfillState.found++;
+            }
+          }
+        } catch {}
+      }
+      albumBackfillState.done++;
+    }
+    albumBackfillState.running = false;
+  })();
 });
 
 app.post('/api/library/:trackId/download', (req, res) => {

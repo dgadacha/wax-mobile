@@ -144,6 +144,20 @@ const messages = {
     'artist.add_all': 'Add all to favorites',
     'artist.add_all_done': (n) => `Added ${n} track${n === 1 ? '' : 's'} to your library.`,
 
+    // Albums
+    'albums.eyebrow': 'Library',
+    'albums.title': 'Albums',
+    'albums.count': (n) => `${n} album${n === 1 ? '' : 's'}`,
+    'albums.count_short': (n) => `${n}`,
+    'albums.empty': "No albums yet — once your tracks are tagged with album metadata they'll show up here. Run the backfill from Settings to populate existing tracks.",
+    'album.eyebrow': 'Album',
+    'album.not_found': 'Album not found.',
+    'settings.albums_section': 'Albums metadata',
+    'settings.albums_blurb': 'Look up album info for every library track via MusicBrainz. Runs in the background, ~1 second per track.',
+    'settings.albums_run': 'Backfill albums',
+    'settings.albums_running': ({ done, total }) => `Looking up… ${done} / ${total}`,
+    'settings.albums_done': ({ found, total }) => `Done — ${found} albums resolved out of ${total} tracks.`,
+
     // Settings — tabs
     'settings.title': 'Settings',
     'settings.tabs.appearance': 'Theme',
@@ -433,6 +447,20 @@ const messages = {
     'artist.back': 'Retour',
     'artist.add_all': 'Tout ajouter aux favoris',
     'artist.add_all_done': (n) => `${n} piste${n === 1 ? '' : 's'} ajoutée${n === 1 ? '' : 's'} à ta bibliothèque.`,
+
+    // Albums
+    'albums.eyebrow': 'Bibliothèque',
+    'albums.title': 'Albums',
+    'albums.count': (n) => `${n} album${n === 1 ? '' : 's'}`,
+    'albums.count_short': (n) => `${n}`,
+    'albums.empty': "Pas encore d'albums — dès que tes pistes auront les métadonnées d'album, ils s'afficheront ici. Lance le backfill depuis les Paramètres pour traiter les pistes existantes.",
+    'album.eyebrow': 'Album',
+    'album.not_found': 'Album introuvable.',
+    'settings.albums_section': "Métadonnées d'album",
+    'settings.albums_blurb': 'Récupère les infos d\'album pour chaque piste via MusicBrainz. Tourne en arrière-plan, ~1 seconde par piste.',
+    'settings.albums_run': 'Lancer le backfill',
+    'settings.albums_running': ({ done, total }) => `Recherche en cours… ${done} / ${total}`,
+    'settings.albums_done': ({ found, total }) => `Terminé — ${found} albums résolus sur ${total} pistes.`,
 
     // Settings — tabs
     'settings.title': 'Paramètres',
