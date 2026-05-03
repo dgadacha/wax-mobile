@@ -420,6 +420,7 @@ function goBack() {
               :track="entry.libTrack"
               :index="i"
               :queue="libQueueIds"
+              :thumb-override="coverUrl"
             />
             <!-- Missing entry: lightweight row with on-demand actions. -->
             <li
@@ -476,6 +477,7 @@ function goBack() {
             :track="tr"
             :index="i"
             :queue="libQueueIds"
+            :thumb-override="coverUrl"
           />
         </ul>
         <p v-else-if="tracklistError" class="empty-state">

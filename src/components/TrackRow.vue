@@ -32,6 +32,10 @@ const props = defineProps({
   queue: { type: Array, default: () => [] },
   removeFromPlaylist: { type: Function, default: null }, // (trackId) => void
   onReorder: { type: Function, default: null },
+  // Optional thumbnail override — used by ViewAlbum to render every
+  // row with the album's cover (Spotify-style) instead of each track's
+  // own YouTube thumbnail.
+  thumbOverride: { type: String, default: null },
 });
 
 const lib = useLibraryStore();
@@ -192,7 +196,7 @@ onMounted(() => {
         v-html="isPlaying ? ICON_PAUSE : ICON_PLAY"
       ></button>
     </div>
-    <img class="track-thumb" :src="track.thumbnail || ''" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
+    <img class="track-thumb" :src="thumbOverride || track.thumbnail || ''" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
     <div class="track-meta">
       <div class="track-title">{{ displayTitle }}</div>
       <div v-if="!isInArtistView" class="track-sub">

@@ -1380,11 +1380,12 @@ app.post('/api/library/add', (req, res) => {
   lib.unshift(track);
   saveLibrary(lib);
   res.json({ track });
-  // Fire-and-forget: resolve the album via MusicBrainz, persist on the
-  // track. Throttled to 1 req/sec by mbThrottle, runs entirely in the
-  // background. The client gets an album field on its next library
-  // refresh — or via SSE if we wire that up later.
+  // Fire-and-forget: resolve the album via MusicBrainz for the new
+  // track, plus give every other pending track another shot — cache
+  // hits short-circuit, so this is cheap when the library is mostly
+  // resolved and meaningful when it isn't.
   scheduleAlbumBackfill(track);
+  setImmediate(() => autoBackfillOnStartup());
 });
 
 // SSE listeners for live album-resolved events. The client subscribes
@@ -1576,12 +1577,19 @@ app.patch('/api/library/:id', (req, res) => {
   const lib = getLibrary();
   const track = lib.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
+  const wasLiked = track.liked !== false;
   if (typeof req.body?.liked === 'boolean') track.liked = req.body.liked;
   if (typeof req.body?.title === 'string' && req.body.title.trim()) {
     track.title = req.body.title.trim().slice(0, 200);
   }
   saveLibrary(lib);
   res.json({ track });
+  // Toggling a track to liked = true is a meaningful "user is engaging
+  // with this" signal — re-trigger the album scan so anything still
+  // missing metadata gets another shot. Cheap (cache-hit dominated).
+  if (req.body?.liked === true && !wasLiked) {
+    setImmediate(() => autoBackfillOnStartup());
+  }
 });
 
 app.post('/api/library/:id/play', (req, res) => {
@@ -1667,6 +1675,9 @@ app.post('/api/playlists/:id/tracks', (req, res) => {
   if (!pl.trackIds.includes(trackId)) pl.trackIds.push(trackId);
   savePlaylists(pls);
   res.json({ playlist: pl });
+  // Adding to a playlist is a "user cares about this" signal — give
+  // any still-pending album lookups another shot.
+  setImmediate(() => autoBackfillOnStartup());
 });
 
 app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
@@ -1686,6 +1697,7 @@ app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
   }
   savePlaylists(pls);
   res.json({ playlist: pl, added });
+  if (added > 0) setImmediate(() => autoBackfillOnStartup());
 });
 
 app.delete('/api/playlists/:plId/tracks/:trackId', (req, res) => {
