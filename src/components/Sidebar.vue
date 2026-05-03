@@ -17,6 +17,32 @@ const streams = useStreamsStore();
 
 const dragOverPlaylistId = ref(null);
 
+// For a track list, return either a single full-size cover (1-track
+// playlists) or a 2x2 mosaic of up to 4 unique thumbnails (anything
+// bigger). When we have fewer than 4 unique artworks we cycle through
+// the available ones so the grid always fills cleanly.
+function buildCoverSet(tracks) {
+  if (tracks.length === 0) return { mode: 'empty', covers: [] };
+  if (tracks.length === 1) {
+    const c = tracks[0]?.thumbnail;
+    return c ? { mode: 'single', covers: [c] } : { mode: 'empty', covers: [] };
+  }
+  const seen = new Set();
+  const unique = [];
+  for (const tr of tracks) {
+    const c = tr?.thumbnail;
+    if (c && !seen.has(c)) {
+      seen.add(c);
+      unique.push(c);
+      if (unique.length === 4) break;
+    }
+  }
+  if (unique.length === 0) return { mode: 'empty', covers: [] };
+  const grid = [];
+  for (let i = 0; i < 4; i++) grid.push(unique[i % unique.length]);
+  return { mode: 'grid', covers: grid };
+}
+
 const items = computed(() => {
   const out = [];
   // Favoris
@@ -36,25 +62,28 @@ const items = computed(() => {
       kind: 'albums',
       active: view.name === 'albums' || view.name === 'album',
       name: t('albums.title'),
-      sub: t('albums.count_short', library.albums.length),
+      sub: '',
       iconHtml: ICON_DISC,
     });
   }
-  // User playlists
+  // User playlists. For 2+ tracks we show a 2x2 mosaic of the first
+  // four distinct thumbnails (Spotify-style) instead of just track[0]'s
+  // cover — gives a quick visual fingerprint of what's in the playlist.
   for (const pl of playlists.items) {
     const tracks = pl.trackIds
       .map((id) => library.findById(id))
       .filter(Boolean);
-    const cover = tracks[0]?.thumbnail;
+    const set = buildCoverSet(tracks);
     out.push({
       kind: 'playlist',
       id: pl.id,
       active: view.name === 'playlist' && view.selectedPlaylistId === pl.id,
       name: pl.name,
       sub: t('library.playlist_subtitle', tracks.length),
-      cover,
-      gradient: cover ? null : gradientFromString(pl.name).replace('180deg', '135deg'),
-      iconHtml: cover ? null : ICON_NOTE,
+      coverMode: set.mode,
+      covers: set.covers,
+      gradient: set.mode === 'empty' ? gradientFromString(pl.name).replace('180deg', '135deg') : null,
+      iconHtml: set.mode === 'empty' ? ICON_NOTE : null,
     });
   }
   return out;
@@ -229,10 +258,21 @@ function selectDownload() {
         >
           <div
             class="lib-icon"
-            :class="item.iconClass"
+            :class="[item.iconClass, item.coverMode === 'grid' ? 'lib-icon-grid' : null]"
             :style="item.gradient ? { background: item.gradient } : null"
           >
-            <img v-if="item.cover" :src="item.cover" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
+            <template v-if="item.coverMode === 'grid'">
+              <img
+                v-for="(c, idx) in item.covers"
+                :key="idx"
+                :src="c"
+                alt=""
+                loading="lazy"
+                @error="onThumbError"
+                @load="onThumbLoad"
+              />
+            </template>
+            <img v-else-if="item.coverMode === 'single'" :src="item.covers[0]" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
             <span v-if="item.iconHtml" v-html="item.iconHtml"></span>
           </div>
           <div class="lib-text">

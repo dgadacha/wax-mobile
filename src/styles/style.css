@@ -720,6 +720,20 @@ a { color: inherit; text-decoration: none; }
 }
 .lib-icon img { width: 100%; height: 100%; object-fit: cover; }
 .lib-icon svg { width: 24px; height: 24px; }
+/* 2x2 mosaic for multi-track playlists/albums — replaces the single
+   cover img with a four-image grid stitched together. */
+.lib-icon.lib-icon-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0;
+}
+.lib-icon.lib-icon-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .lib-text { min-width: 0; flex: 1; }
 .lib-name {
   font-weight: 500;
@@ -878,6 +892,21 @@ html.light .hero-cover {
   position: relative;
 }
 .album-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 2x2 mosaic for albums where Cover Art Archive has no art and we
+   fall back to the library tracks' YouTube thumbnails. Same visual
+   language as the sidebar playlist mosaic. */
+.album-cover.album-cover-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0;
+}
+.album-cover.album-cover-grid img {
   width: 100%;
   height: 100%;
   object-fit: cover;
