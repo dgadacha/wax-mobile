@@ -458,8 +458,46 @@ try {
   WAX_UA = `Wax/${pkg.version} (https://github.com/dgadacha/wax)`;
 } catch {}
 
-function deezerFetchJson(urlStr) {
+// Deezer's public API caps unauthenticated traffic at ~50 req/5s per
+// IP. We self-throttle to ~8 req/sec sustained (40/5s, ~20% headroom)
+// via a sliding-window queue so a 500-track boot rescan never trips
+// 429 / IP block. Bursts up to 8 in flight at once; once those settle
+// we wait the remainder of the 1s window before releasing the next.
+const DEEZER_BURST = 8;
+const DEEZER_WINDOW_MS = 1000;
+let deezerActive = 0;
+const deezerWindow = []; // timestamps of requests in the last second
+const deezerQueue = [];
+function deezerThrottle(fn) {
   return new Promise((resolve, reject) => {
+    deezerQueue.push({ fn, resolve, reject });
+    drainDeezer();
+  });
+}
+function drainDeezer() {
+  // Trim window to the last second.
+  const now = Date.now();
+  while (deezerWindow.length && now - deezerWindow[0] > DEEZER_WINDOW_MS) {
+    deezerWindow.shift();
+  }
+  while (deezerQueue.length && deezerWindow.length < DEEZER_BURST) {
+    const { fn, resolve, reject } = deezerQueue.shift();
+    deezerWindow.push(Date.now());
+    deezerActive++;
+    fn().then(resolve, reject).finally(() => {
+      deezerActive--;
+      drainDeezer();
+    });
+  }
+  if (deezerQueue.length && deezerWindow.length >= DEEZER_BURST) {
+    // Schedule another drain when the oldest request leaves the window.
+    const wait = DEEZER_WINDOW_MS - (now - deezerWindow[0]) + 5;
+    setTimeout(drainDeezer, Math.max(50, wait));
+  }
+}
+
+function deezerFetchJson(urlStr) {
+  return deezerThrottle(() => new Promise((resolve, reject) => {
     https.get(urlStr, { headers: { 'User-Agent': WAX_UA, 'Accept': 'application/json' } }, (r) => {
       if (r.statusCode === 429 || r.statusCode === 503) {
         // Rate-limited — treat as a transient miss, cache will retry later.
@@ -477,7 +515,7 @@ function deezerFetchJson(urlStr) {
         try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
       });
     }).on('error', reject);
-  });
+  }));
 }
 
 // Deezer search → top result whose artist matches our query, then
