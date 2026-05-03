@@ -253,6 +253,15 @@ async function pollRescanState() {
   tick();
 }
 
+// Auto-start the poll any time lib.albumRescan.running flips to true
+// — covers rescans triggered by other sources (engagement events from
+// /api/library/add, etc.) where we never went through rescanAlbums().
+watch(
+  () => lib.albumRescan.running,
+  (running) => { if (running) pollRescanState(); },
+  { immediate: true },
+);
+
 const purging = ref(false);
 async function purge() {
   purging.value = true;

@@ -394,6 +394,23 @@ export const useLibraryStore = defineStore('library', {
       if (this._albumEs) return;
       const es = new EventSource('/api/album-progress');
       this._albumEs = es;
+      // On (re)connect, sync the rescan state from the server so a
+      // rescan that ran while we were disconnected (Vite HMR reload,
+      // macOS sleep, etc.) doesn't leave the UI thinking it's still
+      // at the seed value. SSE alone misses these transitions.
+      es.onopen = async () => {
+        try {
+          const res = await fetch('/api/library/rescan-albums');
+          const data = await res.json();
+          if (data && (data.total || 0) > 0) {
+            this.albumRescan = {
+              running: !!data.running,
+              done: data.done || 0,
+              total: data.total || 0,
+            };
+          }
+        } catch {}
+      };
       // pendingAlbums entries are { ...payload, retries }. We keep
       // entries whose track isn't found yet — race condition: when MB
       // has a cache hit for a freshly-added track, the SSE event can
