@@ -197,10 +197,6 @@ wax/
 
 Wax is released under the [MIT License](./LICENSE). Use it, fork it, modify it, ship it — just keep the copyright notice.
 
-## Support
-
-Wax is free and open source — and it always will be. If it saves you time or you just want to say thanks, you can <a href="https://www.buymeacoffee.com/waxmusicplayer">buy me a coffee ☕</a>. Pure gratitude tip; no feature is gated behind it.
-
 ## Disclaimer
 
 Wax is a personal music client built on top of [`yt-dlp`](https://github.com/yt-dlp/yt-dlp). It does not host, redistribute, or transcode any media itself — every byte of audio comes from YouTube's servers, fetched at runtime by the user's own machine via `yt-dlp`.
