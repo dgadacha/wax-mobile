@@ -194,9 +194,23 @@ async function rescanAlbums() {
       showToast(t('settings.albums_rescan_nothing'), 'success');
       return;
     }
-    // Seed the local state immediately so the bar shows up at 0/total
-    // without waiting for the first SSE tick.
-    lib.albumRescan = { running: true, done: 0, total: data.total };
+    // Seed the bar — but defensively. Skip the seed if SSE events have
+    // already raced ahead of the HTTP response (server's setImmediate
+    // makes this unlikely, but on flaky networks the events from this
+    // very rescan can land first). Only reset when we'd actually be
+    // moving the bar forward, never backward.
+    const current = lib.albumRescan;
+    const shouldSeed =
+      !current.running ||
+      current.total !== data.total ||
+      current.done < (data.done || 0);
+    if (shouldSeed) {
+      lib.albumRescan = {
+        running: true,
+        done: data.done || 0,
+        total: data.total,
+      };
+    }
   } catch {
     showToast(t('settings.albums_rescan_error'), 'error');
   } finally {

@@ -1361,20 +1361,28 @@ app.post('/api/library/rescan-albums', (req, res) => {
     broadcastAlbumEvent({ type: 'rescan', done: 0, total: 0, running: false });
     return;
   }
-  for (const track of targets) {
-    scheduleAlbumBackfill(track, () => {
-      albumRescanState.done++;
-      const finished = albumRescanState.done >= albumRescanState.total;
-      if (finished) albumRescanState.running = false;
-      broadcastAlbumEvent({
-        type: 'rescan',
-        done: albumRescanState.done,
-        total: albumRescanState.total,
-        running: !finished,
+  // Defer the loop to the next macrotask so the HTTP response's socket
+  // write flushes before any SSE events from this batch fire. Without
+  // this, cache-hit completions broadcast `done > 0` events
+  // synchronously (well, via microtask) that can arrive at the client
+  // before the HTTP response and then get overwritten by the response's
+  // `done: 0` seed — leaving the progress bar visually stuck.
+  setImmediate(() => {
+    for (const track of targets) {
+      scheduleAlbumBackfill(track, () => {
+        albumRescanState.done++;
+        const finished = albumRescanState.done >= albumRescanState.total;
+        if (finished) albumRescanState.running = false;
+        broadcastAlbumEvent({
+          type: 'rescan',
+          done: albumRescanState.done,
+          total: albumRescanState.total,
+          running: !finished,
+        });
       });
-    });
-  }
-  console.log(`[album] rescan queued ${targets.length} track(s)`);
+    }
+    console.log(`[album] rescan queued ${targets.length} track(s)`);
+  });
 });
 
 // Auto-backfill at startup — schedule a lookup for every library track
