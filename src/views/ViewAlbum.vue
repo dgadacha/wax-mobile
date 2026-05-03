@@ -70,15 +70,15 @@ const coverUrl = computed(() => {
 watch(coverUrl, () => { coverLoading.value = true; });
 
 // ──────────────────────────────────────────────────────────────────
-// "Other tracks from this album" — load the full MB tracklist for the
-// release, dedupe against the user's library by normalized title, and
-// expose the missing tracks. Each missing entry is "pending" until the
-// user clicks play, at which point we resolve a YouTube ID via
-// /api/search and stream it.
+// Unified album tracklist. We pull the full MB recording list and, for
+// each entry, attach the matching library track if one exists (fuzzy
+// title comparison after stripping featuring credits / non-alphanum).
+// The view renders a single ordered list — no separate "library" vs
+// "other" sections — so the user reads the album front to back.
 // ──────────────────────────────────────────────────────────────────
 const tracklistLoading = ref(false);
 const tracklistError = ref(false);
-const otherTracks = ref([]); // [{position, title, length}]
+const mbTracks = ref([]); // raw MB tracklist [{position, title, length, recordingId}]
 
 function normalizeTitle(s) {
   return String(s || '')
@@ -87,17 +87,34 @@ function normalizeTitle(s) {
     .replace(/[^a-z0-9]/g, '');
 }
 
+// One flat list in MB position order: each entry carries the MB
+// metadata + a `libTrack` reference when a library match exists.
+const albumEntries = computed(() => {
+  if (!album.value || mbTracks.value.length === 0) return [];
+  // Index lib tracks by normalized parsed-song title for cheap lookup.
+  const byTitle = new Map();
+  for (const tr of album.value.libTracks) {
+    byTitle.set(normalizeTitle(parseTrackTitle(tr).song), tr);
+  }
+  return mbTracks.value.map((mb, i) => ({
+    key: `${mb.recordingId || mb.title}-${i}`,
+    index: i,
+    position: i + 1,
+    title: mb.title,
+    length: mb.length,
+    libTrack: byTitle.get(normalizeTitle(mb.title)) || null,
+  }));
+});
+
 async function loadTracklist() {
-  otherTracks.value = [];
+  mbTracks.value = [];
   tracklistError.value = false;
   if (!album.value || !album.value.releaseId) return;
   tracklistLoading.value = true;
   try {
     const { tracks } = await api(`/api/album-tracklist?releaseId=${album.value.releaseId}`);
     if (!Array.isArray(tracks)) throw new Error('bad payload');
-    const libKeys = new Set(album.value.libTracks.map((tr) => normalizeTitle(parseTrackTitle(tr).song)));
-    const missing = tracks.filter((mb) => !libKeys.has(normalizeTitle(mb.title)));
-    otherTracks.value = missing;
+    mbTracks.value = tracks;
   } catch {
     tracklistError.value = true;
   } finally {
@@ -116,33 +133,27 @@ const pendingPlay = ref(new Set()); // positions currently resolving
 async function playMissing(entry, idx) {
   if (!album.value) return;
   if (pendingPlay.value.has(idx)) return;
-  // Already resolved? Just play.
   if (entry._streamId) {
     player.playFromList(entry._streamId, [entry._streamId]);
     return;
   }
   pendingPlay.value.add(idx);
-  pendingPlay.value = new Set(pendingPlay.value); // trigger reactivity
+  pendingPlay.value = new Set(pendingPlay.value);
   try {
-    const { results } = await api(
-      `/api/search?q=${encodeURIComponent(`${album.value.artist} ${entry.title}`)}`,
-    );
-    const top = (results || [])[0];
-    if (!top) return;
-    const streamId = `stream-${top.id}`;
-    const stream = {
-      id: streamId,
-      title: top.title,
-      uploader: top.uploader || '',
-      duration: top.duration,
-      thumbnail: top.thumbnail,
-      file: `/api/stream/${top.id}`,
-      ytId: top.id,
-      isStream: true,
-    };
-    streams.set(streamId, stream);
+    const yt = await resolveYoutubeFor(entry);
+    if (!yt) {
+      showToast(t('toast.no_match'), 'error');
+      return;
+    }
+    const streamId = `stream-${yt.id}`;
+    if (!streams.get(streamId)) {
+      streams.set(streamId, {
+        id: streamId, title: yt.title, uploader: yt.uploader || '',
+        duration: yt.duration, thumbnail: yt.thumbnail,
+        file: `/api/stream/${yt.id}`, ytId: yt.id, isStream: true,
+      });
+    }
     entry._streamId = streamId;
-    entry._stream = stream;
     player.playFromList(streamId, [streamId]);
   } finally {
     pendingPlay.value.delete(idx);
@@ -155,18 +166,46 @@ function playAll() {
   player.playFromList(libQueueIds.value[0], libQueueIds.value);
 }
 
-// Resolve a missing track to a real YouTube ID via /api/search and
-// return the top result. Result is memoized on the entry so subsequent
-// actions on the same row reuse it.
+// Resolve a missing track to a real YouTube ID via /api/search.
+// /api/search returns matches by title alone, which routinely picks a
+// different artist's identically-named song (especially for short
+// titles like "Maussade"). We score the top results by artist-name
+// match (uploader / channel) AND by duration proximity to MusicBrainz
+// — the right song is usually within ±5 s of the MB length.
 async function resolveYoutubeFor(entry) {
   if (entry._yt) return entry._yt;
   const { results } = await api(
     `/api/search?q=${encodeURIComponent(`${album.value.artist} ${entry.title}`)}`,
   );
-  const top = (results || [])[0];
-  if (!top) return null;
-  entry._yt = top;
-  return top;
+  const list = results || [];
+  if (list.length === 0) return null;
+  const artistKey = normalizeArtistKey(album.value.artist);
+  const expectedSec = entry.length ? Math.round(entry.length / 1000) : 0;
+  const scored = list.slice(0, 5).map((r, rank) => {
+    let s = 0;
+    // Artist match — uploader or title containing the album artist.
+    const uploaderKey = normalizeArtistKey(r.uploader || '');
+    const titleKey = normalizeArtistKey(r.title || '');
+    if (uploaderKey === artistKey) s += 100;
+    else if (uploaderKey.includes(artistKey) || titleKey.includes(artistKey)) s += 60;
+    // Duration proximity — heavy penalty when off by >30 s.
+    if (expectedSec && r.duration) {
+      const diff = Math.abs(r.duration - expectedSec);
+      if (diff <= 5) s += 40;
+      else if (diff <= 15) s += 20;
+      else if (diff > 30) s -= 60;
+    }
+    // Slight preference for the SERP-top result on ties.
+    s += Math.max(0, 5 - rank);
+    return { r, s };
+  });
+  scored.sort((a, b) => b.s - a.s);
+  const best = scored[0];
+  // Reject everything if the best score is too low — better to skip
+  // the track than save a wrong one to the user's library.
+  if (!best || best.s < 30) return null;
+  entry._yt = best.r;
+  return best.r;
 }
 
 // Heart action on a missing track — resolves YT, adds to library
@@ -225,11 +264,13 @@ async function queueMissing(entry, idx) {
   }
 }
 
-// Save the entire album as a new playlist. Resolves YouTube IDs for
-// every missing track in series (rate-limited at the server's yt-dlp
-// semaphore), adds them to the library silently, then bulk-attaches
-// every track id (lib + freshly added) to a new playlist named after
-// the album. Switches to the playlist on success.
+// Save the album's full tracklist (in MB order) as a new playlist.
+// Walks albumEntries: for each entry, use the existing library track
+// if matched, otherwise resolve YouTube + add to library silently,
+// then append to the playlist. Playlist is created instantly so it's
+// visible in the sidebar from the first second; tracks fill in order
+// as they resolve. The user can navigate away — the fill runs in the
+// background.
 const savingAsPlaylist = ref(false);
 const saveProgress = ref({ done: 0, total: 0 });
 async function saveAsPlaylist() {
@@ -240,48 +281,59 @@ async function saveAsPlaylist() {
     confirmLabel: t('common.create'),
   });
   if (!name) return;
+  // Snapshot album entries up front so background resolution doesn't
+  // race with reactive recompute (lib.tracks mutates as we add).
+  const entries = [...albumEntries.value];
+  if (entries.length === 0) return;
+
   savingAsPlaylist.value = true;
-  saveProgress.value = { done: 0, total: otherTracks.value.length };
+  saveProgress.value = { done: 0, total: entries.length };
+
+  let playlist;
   try {
-    // Step 1 — resolve + add every missing track. Sequential so the
-    // server semaphore handles parallelism; UI shows a counter.
-    const newLibIds = [];
-    for (let i = 0; i < otherTracks.value.length; i++) {
-      const entry = otherTracks.value[i];
-      try {
-        const yt = await resolveYoutubeFor(entry);
-        if (yt) {
-          const added = await lib.add(
-            {
-              id: yt.id, ytId: yt.id, title: yt.title, uploader: yt.uploader || '',
-              duration: yt.duration, thumbnail: yt.thumbnail,
-              url: `https://www.youtube.com/watch?v=${yt.id}`,
-            },
-            { liked: false, silent: true },
-          );
-          if (added && added.id) newLibIds.push(added.id);
-        }
-      } catch {}
-      saveProgress.value = { done: i + 1, total: otherTracks.value.length };
-    }
-    // Step 2 — create the playlist with name + bulk-attach the union
-    // of (existing library tracks for this album) + (newly added).
-    const allIds = [...album.value.libTracks.map((tr) => tr.id), ...newLibIds];
-    const { playlist } = await api('/api/playlists', {
+    const res = await api('/api/playlists', {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
+    playlist = res.playlist;
     playlists.items.push(playlist);
-    if (allIds.length > 0) {
-      await playlists.addTracksBulk(playlist.id, allIds);
-    }
-    showToast(t('album.save_as_playlist_done', { name }), 'success');
-    view.switchTo('playlist', playlist.id);
+    showToast(t('album.save_as_playlist_created', { name }), 'success');
   } catch (e) {
     showToast(e.message || t('common.error'), 'error');
-  } finally {
     savingAsPlaylist.value = false;
+    return;
   }
+
+  // Fire-and-forget background fill. Sequential per entry to preserve
+  // album track order — each resolution awaits the previous one.
+  (async () => {
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      let trackId = entry.libTrack?.id;
+      if (!trackId) {
+        try {
+          const yt = await resolveYoutubeFor(entry);
+          if (yt) {
+            const added = await lib.add(
+              {
+                id: yt.id, ytId: yt.id, title: yt.title, uploader: yt.uploader || '',
+                duration: yt.duration, thumbnail: yt.thumbnail,
+                url: `https://www.youtube.com/watch?v=${yt.id}`,
+              },
+              { liked: false, silent: true },
+            );
+            if (added && added.id) trackId = added.id;
+          }
+        } catch {}
+      }
+      if (trackId) {
+        try { await playlists.addTracksBulk(playlist.id, [trackId]); } catch {}
+      }
+      saveProgress.value = { done: i + 1, total: entries.length };
+    }
+    savingAsPlaylist.value = false;
+    showToast(t('album.save_as_playlist_filled', { name }), 'success');
+  })();
 }
 
 function goBack() {
@@ -320,7 +372,7 @@ function goBack() {
             <p class="hero-meta">
               {{ album.artist
               }}<span v-if="album.releaseDate"> · {{ album.releaseDate.slice(0, 4) }}</span>
-              · {{ t('common.tracks', album.libTracks.length) }}<span v-if="totalDuration"> · {{ fmtDuration(totalDuration) }}</span>
+              · {{ t('common.tracks', albumEntries.length || album.libTracks.length) }}<span v-if="totalDuration"> · {{ fmtDuration(totalDuration) }}</span>
             </p>
           </div>
         </div>
@@ -345,43 +397,39 @@ function goBack() {
             <span v-else>{{ t('album.saving', { done: saveProgress.done, total: saveProgress.total }) }}</span>
           </button>
         </div>
-        <h3 v-if="otherTracks.length > 0 || tracklistLoading" class="section-heading">{{ t('album.in_library') }}</h3>
-        <ul class="track-list">
-          <TrackRow
-            v-for="(tr, i) in album.libTracks"
-            :key="tr.id"
-            :track="tr"
-            :index="i"
-            :queue="libQueueIds"
-          />
+        <!-- Unified tracklist: MB order, with library matches rendered
+             via TrackRow and missing entries rendered as a custom row
+             with on-demand resolution. Falls back to libTracks-only
+             when MB tracklist is unavailable. -->
+        <ul v-if="tracklistLoading" class="track-list track-list-skeleton" aria-busy="true">
+          <li v-for="i in 6" :key="i" class="track track-skeleton">
+            <span class="skeleton-block skel-num"></span>
+            <span class="skeleton-block skel-thumb"></span>
+            <span class="skeleton-block skel-title"></span>
+            <span class="skeleton-block skel-album"></span>
+            <span class="skeleton-block skel-indicator"></span>
+            <span class="skeleton-block skel-duration"></span>
+            <span class="skeleton-block skel-actions"></span>
+          </li>
         </ul>
-
-        <!-- Other tracks from this album (MB tracklist minus library) -->
-        <template v-if="album.releaseId">
-          <h3 class="section-heading section-heading--spaced">
-            {{ t('album.other_tracks') }}
-          </h3>
-          <ul v-if="tracklistLoading" class="track-list track-list-skeleton" aria-busy="true">
-            <li v-for="i in 4" :key="i" class="track track-skeleton">
-              <span class="skeleton-block skel-num"></span>
-              <span class="skeleton-block skel-thumb"></span>
-              <span class="skeleton-block skel-title"></span>
-              <span class="skeleton-block skel-album"></span>
-              <span class="skeleton-block skel-indicator"></span>
-              <span class="skeleton-block skel-duration"></span>
-              <span class="skeleton-block skel-actions"></span>
-            </li>
-          </ul>
-          <ul v-else-if="otherTracks.length > 0" class="track-list">
+        <ul v-else-if="albumEntries.length > 0" class="track-list">
+          <template v-for="(entry, i) in albumEntries" :key="entry.key">
+            <!-- Library match: full TrackRow with all standard actions. -->
+            <TrackRow
+              v-if="entry.libTrack"
+              :track="entry.libTrack"
+              :index="i"
+              :queue="libQueueIds"
+            />
+            <!-- Missing entry: lightweight row with on-demand actions. -->
             <li
-              v-for="(entry, i) in otherTracks"
-              :key="`${entry.recordingId || entry.title}-${i}`"
+              v-else
               class="track album-other-track"
               @dblclick="playMissing(entry, i)"
             >
               <div class="track-num">
                 <div v-if="pendingPlay.has(i)" class="track-num-spinner"></div>
-                <span v-else class="track-num-default">{{ i + 1 }}</span>
+                <span v-else class="track-num-default">{{ entry.position }}</span>
                 <button
                   class="track-num-action"
                   :aria-label="t('track.play')"
@@ -418,11 +466,21 @@ function goBack() {
                 ></button>
               </div>
             </li>
-          </ul>
-          <p v-else-if="tracklistError" class="empty-state">
-            {{ t('album.tracklist_error') }}
-          </p>
-        </template>
+          </template>
+        </ul>
+        <!-- No MB tracklist available: fall back to library-only list. -->
+        <ul v-else-if="album.libTracks.length > 0" class="track-list">
+          <TrackRow
+            v-for="(tr, i) in album.libTracks"
+            :key="tr.id"
+            :track="tr"
+            :index="i"
+            :queue="libQueueIds"
+          />
+        </ul>
+        <p v-else-if="tracklistError" class="empty-state">
+          {{ t('album.tracklist_error') }}
+        </p>
       </div>
     </template>
     <p v-else class="empty-state" style="margin: 80px 32px">
