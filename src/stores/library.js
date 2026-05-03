@@ -391,19 +391,36 @@ export const useLibraryStore = defineStore('library', {
       if (this._albumEs) return;
       const es = new EventSource('/api/album-progress');
       this._albumEs = es;
-      const pendingAlbums = new Map(); // trackId -> latest payload
+      // pendingAlbums entries are { ...payload, retries }. We keep
+      // entries whose track isn't found yet — race condition: when MB
+      // has a cache hit for a freshly-added track, the SSE event can
+      // beat the HTTP response from /api/library/add, so the track
+      // isn't in this.tracks yet at flush time. Retried up to 5x with
+      // a 200ms gap (~1s total window) which more than covers any
+      // realistic network ordering on localhost or LAN.
+      const pendingAlbums = new Map(); // trackId -> { payload, retries }
       let flushScheduled = false;
       const flush = () => {
         flushScheduled = false;
-        for (const [trackId, data] of pendingAlbums) {
+        for (const [trackId, entry] of pendingAlbums) {
           const track = this.findById(trackId);
-          if (!track) continue;
-          track.album = data.album;
-          track.albumReleaseGroupId = data.albumReleaseGroupId || null;
-          track.albumReleaseId = data.albumReleaseId || null;
-          track.albumReleaseDate = data.albumReleaseDate || null;
+          if (track) {
+            track.album = entry.album;
+            track.albumReleaseGroupId = entry.albumReleaseGroupId || null;
+            track.albumReleaseId = entry.albumReleaseId || null;
+            track.albumReleaseDate = entry.albumReleaseDate || null;
+            pendingAlbums.delete(trackId);
+          } else if (entry.retries < 5) {
+            entry.retries++;
+          } else {
+            pendingAlbums.delete(trackId);
+          }
         }
-        pendingAlbums.clear();
+        // Outstanding entries → schedule another flush in 200ms so the
+        // next attempt can pick up tracks added in the interim.
+        if (pendingAlbums.size > 0) {
+          setTimeout(scheduleFlush, 200);
+        }
       };
       const scheduleFlush = () => {
         if (flushScheduled) return;
@@ -420,7 +437,7 @@ export const useLibraryStore = defineStore('library', {
         if (data.type === 'album' && data.trackId) {
           // Latest event wins per trackId — multiple album events for
           // the same track within a frame collapse to one mutation.
-          pendingAlbums.set(data.trackId, data);
+          pendingAlbums.set(data.trackId, { ...data, retries: 0 });
           scheduleFlush();
         } else if (data.type === 'rescan') {
           this.albumRescan = {
