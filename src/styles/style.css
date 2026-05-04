@@ -365,18 +365,31 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* App grid */
-/* App shell — mini icon sidebar (~76 px) + main + a floating pill
-   player anchored to the bottom-center. The grid only knows about the
-   sidebar + main; the player escapes into position: fixed so it
-   reads as an object on top of the canvas, not part of the grid. */
+/* App shell — mini icon sidebar (~76 px) + main + an always-visible
+   320 px Now Playing column on the right. The floating pill player
+   escapes via position: fixed and rides over the canvas. The Now
+   Playing column collapses below 1100 px viewport (slide-in
+   QueuePanel still works at narrow widths). */
 .app {
   display: grid;
-  grid-template-columns: 76px 1fr;
+  grid-template-columns: 76px 1fr 320px;
   grid-template-rows: 1fr;
-  grid-template-areas: "sidebar main";
+  grid-template-areas: "sidebar main now-playing";
   height: 100vh;
   gap: 0;
   padding: 0;
+}
+@media (max-width: 1100px) {
+  .app {
+    grid-template-columns: 76px 1fr;
+    grid-template-areas: "sidebar main";
+  }
+  .now-playing { display: none; }
+  /* Re-center the player without the right column subtracted out. */
+  .player {
+    left: calc(76px + (100vw - 76px) / 2);
+    width: min(720px, calc(100vw - 76px - 64px));
+  }
 }
 
 /* Sidebar — icons-only dock. Nav items (.sidebar-link) and library
@@ -1729,11 +1742,14 @@ button.track-offline-indicator { cursor: pointer; }
 .player {
   position: fixed;
   bottom: 16px;
-  left: 50%;
+  /* Center the player horizontally in the main column area, not the
+     full viewport. Math: anchor at sidebar-edge + (main-area / 2),
+     translate -50% on self. main-area = 100vw - sidebar - now-playing. */
+  left: calc(76px + (100vw - 76px - 320px) / 2);
   transform: translateX(-50%);
   z-index: 50;
-  width: min(880px, calc(100% - 96px - 32px));
-  margin-left: 38px; /* nudge right to stay centered relative to main, not viewport */
+  width: min(720px, calc(100vw - 76px - 320px - 64px));
+  margin-left: 0;
   height: 64px;
   background: rgba(20, 20, 30, 0.55);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
@@ -1759,6 +1775,120 @@ html.light .player {
 /* Reserve clearance so the last track row doesn't sit under the
    floating player. Clear strip = player height + bottom offset + breathing. */
 .main { padding-bottom: 96px; }
+
+/* ---------------------------------------------------------------
+   Now Playing column — sticky right rail with the current cover,
+   meta, actions, and an inline queue. Hidden under 1100 px (the
+   slide-in QueuePanel still services smaller widths).
+   --------------------------------------------------------------- */
+.now-playing {
+  grid-area: now-playing;
+  background: var(--main);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px 110px;
+  overflow-y: auto;
+  gap: 16px;
+}
+.np-cover-wrap {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: 14px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), 0 0 60px var(--accent-glow);
+}
+body[data-playing="true"] .np-cover-wrap {
+  animation: coverPulse 4s ease-in-out infinite;
+}
+.np-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.np-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.np-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.4rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.np-artist {
+  color: var(--text-soft);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.np-artist:hover { color: var(--accent-bright); }
+.np-artist.np-artist-static { cursor: default; }
+.np-artist.np-artist-static:hover { color: var(--text-soft); }
+.np-actions {
+  display: flex;
+  gap: 8px;
+}
+.np-actions .icon-btn {
+  width: 40px;
+  height: 40px;
+  background: var(--card);
+  border-radius: 10px;
+}
+.np-actions .icon-btn:hover { background: var(--card-hover); }
+.np-actions .icon-btn.is-liked { color: var(--accent-bright); }
+.np-actions .icon-btn.is-liked svg { fill: var(--accent-bright); }
+.np-queue {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.np-section-heading {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin: 0;
+}
+.np-queue .queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+}
+.np-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 8px 0;
+}
+/* Idle state — no track playing yet. */
+.np-idle {
+  margin: auto;
+  text-align: center;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.np-idle p { font-size: 0.9rem; }
 .player-track {
   display: flex;
   align-items: center;
