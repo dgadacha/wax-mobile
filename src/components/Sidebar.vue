@@ -35,30 +35,13 @@ function hideTooltip() {
   tooltip.value.visible = false;
 }
 
-// For a track list, return either a single full-size cover (1-track
-// playlists) or a 2x2 mosaic of up to 4 unique thumbnails (anything
-// bigger). When we have fewer than 4 unique artworks we cycle through
-// the available ones so the grid always fills cleanly.
+// Use the first track's cover as the playlist's cover. Falls back to
+// the gradient + note icon when the playlist is empty or its first
+// track has no thumbnail.
 function buildCoverSet(tracks) {
   if (tracks.length === 0) return { mode: 'empty', covers: [] };
-  if (tracks.length === 1) {
-    const c = tracks[0]?.thumbnail;
-    return c ? { mode: 'single', covers: [c] } : { mode: 'empty', covers: [] };
-  }
-  const seen = new Set();
-  const unique = [];
-  for (const tr of tracks) {
-    const c = tr?.thumbnail;
-    if (c && !seen.has(c)) {
-      seen.add(c);
-      unique.push(c);
-      if (unique.length === 4) break;
-    }
-  }
-  if (unique.length === 0) return { mode: 'empty', covers: [] };
-  const grid = [];
-  for (let i = 0; i < 4; i++) grid.push(unique[i % unique.length]);
-  return { mode: 'grid', covers: grid };
+  const c = tracks[0]?.thumbnail;
+  return c ? { mode: 'single', covers: [c] } : { mode: 'empty', covers: [] };
 }
 
 const items = computed(() => {
@@ -207,7 +190,7 @@ function selectDownload() {
   <aside class="sidebar">
     <div class="sidebar-section sidebar-top">
       <div class="brand">
-        <img class="logo" src="/textlogo.png" alt="Wax" />
+        <img class="logo" src="/logo.png" alt="Wax" />
       </div>
       <nav class="sidebar-nav">
         <a
