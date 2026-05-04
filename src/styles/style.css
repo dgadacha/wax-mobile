@@ -522,35 +522,38 @@ a { color: inherit; text-decoration: none; }
   background-clip: content-box;
 }
 
-/* App shell — full-bleed Apple Music aesthetic. Sidebar / main /
-   player are continuous surfaces separated by hairline 1 px dividers,
-   no rounded panels, no gutter. The whole window reads as a single
-   integrated app rather than three floating cards. */
+/* App shell — three rounded "panels" (sidebar / main / player) floating
+   over a subtly tinted backdrop. The 12px gutter + matching radius
+   gives the shell a "premium card" feel inspired by Apple Music's
+   layout. Body bg gets a gentle radial accent so the panels feel like
+   they're sitting on a lit surface, not a flat black sheet. */
 body {
-  background: var(--bg);
+  background:
+    radial-gradient(ellipse at 70% 0%, var(--accent-glow), transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
   transition: var(--t-accent);
 }
 .app {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 264px 1fr;
   grid-template-rows: 1fr auto;
   grid-template-areas:
     "sidebar main"
     "player player";
   height: 100vh;
-  gap: 0;
-  padding: 0;
+  gap: 12px;
+  padding: 12px;
 }
 
-/* Sidebar — flat, integrated. A single 1 px border on the right edge
-   separates it from main. Internal sections are spacing-only, no
-   visual cards. */
+/* Sidebar — one continuous rounded panel, with internal sections that
+   blend into the same surface (no nested cards). */
 .sidebar {
   grid-area: sidebar;
   display: flex;
   flex-direction: column;
   background: var(--main);
-  border-right: 1px solid var(--border);
+  border-radius: 14px;
   overflow: hidden;
   min-height: 0;
 }
@@ -608,21 +611,18 @@ body {
 .sidebar-link {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  gap: 16px;
+  padding: 10px 12px;
+  border-radius: 6px;
   color: var(--text-soft);
-  font-weight: 500;
-  font-size: 0.92rem;
+  font-weight: 700;
+  font-size: 0.9rem;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: color 0.15s;
 }
-.sidebar-link:hover { color: var(--text); background: var(--card); }
-.sidebar-link.active {
-  color: var(--accent-bright);
-  background: var(--card);
-}
-.sidebar-link svg { width: 20px; height: 20px; flex-shrink: 0; }
+.sidebar-link:hover { color: var(--text); }
+.sidebar-link.active { color: var(--text); }
+.sidebar-link svg { width: 24px; height: 24px; flex-shrink: 0; }
 
 .sidebar-library-header {
   display: flex;
@@ -678,13 +678,13 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s;
 }
-.library-item:hover { background: var(--card); }
-.library-item.active { background: var(--card); }
+.library-item:hover { background: var(--surface-2); }
+.library-item.active { background: var(--surface-3); }
 .lib-icon {
   width: 48px;
   height: 48px;
@@ -738,6 +738,7 @@ body {
 .main {
   grid-area: main;
   background: var(--main);
+  border-radius: 14px;
   overflow-y: auto;
   position: relative;
 }
@@ -761,22 +762,33 @@ body {
 .view.active { display: block; animation: fadeIn 0.2s ease; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* Hero — Apple Music style: clean text, no decorative gradient blobs.
-   Just generous whitespace and a hairline divider to separate from
-   the content below. Album/artist heroes that need an image (cover,
-   avatar) inject their own visual via .hero-content--with-avatar. */
+/* Hero — softened. Two stacked radial accent blobs (top-left + top-
+   right) bleed into the panel surface for an "ambient glow" instead of
+   the previous solid color band. The fade to transparent at the bottom
+   lets content underneath blend without a hard seam. */
 .hero {
-  padding: 32px 32px 24px;
+  padding: 32px 32px;
   position: relative;
-  background: transparent;
+  background:
+    radial-gradient(60% 80% at 85% -10%, var(--accent-glow), transparent 65%),
+    radial-gradient(70% 90% at 15% -20%, var(--accent-bg), transparent 60%),
+    transparent;
   transition: var(--t-accent);
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 60%, var(--main) 100%);
+  pointer-events: none;
 }
 .hero-content { position: relative; z-index: 1; }
 .hero-content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 32px;
+  gap: 12px;
+  padding-top: 80px;
 }
 .hero-content--with-avatar {
   flex-direction: row;
@@ -999,13 +1011,12 @@ html.light .hero-back:hover {
 }
 .hero h1 {
   font-family: var(--font-display);
-  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-size: clamp(2.75rem, 6vw, 5.5rem);
   font-weight: 700;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  line-height: 0.95;
+  letter-spacing: -0.045em;
   word-break: break-word;
-  color: var(--text);
-  font-variation-settings: 'opsz' 48, 'wght' 700;
+  font-variation-settings: 'opsz' 96, 'wght' 700;
 }
 .hero-meta {
   color: var(--text-soft);
@@ -1537,7 +1548,7 @@ button.track-offline-indicator { cursor: pointer; }
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
-.track:hover { background: var(--card); }
+.track:hover { background: var(--surface-2); }
 .track.is-playing .track-title { color: var(--accent-bright); }
 .track[draggable="true"] { cursor: grab; }
 .track[draggable="true"]:active { cursor: grabbing; }
@@ -1707,7 +1718,7 @@ button.track-offline-indicator { cursor: pointer; }
   grid-area: player;
   height: 76px;
   background: var(--main);
-  border-top: 1px solid var(--border);
+  border-radius: 14px;
   display: grid;
   grid-template-columns: 30% 40% 30%;
   align-items: center;
