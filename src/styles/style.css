@@ -517,12 +517,11 @@ a { color: inherit; text-decoration: none; }
 /* Hide label text inline; reveal as tooltip on hover. */
 .sidebar-link > span,
 .sidebar-link > div { display: none; }
-.sidebar-link[title]:hover::after,
-.library-item[title]:hover::after {
-  content: attr(title);
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
+/* Tooltip — teleported to <body> by Sidebar.vue so it escapes the
+   .library-items overflow-y: auto clipping context. Position is fed
+   inline by JS from the hovered element's bounding rect. */
+.sidebar-tooltip {
+  position: fixed;
   transform: translateY(-50%);
   background: var(--elev);
   color: var(--text);
@@ -532,7 +531,7 @@ a { color: inherit; text-decoration: none; }
   font-weight: 500;
   white-space: nowrap;
   box-shadow: var(--shadow-md);
-  z-index: 100;
+  z-index: 1000;
   pointer-events: none;
   border: 1px solid var(--border);
 }
@@ -593,12 +592,13 @@ a { color: inherit; text-decoration: none; }
 .library-item {
   position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0;
+  justify-content: flex-start;
+  gap: 4px;
   padding: 0;
-  width: 44px;
-  height: 44px;
+  width: 60px;
+  min-height: 44px;
   border-radius: 12px;
   cursor: pointer;
   transition: transform 0.15s ease;
@@ -609,13 +609,30 @@ a { color: inherit; text-decoration: none; }
 .library-item.active::before {
   content: '';
   position: absolute;
-  left: -14px;
-  top: 50%;
+  left: -22px;
+  top: 22px;
   width: 4px;
   height: 24px;
   background: var(--accent-bright);
   border-radius: 0 4px 4px 0;
   transform: translateY(-50%);
+}
+/* Tiny label that surfaces only under the active item. Truncated to
+   two lines so a long playlist name doesn't blow up the row. */
+.lib-active-label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--accent-bright);
+  text-align: center;
+  line-height: 1.15;
+  max-width: 56px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  pointer-events: none;
 }
 .lib-icon {
   width: 44px;

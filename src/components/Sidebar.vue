@@ -17,6 +17,24 @@ const streams = useStreamsStore();
 
 const dragOverPlaylistId = ref(null);
 
+// Tooltip — teleported to <body> so it escapes the .library-items
+// overflow scroll context. Coordinates are read from the hovered
+// element's bounding rect on each enter, then frozen until leave.
+const tooltip = ref({ visible: false, label: '', x: 0, y: 0 });
+function showTooltip(event, label) {
+  if (!label) return;
+  const rect = event.currentTarget.getBoundingClientRect();
+  tooltip.value = {
+    visible: true,
+    label,
+    x: rect.right + 8,
+    y: rect.top + rect.height / 2,
+  };
+}
+function hideTooltip() {
+  tooltip.value.visible = false;
+}
+
 // For a track list, return either a single full-size cover (1-track
 // playlists) or a 2x2 mosaic of up to 4 unique thumbnails (anything
 // bigger). When we have fewer than 4 unique artworks we cycle through
@@ -195,8 +213,9 @@ function selectDownload() {
         <a
           class="sidebar-link"
           :class="{ active: view.name === 'download' }"
-          :title="t('nav.search')"
           @click="selectDownload"
+          @mouseenter="showTooltip($event, t('nav.search'))"
+          @mouseleave="hideTooltip"
         >
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2.2" />
@@ -204,7 +223,13 @@ function selectDownload() {
           </svg>
           <span>{{ t('nav.search') }}</span>
         </a>
-        <a class="sidebar-link" id="settings-link" :title="t('nav.settings')" @click="openSettings">
+        <a
+          class="sidebar-link"
+          id="settings-link"
+          @click="openSettings"
+          @mouseenter="showTooltip($event, t('nav.settings'))"
+          @mouseleave="hideTooltip"
+        >
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
             <path
@@ -252,8 +277,9 @@ function selectDownload() {
           :key="item.kind + (item.id || 'lib') + i"
           class="library-item"
           :class="{ active: item.active, 'drag-over': (item.kind === 'playlist' && dragOverPlaylistId === item.id) || (item.kind === 'library' && dragOverPlaylistId === 'favs') }"
-          :title="item.name"
           @click="clickItem(item)"
+          @mouseenter="showTooltip($event, item.name)"
+          @mouseleave="hideTooltip"
           @dragover.prevent="onDragOver($event, item)"
           @dragleave="onDragLeave($event)"
           @drop.prevent="onDrop($event, item)"
@@ -281,9 +307,20 @@ function selectDownload() {
             <div class="lib-name">{{ item.name }}</div>
             <div class="lib-sub">{{ item.sub }}</div>
           </div>
+          <!-- Tiny label under the active item — keeps the active
+               playlist name visible without breaking the icon-only
+               sidebar look. Truncated to two lines. -->
+          <div v-if="item.active" class="lib-active-label">{{ item.name }}</div>
         </li>
       </ul>
     </div>
 
   </aside>
+  <Teleport to="body">
+    <div
+      v-if="tooltip.visible"
+      class="sidebar-tooltip"
+      :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
+    >{{ tooltip.label }}</div>
+  </Teleport>
 </template>
