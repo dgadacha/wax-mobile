@@ -312,6 +312,36 @@ html, body {
   height: 100%;
   overflow: hidden;
 }
+/* Background depth: a layered painter under everything else.
+   ::before = two soft accent radials (top-right + bottom-left) for
+   "lit room" feel.
+   ::after  = SVG turbulence noise at 3 % opacity for a tactile grain
+   that breaks up flat surfaces under bright themes especially.
+   Both pointer-events: none and fixed so they ride the viewport. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(60% 70% at 88% 8%, var(--accent-glow), transparent 60%),
+    radial-gradient(50% 60% at 8% 92%, var(--accent-glow), transparent 60%);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 0;
+  transition: var(--t-accent);
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity: 0.04;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 0;
+}
+html.light body::after { opacity: 0.06; mix-blend-mode: multiply; }
+.app { position: relative; z-index: 1; }
 
 button, input, select, textarea {
   font: inherit;
@@ -1072,6 +1102,23 @@ html.light .hero-back:hover {
   background: var(--accent-bright);
   transform: scale(1.06);
 }
+/* Soft pulse halo on the play button while a track is playing —
+   subtle accent ring expanding outward. Kept under 4 px so it
+   doesn't get visually noisy. */
+body[data-playing="true"] .icon-btn.play-btn {
+  animation: playPulse 2.4s ease-out infinite;
+}
+@keyframes playPulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent-glow), 0 4px 14px var(--accent-glow);
+  }
+  60% {
+    box-shadow: 0 0 0 14px transparent, 0 4px 14px var(--accent-glow);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent, 0 4px 14px var(--accent-glow);
+  }
+}
 .icon-btn.play-btn svg { width: 18px; height: 18px; }
 .icon-btn.play-btn .icon-pause { display: none; }
 .icon-btn.play-btn.is-playing .icon-play { display: none; }
@@ -1723,8 +1770,36 @@ html.light .player {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
-  border-radius: 4px;
-  overflow: hidden;
+  border-radius: 8px;
+  overflow: visible;
+  /* Dynamic glow that wakes up when a track is playing — uses the
+     theme accent for now, will key off cover-extracted color later. */
+  transition: box-shadow 0.4s ease;
+}
+.player-thumb-wrap .player-thumb,
+.player-thumb-wrap .player-thumb-spinner {
+  border-radius: 8px;
+}
+body[data-playing="true"] .player-thumb-wrap {
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 0 28px 4px var(--accent-glow),
+    0 0 64px var(--accent-glow);
+  animation: coverPulse 4s ease-in-out infinite;
+}
+@keyframes coverPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      0 0 24px 2px var(--accent-glow),
+      0 0 48px var(--accent-glow);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      0 0 36px 6px var(--accent-glow),
+      0 0 80px var(--accent-glow);
+  }
 }
 .player-thumb {
   width: 100%;

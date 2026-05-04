@@ -39,6 +39,13 @@ watch(() => library.favorites.length, (newLen, oldLen) => {
   discoverRefreshTimer = setTimeout(() => discover.refresh(), 2500);
 });
 
+// Mirror player.playing onto body[data-playing] so CSS-only effects
+// (cover glow pulse, play button pulse, etc.) can react without
+// component-level work. Cheap; runs on every play/pause toggle.
+watch(() => player.playing, (playing) => {
+  document.body.dataset.playing = playing ? 'true' : 'false';
+}, { immediate: true });
+
 onMounted(async () => {
   prefs.load();
   accent.applyThemeAccent();
