@@ -700,7 +700,7 @@ a { color: inherit; text-decoration: none; }
    transition into the page-body content reads as a soft horizon
    instead of a hard cut. */
 .hero {
-  padding: 32px 32px 60px;
+  padding: 32px 32px 100px;
   position: relative;
   background:
     radial-gradient(55% 90% at 12% 10%, var(--accent-bg), transparent 60%),
@@ -714,10 +714,16 @@ a { color: inherit; text-decoration: none; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: 80px;
-  background: linear-gradient(180deg, transparent 0%, var(--main) 100%);
+  height: 160px;
+  background: linear-gradient(180deg,
+    transparent 0%,
+    rgba(0, 0, 0, 0) 30%,
+    var(--main) 100%);
   pointer-events: none;
   z-index: 1;
+}
+html.light .hero::before {
+  background: linear-gradient(180deg, transparent 0%, var(--main) 100%);
 }
 .hero::after {
   content: '';
@@ -900,17 +906,23 @@ html.light .hero-cover-wrap {
   right: 0;
   bottom: 0;
   z-index: 2;
-  padding: 36px 14px 14px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+  padding: 56px 16px 18px;
+  background:
+    linear-gradient(to top,
+      rgba(0, 0, 0, 0.92) 0%,
+      rgba(0, 0, 0, 0.65) 35%,
+      rgba(0, 0, 0, 0.25) 70%,
+      transparent 100%);
   display: flex;
   flex-direction: column;
   gap: 2px;
   pointer-events: none;
 }
 .album-title {
-  font-weight: 600;
-  font-size: 0.92rem;
-  line-height: 1.25;
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -920,41 +932,23 @@ html.light .hero-cover-wrap {
 }
 .album-sub {
   font-size: 0.78rem;
-  color: rgba(255, 255, 255, 0.85);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-  margin-top: 2px;
+  margin-top: 4px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .album-count {
   font-size: 0.7rem;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.55);
   margin-top: 2px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
-/* Play button overlay on hover, same as discover. */
-.album-card::after {
-  content: '';
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background:
-    var(--accent)
-    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>')
-    center/16px no-repeat;
-  opacity: 0;
-  transform: translateY(8px) scale(0.9);
-  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
-  box-shadow: 0 8px 24px var(--accent-glow);
-  pointer-events: none;
-  z-index: 3;
-}
-.album-card:hover::after { opacity: 1; transform: translateY(0) scale(1); }
+/* Album card uses the same .discover-card-play pill as discover for
+   visual consistency — markup is now identical between the two. */
 
 /* "Other tracks" rows on ViewAlbum — slimmer than a real TrackRow
    since we have no per-track YouTube data yet. Reuses the .track grid
@@ -1840,12 +1834,16 @@ html.light .now-playing.np-has-track::after {
 .np-cover-wrap {
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
   background-size: cover;
   background-position: center;
   position: relative;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), 0 0 60px var(--accent-glow);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 100px var(--accent-glow),
+    0 0 40px var(--accent-glow);
 }
 body[data-playing="true"] .np-cover-wrap {
   animation: coverPulse 4s ease-in-out infinite;
@@ -2065,36 +2063,6 @@ body.viz-running .eq.is-playing rect {
   overflow: hidden;
   aspect-ratio: 1;
 }
-/* Featured card — first card in the discover grid spans 2 columns
-   (and 2 rows on wider viewports) so the grid breaks out of its
-   uniform "every card identical" pattern. The bigger surface earns
-   a slightly bigger title for hierarchy. */
-.discover-grid .discover-card:first-child {
-  grid-column: span 2;
-  aspect-ratio: 16 / 10;
-}
-.discover-grid .discover-card:first-child .discover-card-title {
-  font-size: 1.35rem;
-  -webkit-line-clamp: 2;
-}
-.discover-grid .discover-card:first-child .discover-card-meta {
-  padding: 60px 22px 22px;
-}
-.discover-grid .discover-card:first-child .discover-card-play {
-  width: 56px;
-  height: 56px;
-  bottom: 22px;
-  right: 22px;
-}
-.discover-grid .discover-card:first-child .discover-card-play svg {
-  width: 22px; height: 22px;
-}
-@media (max-width: 900px) {
-  .discover-grid .discover-card:first-child {
-    grid-column: span 1;
-    aspect-ratio: 1;
-  }
-}
 .discover-card:hover {
   transform: scale(1.04);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--accent-soft), 0 0 60px var(--accent-glow);
@@ -2129,62 +2097,76 @@ body.viz-running .eq.is-playing rect {
   animation: spin 0.7s linear infinite;
   z-index: 2;
 }
-/* Play button overlay — circular accent pill that fades in on hover
-   and slides up slightly to feel "ready to press". */
+/* Play pill overlay — labeled accent pill that fades in on hover and
+   slides up. Sits at bottom-right of the card so it doesn't fight
+   the title block on the bottom-left. */
 .discover-card-play {
   position: absolute;
-  bottom: 14px;
-  right: 14px;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
+  bottom: 16px;
+  right: 16px;
+  height: 38px;
+  padding: 0 16px 0 12px;
+  border-radius: 999px;
   background: var(--accent);
   color: #fff;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 0.82rem;
+  letter-spacing: -0.005em;
   opacity: 0;
-  transform: translateY(8px) scale(0.9);
+  transform: translateY(8px) scale(0.96);
   transition: opacity 0.2s ease-out, transform 0.2s ease-out;
   pointer-events: none;
   box-shadow: 0 8px 24px var(--accent-glow);
   z-index: 3;
 }
-.discover-card-play svg { width: 18px; height: 18px; margin-left: 2px; }
-.discover-card:hover .discover-card-play {
+.discover-card-play svg { width: 16px; height: 16px; }
+.discover-card-play-label { white-space: nowrap; }
+.discover-card:hover .discover-card-play,
+.album-card:hover .discover-card-play {
   opacity: 1;
   transform: translateY(0) scale(1);
 }
-/* Title strip floats over the cover bottom with a dark veil for
-   legibility regardless of the cover's brightness. */
+/* Title strip floats over the cover bottom with a deeper veil (was
+   half-fade, now near-opaque at the base) for legibility regardless
+   of the cover's brightness. */
 .discover-card-meta {
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 32px 14px 14px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+  padding: 56px 16px 18px;
+  background:
+    linear-gradient(to top,
+      rgba(0, 0, 0, 0.92) 0%,
+      rgba(0, 0, 0, 0.65) 35%,
+      rgba(0, 0, 0, 0.25) 70%,
+      transparent 100%);
   z-index: 2;
   pointer-events: none;
 }
 .discover-card-title {
-  font-weight: 600;
-  font-size: 0.92rem;
-  line-height: 1.25;
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.2;
   color: #fff;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  letter-spacing: -0.01em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .discover-card-sub {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 0.76rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.78rem;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: 4px;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .discover-loading {
