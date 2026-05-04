@@ -49,7 +49,11 @@ function close() {
     <header class="hero hero-mix">
       <div class="hero-content">
         <span class="eyebrow">{{ t('mix.eyebrow_temp') }}</span>
-        <h1>{{ mix.current ? t('mix.hero', mix.current.sourceTitle) : t('mix.eyebrow') }}</h1>
+        <h1 v-if="mix.current">
+          {{ t('mix.hero_prefix') }}
+          <span class="hero-italic">«&nbsp;{{ mix.current.sourceTitle }}&nbsp;»</span>
+        </h1>
+        <h1 v-else>{{ t('mix.eyebrow') }}</h1>
         <p class="hero-meta">{{ meta }}</p>
       </div>
     </header>
