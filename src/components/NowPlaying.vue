@@ -64,7 +64,11 @@ function openLyrics() {
 </script>
 
 <template>
-  <aside class="now-playing">
+  <aside
+    class="now-playing"
+    :class="{ 'np-has-track': !!current }"
+    :style="current && current.thumbnail ? { '--np-bg': `url('${current.thumbnail}')` } : null"
+  >
     <template v-if="current">
       <div class="np-cover-wrap" :style="{ backgroundImage: heroBg }">
         <img

@@ -372,7 +372,7 @@ a { color: inherit; text-decoration: none; }
    QueuePanel still works at narrow widths). */
 .app {
   display: grid;
-  grid-template-columns: 76px 1fr 320px;
+  grid-template-columns: 76px 1fr 380px;
   grid-template-rows: 1fr;
   grid-template-areas: "sidebar main now-playing";
   height: 100vh;
@@ -388,7 +388,7 @@ a { color: inherit; text-decoration: none; }
   /* Re-center the player without the right column subtracted out. */
   .player {
     left: calc(76px + (100vw - 76px) / 2);
-    width: min(720px, calc(100vw - 76px - 64px));
+    width: min(820px, calc(100vw - 76px - 64px));
   }
 }
 
@@ -489,12 +489,14 @@ a { color: inherit; text-decoration: none; }
   border-radius: 12px;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 .sidebar-link:hover {
   color: var(--text);
   background: var(--card);
+  transform: scale(1.06);
 }
+.sidebar-link:active { transform: scale(0.98); }
 .sidebar-link.active {
   color: var(--accent-bright);
   background: var(--accent-soft);
@@ -590,7 +592,8 @@ a { color: inherit; text-decoration: none; }
   transition: transform 0.15s ease;
   flex-shrink: 0;
 }
-.library-item:hover { transform: scale(1.04); }
+.library-item:hover { transform: scale(1.06); }
+.library-item:active { transform: scale(0.98); }
 .library-item.active::before {
   content: '';
   position: absolute;
@@ -693,15 +696,28 @@ a { color: inherit; text-decoration: none; }
    to the right edge (placeholder for the 3D centerpiece artwork that
    ships in the mockups). The halo is positioned to bleed slightly off
    the right edge so it reads as an object the camera framed, not a
-   page-wide gradient. */
+   page-wide gradient. The bottom edge fades into var(--main) so the
+   transition into the page-body content reads as a soft horizon
+   instead of a hard cut. */
 .hero {
-  padding: 32px 32px;
+  padding: 32px 32px 60px;
   position: relative;
   background:
     radial-gradient(55% 90% at 12% 10%, var(--accent-bg), transparent 60%),
     transparent;
   transition: var(--t-accent);
   overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 80px;
+  background: linear-gradient(180deg, transparent 0%, var(--main) 100%);
+  pointer-events: none;
+  z-index: 1;
 }
 .hero::after {
   content: '';
@@ -1108,31 +1124,32 @@ html.light .hero-back:hover {
 .icon-btn.play-btn {
   background: var(--accent);
   color: #fff;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
+  box-shadow: 0 6px 20px var(--accent-glow);
 }
 .icon-btn.play-btn:hover {
   background: var(--accent-bright);
-  transform: scale(1.06);
+  transform: scale(1.08);
+  box-shadow: 0 8px 28px var(--accent-glow);
 }
-/* Soft pulse halo on the play button while a track is playing —
-   subtle accent ring expanding outward. Kept under 4 px so it
-   doesn't get visually noisy. */
+/* Pulse halo on the play button while a track is playing — accent
+   ring expanding outward to draw the eye. */
 body[data-playing="true"] .icon-btn.play-btn {
-  animation: playPulse 2.4s ease-out infinite;
+  animation: playPulse 2.2s ease-out infinite;
 }
 @keyframes playPulse {
   0% {
-    box-shadow: 0 0 0 0 var(--accent-glow), 0 4px 14px var(--accent-glow);
+    box-shadow: 0 0 0 0 var(--accent-glow), 0 6px 20px var(--accent-glow);
   }
   60% {
-    box-shadow: 0 0 0 14px transparent, 0 4px 14px var(--accent-glow);
+    box-shadow: 0 0 0 18px transparent, 0 6px 20px var(--accent-glow);
   }
   100% {
-    box-shadow: 0 0 0 0 transparent, 0 4px 14px var(--accent-glow);
+    box-shadow: 0 0 0 0 transparent, 0 6px 20px var(--accent-glow);
   }
 }
-.icon-btn.play-btn svg { width: 18px; height: 18px; }
+.icon-btn.play-btn svg { width: 20px; height: 20px; }
 .icon-btn.play-btn .icon-pause { display: none; }
 .icon-btn.play-btn.is-playing .icon-play { display: none; }
 .icon-btn.play-btn.is-playing .icon-pause { display: block; }
@@ -1748,9 +1765,9 @@ button.track-offline-indicator { cursor: pointer; }
   left: calc(76px + (100vw - 76px - 320px) / 2);
   transform: translateX(-50%);
   z-index: 50;
-  width: min(720px, calc(100vw - 76px - 320px - 64px));
+  width: min(820px, calc(100vw - 76px - 380px - 64px));
   margin-left: 0;
-  height: 64px;
+  height: 76px;
   background: rgba(20, 20, 30, 0.55);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   backdrop-filter: blur(24px) saturate(160%);
@@ -1783,13 +1800,42 @@ html.light .player {
    --------------------------------------------------------------- */
 .now-playing {
   grid-area: now-playing;
+  position: relative;
   background: var(--main);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  padding: 24px 20px 110px;
+  padding: 28px 24px 110px;
   overflow-y: auto;
-  gap: 16px;
+  gap: 18px;
+  isolation: isolate;
+}
+/* Immersive backdrop: the current cover image blurred to a haze
+   sits behind the panel content, tinted by an accent veil. The
+   --np-bg CSS var is fed inline by NowPlaying.vue from the current
+   track's thumbnail. */
+.now-playing.np-has-track::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: var(--np-bg);
+  background-size: cover;
+  background-position: center;
+  filter: blur(60px) saturate(140%) brightness(0.85);
+  opacity: 0.55;
+  z-index: -2;
+  transition: opacity 0.6s ease, background-image 0.4s ease;
+}
+.now-playing.np-has-track::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(20, 20, 30, 0.4) 0%, var(--main) 80%);
+  z-index: -1;
+  pointer-events: none;
+}
+html.light .now-playing.np-has-track::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0%, var(--main) 80%);
 }
 .np-cover-wrap {
   width: 100%;
@@ -2018,6 +2064,36 @@ body.viz-running .eq.is-playing rect {
   color: inherit;
   overflow: hidden;
   aspect-ratio: 1;
+}
+/* Featured card — first card in the discover grid spans 2 columns
+   (and 2 rows on wider viewports) so the grid breaks out of its
+   uniform "every card identical" pattern. The bigger surface earns
+   a slightly bigger title for hierarchy. */
+.discover-grid .discover-card:first-child {
+  grid-column: span 2;
+  aspect-ratio: 16 / 10;
+}
+.discover-grid .discover-card:first-child .discover-card-title {
+  font-size: 1.35rem;
+  -webkit-line-clamp: 2;
+}
+.discover-grid .discover-card:first-child .discover-card-meta {
+  padding: 60px 22px 22px;
+}
+.discover-grid .discover-card:first-child .discover-card-play {
+  width: 56px;
+  height: 56px;
+  bottom: 22px;
+  right: 22px;
+}
+.discover-grid .discover-card:first-child .discover-card-play svg {
+  width: 22px; height: 22px;
+}
+@media (max-width: 900px) {
+  .discover-grid .discover-card:first-child {
+    grid-column: span 1;
+    aspect-ratio: 1;
+  }
 }
 .discover-card:hover {
   transform: scale(1.04);
