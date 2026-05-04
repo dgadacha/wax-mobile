@@ -380,7 +380,8 @@ function goBack() {
             <svg viewBox="0 0 24 24" fill="currentColor">
               <path d="M8 5v14l11-7z" />
             </svg>
-          </button>
+          <span>{{ t('common.play') }}</span>
+        </button>
           <button
             class="btn-ghost"
             :disabled="savingAsPlaylist"

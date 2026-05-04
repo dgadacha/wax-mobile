@@ -59,6 +59,7 @@ function close() {
           <svg viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
+          <span>{{ t('common.play') }}</span>
         </button>
         <button class="secondary-btn" @click="save">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">

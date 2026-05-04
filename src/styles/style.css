@@ -1088,27 +1088,35 @@ html.light .hero-back:hover {
   gap: 16px;
   margin-bottom: 24px;
 }
+/* Class name kept for backward compat — visually it's now a labeled
+   pill ("▶ Lecture") matching the mockups, not a round circle. */
 .play-circle {
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 22px 0 18px;
+  border-radius: 999px;
   background: var(--accent);
   border: none;
-  color: var(--on-accent);
+  color: #fff;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-accent);
-  transition: var(--t-accent), transform 0.15s ease;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.92rem;
+  letter-spacing: -0.005em;
+  box-shadow: 0 8px 24px var(--accent-glow);
+  transition: var(--t-accent), transform 0.15s ease, box-shadow 0.2s ease;
   flex-shrink: 0;
 }
 .play-circle:hover {
   background: var(--accent-bright);
-  transform: scale(1.06);
-  box-shadow: var(--shadow-accent), 0 12px 40px var(--accent-glow);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 30px var(--accent-glow);
 }
-.play-circle svg { width: 28px; height: 28px; margin-left: 2px; }
+.play-circle:active { transform: translateY(0); }
+.play-circle svg { width: 18px; height: 18px; }
+.play-circle span { white-space: nowrap; }
 
 .page-search {
   flex: 1;
@@ -1194,23 +1202,26 @@ html.light .hero-back:hover {
 .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .secondary-btn {
-  background: transparent;
+  background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
-  padding: 8px 20px;
+  padding: 10px 20px;
   border-radius: 999px;
-  font-weight: 700;
-  font-size: 0.78rem;
+  font-weight: 600;
+  font-size: 0.88rem;
+  letter-spacing: -0.005em;
   cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
   white-space: nowrap;
 }
-.secondary-btn:hover { border-color: var(--text); transform: scale(1.04); }
+.secondary-btn:hover {
+  background: var(--card-hover);
+  border-color: transparent;
+  transform: translateY(-1px);
+}
 .secondary-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
 
 .link-btn {
@@ -1505,9 +1516,9 @@ input:focus, input:focus-visible { outline: none; }
   grid-template-columns: 32px 48px minmax(0, 1fr) minmax(0, 220px) 20px 56px 248px;
   gap: 12px;
   align-items: center;
-  padding: 6px 16px;
-  border-radius: 4px;
-  transition: background 0.1s ease;
+  padding: 8px 14px;
+  border-radius: 10px;
+  transition: background 0.1s ease, box-shadow 0.15s ease;
   position: relative;
 }
 /* When the parent ul has the --no-album modifier (e.g. ViewAlbum where
@@ -1595,8 +1606,9 @@ button.track-offline-indicator { cursor: pointer; }
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
 }
-.track:hover { background: var(--surface-2); }
-.track.is-playing .track-title { color: var(--accent-bright); }
+.track:hover { background: var(--accent-soft); }
+.track.is-playing { background: var(--card); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06); }
+.track.is-playing .track-title { color: var(--accent); }
 .track[draggable="true"] { cursor: grab; }
 .track[draggable="true"]:active { cursor: grabbing; }
 .track.is-dragging { opacity: 0.35; }
