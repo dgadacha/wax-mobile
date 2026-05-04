@@ -195,6 +195,7 @@ function selectDownload() {
         <a
           class="sidebar-link"
           :class="{ active: view.name === 'download' }"
+          :title="t('nav.search')"
           @click="selectDownload"
         >
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -203,7 +204,7 @@ function selectDownload() {
           </svg>
           <span>{{ t('nav.search') }}</span>
         </a>
-        <a class="sidebar-link" id="settings-link" @click="openSettings">
+        <a class="sidebar-link" id="settings-link" :title="t('nav.settings')" @click="openSettings">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" />
             <path
@@ -251,6 +252,7 @@ function selectDownload() {
           :key="item.kind + (item.id || 'lib') + i"
           class="library-item"
           :class="{ active: item.active, 'drag-over': (item.kind === 'playlist' && dragOverPlaylistId === item.id) || (item.kind === 'library' && dragOverPlaylistId === 'favs') }"
+          :title="item.name"
           @click="clickItem(item)"
           @dragover.prevent="onDragOver($event, item)"
           @dragleave="onDragLeave($event)"

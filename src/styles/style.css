@@ -1,9 +1,9 @@
 :root {
-  --bg: #000000;
-  --main: #0d0d10;
-  --card: #18181c;
-  --card-hover: #28282e;
-  --elev: #1f1f24;
+  --bg: #0E0E12;
+  --main: #15151D;
+  --card: #1d1d27;
+  --card-hover: #272736;
+  --elev: #22222e;
   --text: #ffffff;
   --text-soft: #b3b3b3;
   --text-muted: #6a6a73;
@@ -335,48 +335,73 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* App grid */
+/* App shell — mini icon sidebar (~76 px) + main + a floating pill
+   player anchored to the bottom-center. The grid only knows about the
+   sidebar + main; the player escapes into position: fixed so it
+   reads as an object on top of the canvas, not part of the grid. */
 .app {
   display: grid;
-  grid-template-columns: 280px 1fr;
-  grid-template-rows: 1fr auto;
-  grid-template-areas:
-    "sidebar main"
-    "player player";
+  grid-template-columns: 76px 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "sidebar main";
   height: 100vh;
-  gap: 8px;
-  padding: 8px;
+  gap: 0;
+  padding: 0;
 }
 
-/* Sidebar */
+/* Sidebar — icons-only dock. Nav items (.sidebar-link) and library
+   items (.library-item) get the same compact treatment: a 44 px
+   square tap target with the cover/icon centered, label hidden by
+   default, revealed as a tooltip on hover. */
 .sidebar {
   grid-area: sidebar;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  background: var(--main);
+  border-right: 1px solid var(--border);
   overflow: hidden;
   min-height: 0;
+  align-items: center;
+  padding: 14px 0;
+  gap: 4px;
 }
 .sidebar-section {
-  background: var(--main);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-}
-.sidebar-section.sidebar-top { padding: 16px 12px; }
-.sidebar-section.sidebar-library {
-  flex: 1;
+  background: transparent;
+  border-radius: 0;
+  padding: 4px 0;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  padding-top: 8px;
+  align-items: center;
+  gap: 4px;
+}
+.sidebar-section.sidebar-top { padding: 4px 0 12px; }
+.sidebar-section.sidebar-library {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 8px 0 0;
 }
 
+/* Brand — compact mark in the mini sidebar. The drag region covers
+   the whole top stripe (including padding around the icon) so the
+   user can grab the window from anywhere up there. */
 .brand {
   display: flex;
-  align-items: flex-start;
-  padding: 0 12px;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 28px 0 16px;
   margin-bottom: 4px;
   -webkit-app-region: drag;
 }
+.brand .logo {
+  max-width: 44px;
+  max-height: 44px;
+  margin-left: 0;
+  object-position: center;
+}
+.brand span { display: none; }
 .brand img,
 .brand button,
 .brand a { -webkit-app-region: no-drag; }
@@ -406,45 +431,77 @@ a { color: inherit; text-decoration: none; }
   color: var(--text);
 }
 
-.sidebar-nav { display: flex; flex-direction: column; gap: 2px; }
+/* Mini-sidebar nav: column of 44 px square icon buttons. Label is
+   hidden in the layout but kept in markup for accessibility — it
+   reveals as a hover tooltip via a generated ::after on the parent. */
+.sidebar-nav { display: flex; flex-direction: column; gap: 6px; align-items: center; }
 .sidebar-link {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  color: var(--text-soft);
-  font-weight: 700;
-  font-size: 0.9rem;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 12px;
+  color: var(--text-muted);
   cursor: pointer;
-  transition: color 0.15s;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.sidebar-link:hover { color: var(--text); }
-.sidebar-link.active { color: var(--text); }
-.sidebar-link svg { width: 24px; height: 24px; flex-shrink: 0; }
+.sidebar-link:hover {
+  color: var(--text);
+  background: var(--card);
+}
+.sidebar-link.active {
+  color: var(--accent-bright);
+  background: var(--accent-soft);
+}
+.sidebar-link svg { width: 22px; height: 22px; flex-shrink: 0; }
+/* Hide label text inline; reveal as tooltip on hover. */
+.sidebar-link > span,
+.sidebar-link > div { display: none; }
+.sidebar-link[title]:hover::after,
+.library-item[title]:hover::after {
+  content: attr(title);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--elev);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  pointer-events: none;
+  border: 1px solid var(--border);
+}
 
+/* Mini sidebar: hide the "Ta bibliothèque" header; the + button
+   floats above the playlist list as the only visible control. */
 .sidebar-library-header {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  padding: 4px 4px 8px;
+  padding: 0 0 12px;
+  width: 100%;
 }
-.library-title-btn {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.library-title-btn { display: none; }
+#create-playlist-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   background: transparent;
-  border: none;
-  color: var(--text-soft);
-  font-weight: 700;
-  font-size: 0.95rem;
-  cursor: pointer;
-  padding: 8px;
-  border-radius: 6px;
-  transition: color 0.15s;
+  color: var(--text-muted);
 }
-.library-title-btn:hover { color: var(--text); }
-.library-title-btn svg { width: 22px; height: 22px; }
+#create-playlist-btn:hover {
+  background: var(--card);
+  color: var(--text);
+}
+#create-playlist-btn svg { width: 18px; height: 18px; }
 
 .ytdlp-badge {
   display: inline-flex;
@@ -473,28 +530,55 @@ a { color: inherit; text-decoration: none; }
   gap: 2px;
   padding: 4px;
 }
+/* Library items in the mini sidebar — just the cover/icon, label
+   reveals as tooltip. The active item gets a left-edge accent stripe
+   so the user knows where they are without the label being visible. */
 .library-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  width: 44px;
+  height: 44px;
   border-radius: 12px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
 }
-.library-item:hover { background: var(--accent-soft); }
-.library-item.active { background: var(--accent-soft); }
-.library-item.active .lib-name { color: var(--accent); font-weight: 600; }
+.library-item:hover { transform: scale(1.04); }
+.library-item.active::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 50%;
+  width: 4px;
+  height: 24px;
+  background: var(--accent-bright);
+  border-radius: 0 4px 4px 0;
+  transform: translateY(-50%);
+}
 .lib-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   overflow: hidden;
   color: #fff;
+}
+/* Hide the text block — the tooltip handles it on hover. */
+.lib-text { display: none; }
+.library-items {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
 }
 .lib-icon.liked-icon {
   background: linear-gradient(135deg, var(--accent), var(--accent-bright));
@@ -1556,19 +1640,44 @@ button.track-offline-indicator { cursor: pointer; }
 .drag-over { background: var(--accent-soft) !important; outline: 1px solid var(--accent); }
 
 /* Player */
+/* Floating glassmorphism player anchored to the bottom-center.
+   Escapes the app grid via position: fixed — the .app grid only
+   knows about sidebar + main, the player floats on top of main and
+   leaves a 96 px clear stripe at the bottom of .main so content
+   doesn't slide under it. */
 .player {
-  grid-area: player;
-  height: 72px;
-  background: var(--main);
-  border-radius: 14px;
-  margin: 0 8px 8px;
-  border: 1px solid var(--border-soft);
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  width: min(880px, calc(100% - 96px - 32px));
+  margin-left: 38px; /* nudge right to stay centered relative to main, not viewport */
+  height: 64px;
+  background: rgba(20, 20, 30, 0.55);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
   display: grid;
-  grid-template-columns: 30% 40% 30%;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding: 0 14px;
+  gap: 12px;
 }
+html.light .player {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(0, 0, 0, 0.06);
+  box-shadow:
+    0 12px 40px rgba(60, 40, 110, 0.16),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
+}
+/* Reserve clearance so the last track row doesn't sit under the
+   floating player. Clear strip = player height + bottom offset + breathing. */
+.main { padding-bottom: 96px; }
 .player-track {
   display: flex;
   align-items: center;
