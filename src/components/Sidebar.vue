@@ -307,10 +307,6 @@ function selectDownload() {
             <div class="lib-name">{{ item.name }}</div>
             <div class="lib-sub">{{ item.sub }}</div>
           </div>
-          <!-- Tiny label under the active item — keeps the active
-               playlist name visible without breaking the icon-only
-               sidebar look. Truncated to two lines. -->
-          <div v-if="item.active" class="lib-active-label">{{ item.name }}</div>
         </li>
       </ul>
     </div>

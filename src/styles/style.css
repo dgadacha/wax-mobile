@@ -592,13 +592,12 @@ a { color: inherit; text-decoration: none; }
 .library-item {
   position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
+  justify-content: center;
+  gap: 0;
   padding: 0;
-  width: 60px;
-  min-height: 44px;
+  width: 44px;
+  height: 44px;
   border-radius: 12px;
   cursor: pointer;
   transition: transform 0.15s ease;
@@ -609,30 +608,13 @@ a { color: inherit; text-decoration: none; }
 .library-item.active::before {
   content: '';
   position: absolute;
-  left: -22px;
-  top: 22px;
+  left: -14px;
+  top: 50%;
   width: 4px;
   height: 24px;
   background: var(--accent-bright);
   border-radius: 0 4px 4px 0;
   transform: translateY(-50%);
-}
-/* Tiny label that surfaces only under the active item. Truncated to
-   two lines so a long playlist name doesn't blow up the row. */
-.lib-active-label {
-  font-size: 0.62rem;
-  font-weight: 600;
-  letter-spacing: -0.005em;
-  color: var(--accent-bright);
-  text-align: center;
-  line-height: 1.15;
-  max-width: 56px;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-  pointer-events: none;
 }
 .lib-icon {
   width: 44px;
