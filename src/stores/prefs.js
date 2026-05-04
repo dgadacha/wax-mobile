@@ -29,9 +29,13 @@ export const usePrefsStore = defineStore('prefs', {
         if (p.themeId && THEME_IDS.includes(p.themeId)) {
           this.themeId = p.themeId;
         } else if (p.theme === 'light') {
-          // Migrate the legacy crisp-white "light" theme to the soft warm
-          // default — the old palette was reported as too harsh on the eyes.
-          this.themeId = 'cream';
+          // Legacy `theme: 'light'` string from a very-old install —
+          // map onto the current Dawn default. Any saved themeId that
+          // was removed (cream, sable, peche, lavende, ardoise, vinyle,
+          // studio, dracula, nord, tokyo-night, rose-pine, gruvbox,
+          // neon) just falls through and the store keeps its initial
+          // DEFAULT_THEME_ID (also dawn).
+          this.themeId = 'dawn';
         } else if (p.theme === 'dark') {
           this.themeId = 'dark';
         }
