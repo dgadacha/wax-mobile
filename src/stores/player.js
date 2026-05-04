@@ -44,6 +44,7 @@ export const usePlayerStore = defineStore('player', {
     duration: 0,
     playCountedFor: null,
     saveStateTimer: null,
+    stallTimer: null, // armed by 'waiting'/'stalled', cleared on progress or pause
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -74,15 +75,34 @@ export const usePlayerStore = defineStore('player', {
       // Wire event listeners
       el.addEventListener('play', () => this._onAudioPlay());
       el.addEventListener('pause', () => this._onAudioPause());
-      el.addEventListener('playing', () => { this.loading = false; });
-      el.addEventListener('waiting', () => { this.loading = true; });
+      el.addEventListener('playing', () => {
+        this.loading = false;
+        this._clearStallWatchdog();
+      });
+      // 'waiting' fires when the buffer underruns. The corresponding
+      // 'playing' event fires once buffering recovers — but on a stale
+      // YouTube CDN URL (signed, expires mid-track) the audio just sits
+      // there forever with no error. Watchdog kicks in after 10 s of
+      // silence and skips the track.
+      el.addEventListener('waiting', () => {
+        this.loading = true;
+        this._armStallWatchdog();
+      });
+      el.addEventListener('stalled', () => this._armStallWatchdog());
       el.addEventListener('error', () => {
+        this._clearStallWatchdog();
         this.loading = false;
         const track = findTrack(this.queue[this.index]);
         showToast(track ? t('toast.play_error_named', track.title) : t('toast.play_error'), 'error');
         setTimeout(() => { if (this.queue.length > 1) this.next(); }, 3000);
       });
-      el.addEventListener('timeupdate', () => this._onAudioTimeUpdate());
+      el.addEventListener('timeupdate', () => {
+        // Any progress means buffer recovered — disarm any in-flight
+        // stall watchdog (covers browsers that don't fire 'playing'
+        // after a recover).
+        if (this.stallTimer) this._clearStallWatchdog();
+        this._onAudioTimeUpdate();
+      });
       el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
@@ -95,6 +115,8 @@ export const usePlayerStore = defineStore('player', {
       const trackId = this.queue[this.index];
       const track = findTrack(trackId);
       if (!track || !this.audioEl) return;
+      // Switching tracks — drop any stall watchdog from the previous one.
+      this._clearStallWatchdog();
       // Stop any in-flight crossfade
       if (this.crossfading && this.audioEl2) {
         try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); } catch {}
@@ -152,6 +174,7 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.pause();
         this.audioEl.src = '';
       }
+      this._clearStallWatchdog();
       this.playing = false;
       this.loading = false;
       this.visible = false;
@@ -272,8 +295,27 @@ export const usePlayerStore = defineStore('player', {
     },
     _onAudioPause() {
       this.playing = false;
+      this._clearStallWatchdog();
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       this.savePlayerState();
+    },
+    _armStallWatchdog() {
+      this._clearStallWatchdog();
+      this.stallTimer = setTimeout(() => {
+        this.stallTimer = null;
+        // Real stall: still here, not paused, but no progress made.
+        if (!this.audioEl || this.audioEl.paused) return;
+        const track = findTrack(this.queue[this.index]);
+        showToast(track ? t('toast.play_error_named', track.title) : t('toast.play_error'), 'error');
+        if (this.queue.length > 1) this.next();
+        else this.loading = false;
+      }, 10000);
+    },
+    _clearStallWatchdog() {
+      if (this.stallTimer) {
+        clearTimeout(this.stallTimer);
+        this.stallTimer = null;
+      }
     },
     _onAudioTimeUpdate() {
       if (!this.audioEl?.duration) return;
