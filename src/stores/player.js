@@ -35,7 +35,7 @@ export const usePlayerStore = defineStore('player', {
     shuffle: false,
     repeat: 'off', // 'off' | 'all' | 'one'
     muted: false,
-    queueOpen: false,
+    nowPlayingOpen: true, // controls right-column visibility (cover + queue)
     crossfading: false,
     audioEl: null,   // primary <audio>
     audioEl2: null,  // crossfade <audio>
@@ -186,8 +186,7 @@ export const usePlayerStore = defineStore('player', {
       this.queue.splice(insertAt, 0, trackId);
       showToast(t('toast.added_to_queue'), 'success');
     },
-    toggleQueueOpen() { this.queueOpen = !this.queueOpen; },
-    closeQueue() { this.queueOpen = false; },
+    toggleNowPlayingOpen() { this.nowPlayingOpen = !this.nowPlayingOpen; },
     removeQueueAt(qIdx) {
       this.queue.splice(qIdx, 1);
     },

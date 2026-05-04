@@ -226,9 +226,9 @@ watch(
       <button
         class="icon-btn"
         id="player-queue"
-        :class="{ active: player.queueOpen }"
+        :class="{ active: player.nowPlayingOpen }"
         :title="t('player.queue')"
-        @click="player.toggleQueueOpen"
+        @click="player.toggleNowPlayingOpen"
       >
         <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path

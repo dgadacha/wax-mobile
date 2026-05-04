@@ -2,7 +2,6 @@
 import { onMounted, computed, watch } from 'vue';
 import Sidebar from './components/Sidebar.vue';
 import Player from './components/Player.vue';
-import QueuePanel from './components/QueuePanel.vue';
 import NowPlaying from './components/NowPlaying.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import Toast from './components/Toast.vue';
@@ -88,7 +87,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'np-collapsed': !player.nowPlayingOpen }">
     <Sidebar />
     <main class="main">
       <div class="content">
@@ -103,7 +102,6 @@ onMounted(async () => {
     </main>
     <NowPlaying />
     <Player />
-    <QueuePanel />
     <ModalRoot />
     <Toast />
   </div>
