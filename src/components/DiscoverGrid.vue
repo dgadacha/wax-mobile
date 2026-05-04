@@ -70,10 +70,13 @@ function onDragStart(event, track) {
         <div class="discover-card-cover">
           <img :src="t.thumbnail" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
           <div v-if="isLoading(t)" class="discover-card-spinner"></div>
-        </div>
-        <div class="discover-card-meta">
-          <div class="discover-card-title">{{ t.title }}</div>
-          <div class="discover-card-sub">{{ t.uploader }}</div>
+          <span class="discover-card-play" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          </span>
+          <div class="discover-card-meta">
+            <div class="discover-card-title">{{ t.title }}</div>
+            <div class="discover-card-sub">{{ t.uploader }}</div>
+          </div>
         </div>
       </button>
     </div>

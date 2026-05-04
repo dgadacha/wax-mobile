@@ -760,33 +760,36 @@ html.light .hero-cover-wrap {
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 16px;
 }
+/* Album cards — same image-as-card treatment as discover. */
 .album-card {
-  display: flex;
-  flex-direction: column;
-  background: var(--card);
+  position: relative;
+  display: block;
+  background: transparent;
   border: none;
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 0;
   text-align: left;
   cursor: pointer;
   font: inherit;
   color: inherit;
-  transition: background 0.15s ease, transform 0.15s ease;
+  transition: transform 0.25s ease-out, box-shadow 0.25s ease-out;
   min-width: 0;
+  overflow: hidden;
+  aspect-ratio: 1;
 }
 .album-card:hover {
-  background: var(--card-hover);
-  transform: translateY(-2px);
+  transform: scale(1.04);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--accent-soft), 0 0 60px var(--accent-glow);
 }
+.album-card:active { transform: scale(1.02); }
 .album-cover {
-  width: 100%;
-  aspect-ratio: 1 / 1;
-  border-radius: 4px;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   overflow: hidden;
   background-size: cover;
   background-position: center;
   background-color: var(--card-hover);
-  position: relative;
 }
 .album-cover img {
   width: 100%;
@@ -833,36 +836,66 @@ html.light .hero-cover-wrap {
   animation: shimmer 1.5s linear infinite;
 }
 .album-meta {
-  margin-top: 12px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 36px 14px 14px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 0;
+  pointer-events: none;
 }
 .album-title {
   font-weight: 600;
-  font-size: 0.9rem;
-  line-height: 1.3;
+  font-size: 0.92rem;
+  line-height: 1.25;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  color: var(--text);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .album-sub {
   font-size: 0.78rem;
-  color: var(--text-soft);
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-  margin-top: 4px;
+  margin-top: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .album-count {
-  font-size: 0.72rem;
-  color: var(--text-muted);
+  font-size: 0.7rem;
+  color: rgba(255, 255, 255, 0.7);
   margin-top: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
+/* Play button overlay on hover, same as discover. */
+.album-card::after {
+  content: '';
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background:
+    var(--accent)
+    url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>')
+    center/16px no-repeat;
+  opacity: 0;
+  transform: translateY(8px) scale(0.9);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  box-shadow: 0 8px 24px var(--accent-glow);
+  pointer-events: none;
+  z-index: 3;
+}
+.album-card:hover::after { opacity: 1; transform: translateY(0) scale(1); }
 
 /* "Other tracks" rows on ViewAlbum — slimmer than a real TrackRow
    since we have no per-track YouTube data yet. Reuses the .track grid
@@ -936,6 +969,47 @@ html.light .hero-back:hover {
   font-weight: 500;
   letter-spacing: -0.005em;
   font-variation-settings: normal;
+}
+
+/* Mood pills row in the search hero — quick-access vibes that will
+   eventually filter the discover/search content. UI only for now. */
+.mood-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.mood-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: transform 0.2s ease-out, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.mood-pill:hover {
+  transform: scale(1.04);
+  background: var(--card-hover);
+  border-color: var(--accent-soft);
+  box-shadow: 0 6px 20px var(--accent-glow);
+}
+.mood-pill:active { transform: scale(1.01); }
+.mood-pill.is-active {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 8px 24px var(--accent-glow);
+}
+.mood-emoji {
+  font-size: 1rem;
+  line-height: 1;
 }
 .hero-meta {
   color: var(--text-soft);
@@ -1761,28 +1835,34 @@ body.viz-running .eq.is-playing rect {
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 16px;
 }
+/* Discover cards — image-as-card with title overlay. The cover IS
+   the card; meta floats over the bottom of the cover with a dark
+   gradient veil for legibility. Hover lifts the card, intensifies an
+   accent glow halo, and reveals a circular play button. */
 .discover-card {
-  background: var(--card);
+  position: relative;
+  background: transparent;
   border: none;
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 0;
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease, transform 0.15s ease;
-  display: flex;
-  flex-direction: column;
+  transition: transform 0.25s ease-out, box-shadow 0.25s ease-out;
+  display: block;
   font: inherit;
   color: inherit;
+  overflow: hidden;
+  aspect-ratio: 1;
 }
 .discover-card:hover {
-  background: var(--card-hover);
-  transform: translateY(-2px);
+  transform: scale(1.04);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--accent-soft), 0 0 60px var(--accent-glow);
 }
+.discover-card:active { transform: scale(1.02); }
 .discover-card-cover {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 4px;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   overflow: hidden;
 }
 .discover-card img {
@@ -1791,8 +1871,9 @@ body.viz-running .eq.is-playing rect {
   object-fit: cover;
   background: var(--card-hover);
   display: block;
-  transition: filter 0.2s ease;
+  transition: filter 0.3s ease, transform 0.4s ease-out;
 }
+.discover-card:hover img { transform: scale(1.06); filter: brightness(0.85); }
 .discover-card.is-loading img { filter: brightness(0.55) blur(1px); }
 .discover-card-spinner {
   position: absolute;
@@ -1805,24 +1886,65 @@ body.viz-running .eq.is-playing rect {
   border-top-color: var(--accent-bright);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
+  z-index: 2;
 }
-.discover-card-meta { margin-top: 12px; min-width: 0; }
+/* Play button overlay — circular accent pill that fades in on hover
+   and slides up slightly to feel "ready to press". */
+.discover-card-play {
+  position: absolute;
+  bottom: 14px;
+  right: 14px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(8px) scale(0.9);
+  transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+  pointer-events: none;
+  box-shadow: 0 8px 24px var(--accent-glow);
+  z-index: 3;
+}
+.discover-card-play svg { width: 18px; height: 18px; margin-left: 2px; }
+.discover-card:hover .discover-card-play {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+/* Title strip floats over the cover bottom with a dark veil for
+   legibility regardless of the cover's brightness. */
+.discover-card-meta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 32px 14px 14px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.5) 50%, transparent 100%);
+  z-index: 2;
+  pointer-events: none;
+}
 .discover-card-title {
   font-weight: 600;
-  font-size: 0.9rem;
-  line-height: 1.3;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  color: #fff;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .discover-card-sub {
-  color: var(--text-soft);
-  font-size: 0.78rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.76rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 4px;
+  margin-top: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .discover-loading {
   color: var(--text-soft);
