@@ -1,7 +1,6 @@
 <script setup>
 import { onMounted, computed, watch } from 'vue';
 import Sidebar from './components/Sidebar.vue';
-import TopBar from './components/TopBar.vue';
 import Player from './components/Player.vue';
 import QueuePanel from './components/QueuePanel.vue';
 import ModalRoot from './components/ModalRoot.vue';
@@ -84,7 +83,6 @@ onMounted(async () => {
   <div class="app">
     <Sidebar />
     <main class="main">
-      <TopBar />
       <div class="content">
         <ViewSearch v-show="currentView === 'download'" />
         <ViewLibrary v-show="currentView === 'library'" />

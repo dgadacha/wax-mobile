@@ -38,7 +38,7 @@ export const THEMES = [
   { id: 'lavende',     labelKey: 'theme.lavende',     kind: 'light', swatch: ['#ebe5f0', '#f9f5fc', '#A855F7'] },
 ];
 
-export const DEFAULT_THEME_ID = 'paper';
+export const DEFAULT_THEME_ID = 'dark';
 export const THEME_IDS = THEMES.map((t) => t.id);
 export const themeById = (id) => THEMES.find((t) => t.id === id) || null;
 export const darkThemes = () => THEMES.filter((t) => t.kind === 'dark');
