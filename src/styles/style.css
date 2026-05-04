@@ -2025,7 +2025,7 @@ body.viz-running .eq.is-playing rect {
 }
 .discover-card:hover {
   transform: scale(1.04);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--accent-soft), 0 0 60px var(--accent-glow);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
 }
 .discover-card:active { transform: scale(1.02); }
 .discover-card-cover {
@@ -2064,26 +2064,21 @@ body.viz-running .eq.is-playing rect {
   position: absolute;
   bottom: 16px;
   right: 16px;
-  height: 38px;
-  padding: 0 16px 0 12px;
-  border-radius: 999px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
   background: var(--accent);
   color: #fff;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: 0.82rem;
-  letter-spacing: -0.005em;
+  justify-content: center;
   opacity: 0;
   transform: translateY(8px) scale(0.96);
   transition: opacity 0.2s ease-out, transform 0.2s ease-out;
   pointer-events: none;
-  box-shadow: 0 8px 24px var(--accent-glow);
   z-index: 3;
 }
-.discover-card-play svg { width: 16px; height: 16px; }
-.discover-card-play-label { white-space: nowrap; }
+.discover-card-play svg { width: 18px; height: 18px; margin-left: 2px; }
 .discover-card:hover .discover-card-play,
 .album-card:hover .discover-card-play {
   opacity: 1;

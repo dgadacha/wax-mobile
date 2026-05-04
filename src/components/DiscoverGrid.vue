@@ -72,7 +72,6 @@ function onDragStart(event, track) {
           <div v-if="isLoading(tr)" class="discover-card-spinner"></div>
           <span class="discover-card-play" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <span class="discover-card-play-label">{{ t('common.play') }}</span>
           </span>
           <div class="discover-card-meta">
             <div class="discover-card-title">{{ tr.title }}</div>

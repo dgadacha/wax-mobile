@@ -132,7 +132,6 @@ function onCoverError(album) {
           </div>
           <span class="discover-card-play" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            <span class="discover-card-play-label">{{ t('common.play') }}</span>
           </span>
           <div class="album-meta">
             <div class="album-title">{{ album.name }}</div>
