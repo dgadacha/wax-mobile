@@ -1825,6 +1825,7 @@ html.light .now-playing.np-has-track::after {
   background-size: cover;
   background-position: center;
   position: relative;
+  flex-shrink: 0;
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.35),
     0 0 0 1px rgba(255, 255, 255, 0.04);
