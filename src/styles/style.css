@@ -1555,6 +1555,18 @@ input:focus, input:focus-visible { outline: none; }
   }
   .track-list-header-album { display: none; }
 }
+/* Sidebar expanded — same column collapse as the narrow viewport
+   breakpoint, since the main area shrinks by the sidebar's 164 px
+   delta and the rigid 248 px actions slot would otherwise crush
+   the title + album headers into each other. */
+.app.sidebar-expanded .track-list-header {
+  grid-template-columns: 32px 48px minmax(0, 1fr) 20px 56px 248px;
+}
+.app.sidebar-expanded .track-list-header-album { display: none; }
+.app.sidebar-expanded .track {
+  grid-template-columns: 32px 48px minmax(0, 1fr) 20px 56px 248px;
+}
+.app.sidebar-expanded .track-album { display: none; }
 @media (max-width: 880px) {
   .track-list-header {
     grid-template-columns: 32px 1fr auto;
