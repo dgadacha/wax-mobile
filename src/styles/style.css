@@ -971,46 +971,6 @@ html.light .hero-back:hover {
   font-variation-settings: normal;
 }
 
-/* Mood pills row in the search hero — quick-access vibes that will
-   eventually filter the discover/search content. UI only for now. */
-.mood-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
-}
-.mood-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 36px;
-  padding: 0 16px;
-  border-radius: 999px;
-  background: var(--card);
-  border: 1px solid var(--border-soft);
-  color: var(--text);
-  font-weight: 500;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: transform 0.2s ease-out, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-}
-.mood-pill:hover {
-  transform: scale(1.04);
-  background: var(--card-hover);
-  border-color: var(--accent-soft);
-  box-shadow: 0 6px 20px var(--accent-glow);
-}
-.mood-pill:active { transform: scale(1.01); }
-.mood-pill.is-active {
-  background: var(--accent);
-  border-color: transparent;
-  color: #fff;
-  box-shadow: 0 8px 24px var(--accent-glow);
-}
-.mood-emoji {
-  font-size: 1rem;
-  line-height: 1;
-}
 .hero-meta {
   color: var(--text-soft);
   font-size: 0.9rem;

@@ -114,24 +114,6 @@ function togglePlaylistTrack(id) { search.togglePlaylistTrack(id); }
           {{ t('search.hero') }} <span class="hero-italic">{{ t('search.hero_accent') }}</span>
         </h1>
         <p class="hero-meta">{{ t('search.subtitle') }}</p>
-        <div class="mood-row" role="group" aria-label="Mood">
-          <button class="mood-pill" data-mood="chill" type="button">
-            <span class="mood-emoji">🌙</span>
-            <span>{{ t('mood.chill') }}</span>
-          </button>
-          <button class="mood-pill" data-mood="energy" type="button">
-            <span class="mood-emoji">⚡</span>
-            <span>{{ t('mood.energy') }}</span>
-          </button>
-          <button class="mood-pill" data-mood="deep" type="button">
-            <span class="mood-emoji">🌊</span>
-            <span>{{ t('mood.deep') }}</span>
-          </button>
-          <button class="mood-pill" data-mood="night" type="button">
-            <span class="mood-emoji">🔥</span>
-            <span>{{ t('mood.night') }}</span>
-          </button>
-        </div>
       </div>
     </header>
     <div class="page-body">
