@@ -110,7 +110,9 @@ function togglePlaylistTrack(id) { search.togglePlaylistTrack(id); }
     <header class="hero hero-download">
       <div class="hero-content">
         <span class="eyebrow">{{ t('search.eyebrow') }}</span>
-        <h1>{{ t('search.hero') }}</h1>
+        <h1>
+          {{ t('search.hero') }} <span class="hero-italic">{{ t('search.hero_accent') }}</span>
+        </h1>
         <p class="hero-meta">{{ t('search.subtitle') }}</p>
       </div>
     </header>

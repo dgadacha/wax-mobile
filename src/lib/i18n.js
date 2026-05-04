@@ -51,7 +51,8 @@ const messages = {
 
     // Search view
     'search.eyebrow': 'Search',
-    'search.hero': 'What do you want to listen to?',
+    'search.hero': 'What do you want to listen to',
+    'search.hero_accent': 'today?',
     'search.subtitle': 'Type a title, an artist',
     'search.placeholder': 'Chase Atlantic, Daft Punk Around the World, or a URL…',
     'search.no_results': (q) => `No results for "${q}"`,
@@ -198,6 +199,7 @@ const messages = {
     'theme.rose-pine': 'Rose Pine',
     'theme.gruvbox': 'Gruvbox',
     'theme.neon': 'Neon',
+    'theme.dawn': 'Dawn',
     'theme.paper': 'Paper',
     'theme.lin': 'Linen',
     'theme.cream': 'Cream',
@@ -370,7 +372,8 @@ const messages = {
 
     // Search view
     'search.eyebrow': 'Recherche',
-    'search.hero': 'Que veux-tu écouter ?',
+    'search.hero': 'Que veux-tu écouter',
+    'search.hero_accent': "aujourd'hui ?",
     'search.subtitle': 'Tape un titre, un artiste',
     'search.placeholder': 'Chase Atlantic, Daft Punk Around the World, ou une URL…',
     'search.no_results': (q) => `Aucun résultat pour « ${q} »`,
@@ -516,6 +519,7 @@ const messages = {
     'theme.rose-pine': 'Rose Pine',
     'theme.gruvbox': 'Gruvbox',
     'theme.neon': 'Néon',
+    'theme.dawn': 'Aube',
     'theme.paper': 'Papier',
     'theme.lin': 'Lin',
     'theme.cream': 'Crème',

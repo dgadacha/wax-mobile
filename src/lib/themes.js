@@ -28,6 +28,7 @@ export const THEMES = [
   { id: 'neon',        labelKey: 'theme.neon',        kind: 'dark',  swatch: ['#0a0514', '#1d0a31', '#EC4899'] },
 
   // ---------- Light family ----------
+  { id: 'dawn',        labelKey: 'theme.dawn',        kind: 'light', swatch: ['#f4f0fa', '#fbf9fe', '#6E5CE6'] },
   { id: 'paper',       labelKey: 'theme.paper',       kind: 'light', swatch: ['#e8e4dc', '#f7f5ef', '#6366F1'] },
   { id: 'lin',         labelKey: 'theme.lin',         kind: 'light', swatch: ['#ece5d6', '#f7f3e8', '#F59E0B'] },
   { id: 'cream',       labelKey: 'theme.cream',       kind: 'light', swatch: ['#ece5d4', '#fbf6e9', '#A855F7'] },
@@ -38,7 +39,7 @@ export const THEMES = [
   { id: 'lavende',     labelKey: 'theme.lavende',     kind: 'light', swatch: ['#ebe5f0', '#f9f5fc', '#A855F7'] },
 ];
 
-export const DEFAULT_THEME_ID = 'dark';
+export const DEFAULT_THEME_ID = 'dawn';
 export const THEME_IDS = THEMES.map((t) => t.id);
 export const themeById = (id) => THEMES.find((t) => t.id === id) || null;
 export const darkThemes = () => THEMES.filter((t) => t.kind === 'dark');
