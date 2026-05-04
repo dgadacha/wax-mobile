@@ -87,7 +87,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="app" :class="{ 'np-collapsed': !player.nowPlayingOpen }">
+  <div class="app" :class="{ 'np-collapsed': !player.nowPlayingOpen, 'sidebar-expanded': prefs.sidebarExpanded }">
     <Sidebar />
     <main class="main">
       <div class="content">

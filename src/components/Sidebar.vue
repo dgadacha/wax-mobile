@@ -9,11 +9,13 @@ import { gradientFromString, onThumbError, onThumbLoad } from '@/lib/format';
 import { openSettings } from './settings';
 import { showToast } from '@/lib/toast';
 import { t } from '@/lib/i18n';
+import { usePrefsStore } from '@/stores/prefs';
 
 const library = useLibraryStore();
 const playlists = usePlaylistsStore();
 const view = useViewStore();
 const streams = useStreamsStore();
+const prefs = usePrefsStore();
 
 const dragOverPlaylistId = ref(null);
 
@@ -23,6 +25,8 @@ const dragOverPlaylistId = ref(null);
 const tooltip = ref({ visible: false, label: '', x: 0, y: 0 });
 function showTooltip(event, label) {
   if (!label) return;
+  // Expanded sidebar already shows the label in-line — skip the bubble.
+  if (prefs.sidebarExpanded) return;
   const rect = event.currentTarget.getBoundingClientRect();
   tooltip.value = {
     visible: true,
@@ -224,6 +228,23 @@ function selectDownload() {
             />
           </svg>
           <span>{{ t('nav.settings') }}</span>
+        </a>
+        <a
+          class="sidebar-link sidebar-toggle"
+          @click="prefs.toggleSidebar"
+          @mouseenter="showTooltip($event, prefs.sidebarExpanded ? t('nav.collapse') : t('nav.expand'))"
+          @mouseleave="hideTooltip"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              :d="prefs.sidebarExpanded ? 'M15 18l-6-6 6-6' : 'M9 18l6-6-6-6'"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>{{ prefs.sidebarExpanded ? t('nav.collapse') : t('nav.expand') }}</span>
         </a>
       </nav>
     </div>

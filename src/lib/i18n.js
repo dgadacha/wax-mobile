@@ -45,6 +45,8 @@ const messages = {
     'nav.settings': 'Settings',
     'nav.your_library': 'Your library',
     'nav.new_playlist': 'New playlist',
+    'nav.expand': 'Expand sidebar',
+    'nav.collapse': 'Collapse sidebar',
 
     // Library / smart
     'library.favorites': 'Favorites',
@@ -354,6 +356,8 @@ const messages = {
     'nav.settings': 'Paramètres',
     'nav.your_library': 'Ta bibliothèque',
     'nav.new_playlist': 'Nouvelle playlist',
+    'nav.expand': 'Étendre la sidebar',
+    'nav.collapse': 'Réduire la sidebar',
 
     // Library / smart
     'library.favorites': 'Favoris',

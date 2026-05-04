@@ -13,6 +13,7 @@ export const usePrefsStore = defineStore('prefs', {
     themeId: DEFAULT_THEME_ID,
     locale: DEFAULT_LOCALE,
     eq: { bass: 0, mid: 0, treble: 0 },
+    sidebarExpanded: false,
   }),
   actions: {
     load() {
@@ -40,6 +41,7 @@ export const usePrefsStore = defineStore('prefs', {
           this.themeId = 'dark';
         }
         if (p.eq && typeof p.eq === 'object') this.eq = { ...this.eq, ...p.eq };
+        if (typeof p.sidebarExpanded === 'boolean') this.sidebarExpanded = p.sidebarExpanded;
       } catch {}
       this.applyTheme();
       setLocale(this.locale);
@@ -53,6 +55,7 @@ export const usePrefsStore = defineStore('prefs', {
           themeId: this.themeId,
           locale: this.locale,
           eq: this.eq,
+          sidebarExpanded: this.sidebarExpanded,
         }));
       } catch {}
     },
@@ -75,6 +78,10 @@ export const usePrefsStore = defineStore('prefs', {
       // Re-apply accent so --accent-bg picks up the new theme kind. Avoid a
       // direct import (would create a circular dep with accent.js → prefs).
       window.dispatchEvent(new Event('wax:theme-changed'));
+    },
+    toggleSidebar() {
+      this.sidebarExpanded = !this.sidebarExpanded;
+      this.save();
     },
     setLocale(loc) {
       if (!LOCALE_IDS.includes(loc)) return;
