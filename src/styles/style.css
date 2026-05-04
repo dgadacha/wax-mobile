@@ -741,21 +741,42 @@ body {
   overflow-y: auto;
   position: relative;
 }
-/* Drag strip across the top of the main column so the whole window top is
-   draggable, not just the sidebar. Sits above content but only on the first
-   28px — hero padding (32px) keeps interactive content clear of it. */
-.main::before {
-  content: '';
+/* Top bar — sits above every view, holds back/forward arrows. The
+   sticky positioning + drag region together give us a window-drag
+   surface AND keep the arrows accessible while the view scrolls. */
+.topbar {
   position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
-  display: block;
-  height: 28px;
-  margin-bottom: -28px;
-  z-index: 5;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  height: 52px;
+  padding: 0 16px;
+  background: var(--main);
   -webkit-app-region: drag;
 }
+.topbar-nav {
+  display: flex;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+  margin-left: 60px; /* keep clear of the macOS traffic lights */
+}
+.topbar-arrow {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--card);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+.topbar-arrow:hover:not(:disabled) { background: var(--card-hover); }
+.topbar-arrow:disabled { opacity: 0.4; cursor: default; }
+/* Drag strip is now the .topbar element itself. */
 .content { position: relative; min-height: 100%; }
 .view { display: none; min-height: calc(100vh - 96px); }
 .view.active { display: block; animation: fadeIn 0.2s ease; }
@@ -957,31 +978,9 @@ html.light .hero-cover-wrap {
 }
 .album-other-track .track-meta { color: var(--text-soft); }
 .album-other-track .track-title { font-weight: 500; }
-.hero-back {
-  position: absolute;
-  top: 24px;
-  left: 24px;
-  z-index: 2;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.35);
-  color: var(--text);
-  cursor: pointer;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  transition: background 0.15s, transform 0.15s, border-color 0.15s;
-}
-.hero-back:hover {
-  background: rgba(0, 0, 0, 0.55);
-  border-color: var(--accent);
-  transform: translateX(-2px);
-}
+/* Top bar's arrow is the canonical back affordance now. */
+.hero-back { display: none; }
+.hero-back:hover { display: none; }
 .hero-back svg { width: 18px; height: 18px; }
 html.light .hero-back {
   background: rgba(255, 255, 255, 0.55);
