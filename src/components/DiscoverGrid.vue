@@ -59,24 +59,24 @@ function onDragStart(event, track) {
     </div>
     <div class="discover-grid" v-if="!discover.loading">
       <button
-        v-for="t in discover.tracks"
-        :key="t.id"
+        v-for="tr in discover.tracks"
+        :key="tr.id"
         class="discover-card"
-        :class="{ 'is-loading': isLoading(t) }"
+        :class="{ 'is-loading': isLoading(tr) }"
         draggable="true"
-        @click="play(t)"
-        @dragstart="onDragStart($event, t)"
+        @click="play(tr)"
+        @dragstart="onDragStart($event, tr)"
       >
         <div class="discover-card-cover">
-          <img :src="t.thumbnail" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
-          <div v-if="isLoading(t)" class="discover-card-spinner"></div>
+          <img :src="tr.thumbnail" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
+          <div v-if="isLoading(tr)" class="discover-card-spinner"></div>
           <span class="discover-card-play" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             <span class="discover-card-play-label">{{ t('common.play') }}</span>
           </span>
           <div class="discover-card-meta">
-            <div class="discover-card-title">{{ t.title }}</div>
-            <div class="discover-card-sub">{{ t.uploader }}</div>
+            <div class="discover-card-title">{{ tr.title }}</div>
+            <div class="discover-card-sub">{{ tr.uploader }}</div>
           </div>
         </div>
       </button>

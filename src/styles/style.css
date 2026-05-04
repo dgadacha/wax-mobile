@@ -1129,20 +1129,6 @@ html.light .hero-back:hover {
 }
 /* Pulse halo on the play button while a track is playing — accent
    ring expanding outward to draw the eye. */
-body[data-playing="true"] .icon-btn.play-btn {
-  animation: playPulse 2.2s ease-out infinite;
-}
-@keyframes playPulse {
-  0% {
-    box-shadow: 0 0 0 0 var(--accent-glow), 0 6px 20px var(--accent-glow);
-  }
-  60% {
-    box-shadow: 0 0 0 18px transparent, 0 6px 20px var(--accent-glow);
-  }
-  100% {
-    box-shadow: 0 0 0 0 transparent, 0 6px 20px var(--accent-glow);
-  }
-}
 .icon-btn.play-btn svg { width: 20px; height: 20px; }
 .icon-btn.play-btn .icon-pause { display: none; }
 .icon-btn.play-btn.is-playing .icon-play { display: none; }
@@ -1840,13 +1826,8 @@ html.light .now-playing.np-has-track::after {
   background-position: center;
   position: relative;
   box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.45),
-    0 0 0 1px rgba(255, 255, 255, 0.04),
-    0 0 100px var(--accent-glow),
-    0 0 40px var(--accent-glow);
-}
-body[data-playing="true"] .np-cover-wrap {
-  animation: coverPulse 4s ease-in-out infinite;
+    0 16px 48px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 .np-cover {
   width: 100%;
@@ -1953,27 +1934,6 @@ body[data-playing="true"] .np-cover-wrap {
 .player-thumb-wrap .player-thumb,
 .player-thumb-wrap .player-thumb-spinner {
   border-radius: 8px;
-}
-body[data-playing="true"] .player-thumb-wrap {
-  box-shadow:
-    0 0 0 1px var(--accent-soft),
-    0 0 28px 4px var(--accent-glow),
-    0 0 64px var(--accent-glow);
-  animation: coverPulse 4s ease-in-out infinite;
-}
-@keyframes coverPulse {
-  0%, 100% {
-    box-shadow:
-      0 0 0 1px var(--accent-soft),
-      0 0 24px 2px var(--accent-glow),
-      0 0 48px var(--accent-glow);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px var(--accent-soft),
-      0 0 36px 6px var(--accent-glow),
-      0 0 80px var(--accent-glow);
-  }
 }
 .player-thumb {
   width: 100%;
