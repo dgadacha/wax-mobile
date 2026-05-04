@@ -43,9 +43,17 @@ const album = computed(() => {
 const libQueueIds = computed(() =>
   album.value ? album.value.libTracks.map((tr) => tr.id) : [],
 );
-const totalDuration = computed(() =>
-  album.value ? album.value.libTracks.reduce((s, tr) => s + (tr.duration || 0), 0) : 0,
-);
+// Prefer Deezer's full tracklist for the total — `libTracks` only
+// covers what the user already has, so the sum would be wrong on
+// albums where some tracks aren't in the library yet. Deezer's
+// `length` is milliseconds; library tracks are seconds.
+const totalDuration = computed(() => {
+  if (!album.value) return 0;
+  if (albumEntries.value.length > 0) {
+    return albumEntries.value.reduce((s, e) => s + ((e.length || 0) / 1000), 0);
+  }
+  return album.value.libTracks.reduce((s, tr) => s + (tr.duration || 0), 0);
+});
 const heroBg = computed(() =>
   album.value ? gradientFromString(album.value.name) : '',
 );
