@@ -22,6 +22,13 @@ if (process.platform === 'linux' && !process.env.ELECTRON_OZONE_PLATFORM_HINT) {
   app.commandLine.appendSwitch('ozone-platform-hint', 'x11');
 }
 
+// Silence Chromium's internal logger (LOG(ERROR) / LOG(WARNING) etc.)
+// that Electron passes through stderr. Specifically targets the
+// `Unsupported pixel format: -1` spam that ffmpeg fires for every
+// track when yt-dlp returns the combined 360p mp4 (android client) —
+// our app code's console.* still works through DevTools.
+app.commandLine.appendSwitch('disable-logging');
+
 const isDev = process.env.NODE_ENV === 'development' || !!process.env.VITE_DEV_SERVER_URL;
 const SERVER_PORT = process.env.WAX_SERVER_PORT || '3000';
 const VITE_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';

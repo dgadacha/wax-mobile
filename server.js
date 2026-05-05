@@ -38,22 +38,19 @@ function runYtDlp(fn) {
 
 function getStreamUrlViaYtDlp(videoId) {
   return runYtDlp(() => new Promise((resolve, reject) => {
-    // Client priority: ios → web → android.
-    //   ios: fast (no SABR), exposes audio-only m4a (itag 140).
-    //   web: slower but reliable, also exposes audio-only m4a.
-    //   android: last resort — only ever returns combined 360p mp4 which
-    //     trips Chromium's demuxer with 'Unsupported pixel format: -1'.
-    // Format selector intentionally drops the `/best` fallback so we
-    // refuse to serve a video stream into <audio>; if all three clients
-    // somehow fail to expose audio-only, the request errors and the
-    // toast tells the user instead of silently spamming pixel-format
-    // logs forever.
+    // android player client is ~2x faster (no SABR/sig dance) but only
+    // exposes the combined 360p mp4 (itag 18). web is the reliable
+    // fallback that exposes audio-only m4a. The combined mp4 makes
+    // Chromium emit 'Unsupported pixel format: -1' for every track —
+    // we silence that at the Electron layer (app.commandLine
+    // disable-logging) instead of paying the speed/reliability hit of
+    // a web-first ordering.
     const ytdlp = spawn(YT_DLP_BIN, [
-      '-f', 'bestaudio[ext=m4a]/bestaudio',
+      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
       '-g',
       '--no-playlist',
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=ios,web,android',
+      '--extractor-args', 'youtube:player_client=android,web',
       `https://www.youtube.com/watch?v=${videoId}`,
     ]);
     let out = '', err = '';
