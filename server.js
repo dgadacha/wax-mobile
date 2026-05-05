@@ -38,26 +38,36 @@ function runYtDlp(fn) {
 
 function getStreamUrlViaYtDlp(videoId) {
   return runYtDlp(() => new Promise((resolve, reject) => {
-    // Prefer the web client because it exposes audio-only m4a streams
-    // (itag 140). The android client is ~2x faster on the URL-extraction
-    // step but only returns the combined 360p mp4 (itag 18), and feeding
-    // a video stream into <audio> spams Chromium with
-    // 'Unsupported pixel format: -1' for every track. android stays as
-    // a fallback for cases where web is rate-limited or the format
-    // selector doesn't resolve.
+    // Client priority: ios → web → android.
+    //   ios: fast (no SABR), exposes audio-only m4a (itag 140).
+    //   web: slower but reliable, also exposes audio-only m4a.
+    //   android: last resort — only ever returns combined 360p mp4 which
+    //     trips Chromium's demuxer with 'Unsupported pixel format: -1'.
+    // Format selector intentionally drops the `/best` fallback so we
+    // refuse to serve a video stream into <audio>; if all three clients
+    // somehow fail to expose audio-only, the request errors and the
+    // toast tells the user instead of silently spamming pixel-format
+    // logs forever.
     const ytdlp = spawn(YT_DLP_BIN, [
-      '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+      '-f', 'bestaudio[ext=m4a]/bestaudio',
       '-g',
       '--no-playlist',
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=web,android',
+      '--extractor-args', 'youtube:player_client=ios,web,android',
       `https://www.youtube.com/watch?v=${videoId}`,
     ]);
     let out = '', err = '';
     ytdlp.stdout.on('data', d => { out += d; });
     ytdlp.stderr.on('data', d => { err += d; });
     ytdlp.on('error', reject);
+    // 25 s safety net — a wedged yt-dlp would otherwise hold the
+    // semaphore slot indefinitely and starve the queue.
+    const killTimer = setTimeout(() => {
+      try { ytdlp.kill('SIGKILL'); } catch {}
+      reject(new Error('yt-dlp timeout'));
+    }, 25000);
     ytdlp.on('close', code => {
+      clearTimeout(killTimer);
       if (code !== 0 || !out.trim()) return reject(new Error(err.slice(-200) || 'yt-dlp failed'));
       resolve(out.trim().split('\n')[0]);
     });
