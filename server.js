@@ -38,17 +38,19 @@ function runYtDlp(fn) {
 
 function getStreamUrlViaYtDlp(videoId) {
   return runYtDlp(() => new Promise((resolve, reject) => {
-    // android player client is ~2x faster than the default web client because
-    // it skips ad/SABR signature dance. Trade-off: returns the combined mp4
-    // (itag 18, video+audio @360p) — browsers happily play it as audio source,
-    // bandwidth ~150KB/s instead of ~80KB/s for m4a-only. We try web as
-    // fallback so audio-only formats remain available when android is blocked.
+    // Prefer the web client because it exposes audio-only m4a streams
+    // (itag 140). The android client is ~2x faster on the URL-extraction
+    // step but only returns the combined 360p mp4 (itag 18), and feeding
+    // a video stream into <audio> spams Chromium with
+    // 'Unsupported pixel format: -1' for every track. android stays as
+    // a fallback for cases where web is rate-limited or the format
+    // selector doesn't resolve.
     const ytdlp = spawn(YT_DLP_BIN, [
       '-f', 'bestaudio[ext=m4a]/bestaudio/best',
       '-g',
       '--no-playlist',
       '--no-warnings',
-      '--extractor-args', 'youtube:player_client=android,web',
+      '--extractor-args', 'youtube:player_client=web,android',
       `https://www.youtube.com/watch?v=${videoId}`,
     ]);
     let out = '', err = '';
