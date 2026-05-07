@@ -21,3 +21,6 @@ build/bin/
 
 # Legacy snapshot of pre-Vue frontend (kept for reference, not bundled)
 legacy-public/
+
+# Local Claude Code settings (per-machine permission overrides)
+.claude/settings.local.json

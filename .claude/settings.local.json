@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Read(//Users/dylan/Desktop/expense_scanner/**)",
-      "Bash(flutter analyze *)"
-    ]
-  }
-}
