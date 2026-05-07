@@ -3,6 +3,7 @@ import { onMounted, computed, watch } from 'vue';
 import Sidebar from './components/Sidebar.vue';
 import Player from './components/Player.vue';
 import NowPlaying from './components/NowPlaying.vue';
+import BigPicture from './components/BigPicture.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import Toast from './components/Toast.vue';
 import ViewSearch from './views/ViewSearch.vue';
@@ -102,6 +103,7 @@ onMounted(async () => {
     </main>
     <NowPlaying />
     <Player />
+    <BigPicture />
     <ModalRoot />
     <Toast />
   </div>

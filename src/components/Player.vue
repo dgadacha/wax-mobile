@@ -95,7 +95,12 @@ watch(
 <template>
   <footer id="player" class="player" :hidden="!player.visible">
     <div class="player-track">
-      <div class="player-thumb-wrap" :class="{ 'is-loading': player.loading }">
+      <div
+        class="player-thumb-wrap"
+        :class="{ 'is-loading': player.loading, 'is-clickable': !!player.currentTrack }"
+        :title="player.currentTrack ? t('player.big_picture') : ''"
+        @click="player.currentTrack && player.toggleBigPicture()"
+      >
         <img
           id="player-thumb"
           class="player-thumb"

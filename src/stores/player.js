@@ -36,6 +36,7 @@ export const usePlayerStore = defineStore('player', {
     repeat: 'off', // 'off' | 'all' | 'one'
     muted: false,
     nowPlayingOpen: true, // controls right-column visibility (cover + queue)
+    bigPictureOpen: false, // fullscreen "Now Playing" mode triggered by clicking the player cover
     crossfading: false,
     audioEl: null,   // primary <audio>
     audioEl2: null,  // crossfade <audio>
@@ -210,6 +211,9 @@ export const usePlayerStore = defineStore('player', {
       showToast(t('toast.added_to_queue'), 'success');
     },
     toggleNowPlayingOpen() { this.nowPlayingOpen = !this.nowPlayingOpen; },
+    openBigPicture() { this.bigPictureOpen = true; },
+    closeBigPicture() { this.bigPictureOpen = false; },
+    toggleBigPicture() { this.bigPictureOpen = !this.bigPictureOpen; },
     removeQueueAt(qIdx) {
       this.queue.splice(qIdx, 1);
     },

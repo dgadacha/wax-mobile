@@ -101,6 +101,8 @@ const messages = {
     'player.queue': 'Queue',
     'player.mute': 'Mute',
     'player.loading': 'Loading…',
+    'player.big_picture': 'Big Picture',
+    'player.now_playing': 'Now playing',
     'player.crossfade_on': (s) => `Crossfade on (${s} s)`,
     'player.crossfade_off': 'Crossfade off',
 
@@ -411,6 +413,8 @@ const messages = {
     'player.queue': "File d'attente",
     'player.mute': 'Muet',
     'player.loading': 'Chargement…',
+    'player.big_picture': 'Mode plein écran',
+    'player.now_playing': 'En écoute',
     'player.crossfade_on': (s) => `Crossfade activé (${s} s)`,
     'player.crossfade_off': 'Crossfade désactivé',
 
