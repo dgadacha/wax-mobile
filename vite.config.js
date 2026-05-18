@@ -55,8 +55,12 @@ export default defineConfig(({ mode }) => {
           // Vant's bundled CSS is ~250kB; raise the per-asset cap so the
           // app shell precaches in one go.
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          navigateFallback: '/index.html',
-          navigateFallbackDenylist: [/^\/api\//, /^\/audio\//, /^\/preview-files\//],
+          // Relative path so it works on GitHub Pages subpath hosting
+          // (e.g. https://dgadacha.github.io/wax-mobile/) AND on root
+          // domains. Absolute '/index.html' would resolve to the wrong
+          // path on subpath deployments.
+          navigateFallback: 'index.html',
+          navigateFallbackDenylist: [/\/api\//, /\/audio\//, /\/preview-files\//],
           runtimeCaching: [
             {
               // App-shell first: image covers from /api/cover/ benefit

@@ -127,6 +127,18 @@ npm run build
 #   Cloudflare Pages / Netlify / Vercel / nginx / Caddy / GitHub Pages
 ```
 
+### Déploiement GitHub Pages automatique
+
+Un workflow `.github/workflows/deploy-pages.yml` build et publie sur chaque push sur `main`. Configuration une seule fois :
+
+1. **Settings → Pages → Source** = "GitHub Actions"
+2. **Settings → Secrets and variables → Actions** → New secret :
+   - Name : `VITE_API_BASE_URL`
+   - Value : ton URL backend (ex `https://wax-api.nc-maiz.org`)
+3. Push une commit sur `main`. Le workflow build et publie automatiquement sur `https://<user>.github.io/<repo>/`.
+
+Pas besoin de toucher au `.env` local — le secret est injecté pendant le build CI.
+
 ### Installer sur iPhone
 
 1. Ouvre l'URL publique dans **Safari** (pas Chrome — Apple bloque l'install PWA sauf depuis Safari)

@@ -1,0 +1,57 @@
+# Auto-déploiement GitHub Pages : sur chaque push sur `main`, build le
+# frontend Vite + service worker + manifest, puis publie `dist/` sur le
+# site Pages du repo (https://<user>.github.io/<repo>/).
+#
+# Active ce workflow : Settings → Pages → Source = "GitHub Actions".
+#
+# La var d'env VITE_API_BASE_URL est lue depuis un Repository secret du
+# même nom. Sans ce secret, l'app pointera vers une URL vide et toutes
+# les requêtes /api/* échoueront en prod. Ajoute-la dans Settings →
+# Secrets and variables → Actions → New repository secret avec ta valeur
+# (genre https://wax-api.nc-maiz.org).
+
+name: Deploy PWA to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Skip queued builds if a new push lands while we're building.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
