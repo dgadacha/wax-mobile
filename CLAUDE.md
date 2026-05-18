@@ -70,7 +70,10 @@ Every backend request carries `X-Wax-Profile: <id>`; the server routes to `libra
 
 - `index.html` has `viewport-fit=cover` so `env(safe-area-inset-*)` resolves to real values on notched devices (iPhones, Android cutouts).
 - `capacitor.config.json` sets `StatusBar.overlaysWebView: true` so the WebView slides under the status bar.
-- `App.vue` uses `safe-area-inset-top` on the `<van-nav-bar>` and `safe-area-inset-bottom` on the `<van-tabbar>` — Vant handles the inset additions internally when those props are set. The mini player and `<ProfileGate>` overlay also pad via `--safe-top` / `--safe-bottom`.
+- `App.vue` uses `safe-area-inset-top` on the `<van-nav-bar>` and `safe-area-inset-bottom` on both the `<van-tabbar>` and the global `<van-action-sheet>` — Vant adds the right padding via the `van-safe-area-*` classes internally.
+- `mobile.css` defines `--safe-top` / `--safe-bottom` as `env(safe-area-inset-*)`. The mini player (`bottom: calc(var(--tab-height) + var(--safe-bottom))`), the view-scroll's bottom padding, the `<ProfileGate>` overlay, and `MobileHero` consume them.
+- **Gotcha — `<van-nav-bar fixed placeholder>` is broken with safe-area**: Vant's `placeholder` mirrors the base 46 px nav-bar height but ignores the safe-area-inset-top padding it adds, so content slides under the notch. The shell uses an in-flow nav-bar at the top of the flex column (`.app-shell` is already `display: flex; flex-direction: column`); scroll happens inside `.view-scroll`. Don't reintroduce `fixed placeholder`.
+- **Gotcha — don't pad the wrapper of a `<van-nav-bar safe-area-inset-top>`**: it doubles up the inset. `MobilePlayer.vue`'s `.np-screen` learned this the hard way; no `padding-top` on the wrapper, the nav-bar inside handles it.
 
 ## Icons
 

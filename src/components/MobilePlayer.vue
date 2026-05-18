@@ -236,7 +236,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  padding-top: var(--safe-top);
+  /* No padding-top here — the nested <van-nav-bar safe-area-inset-top>
+   * already eats the notch height. Adding it would double up. */
 }
 
 .np-body {

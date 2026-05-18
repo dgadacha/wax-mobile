@@ -122,12 +122,15 @@ onMounted(async () => {
 
 <template>
   <div class="app-shell">
+    <!-- Nav-bar sits at the top of the flex column (.app-shell). NOT fixed —
+         Vant's `placeholder` mirrors the base 46px nav height but ignores
+         the safe-area-inset-top padding it adds, so fixed+placeholder makes
+         the view content slide under the notch. Letting it flow naturally
+         keeps everything aligned with no extra math. -->
     <van-nav-bar
       class="nav-bar"
       :title="showNavTitle ? navTitle : ''"
       :border="false"
-      fixed
-      placeholder
       safe-area-inset-top
       @click-left="view.back()"
     >
@@ -170,12 +173,14 @@ onMounted(async () => {
 
     <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
          here instead of per-view avoids the "two views stack two sheets in
-         the body teleport" bug. -->
+         the body teleport" bug. safe-area-inset-bottom keeps the cancel
+         button above the iPhone home indicator. -->
     <van-action-sheet
       v-model:show="actionSheet.visible"
       :actions="actionSheet.actions"
       cancel-text="Annuler"
       close-on-click-action
+      safe-area-inset-bottom
       @select="actionSheet.onSelect"
       @cancel="actionSheet.onCancel"
     />
