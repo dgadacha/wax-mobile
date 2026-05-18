@@ -1,7 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload } from 'lucide-vue-next';
+import { Check, Download, Upload, Music2 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -11,6 +11,16 @@ import { THEMES } from '@/lib/themes';
 import { SUPPORTED_LOCALES } from '@/lib/i18n';
 import { haptics } from '@/lib/haptics';
 import { exportToFile, readImportFile, importFromData, wipeAllData } from '@/lib/backup';
+import { api, apiUrlWithProfile } from '@/lib/api';
+import {
+  startSpotifyAuth,
+  getSpotifyAccessToken,
+  isSpotifyConnected,
+  clearSpotifyAuth,
+  fetchLikedTracks,
+  fetchUserPlaylists,
+  fetchPlaylistTracks,
+} from '@/lib/spotifyAuth';
 
 const lib = useLibraryStore();
 const playlists = usePlaylistsStore();
@@ -124,6 +134,164 @@ function changeProfile() {
   haptics.light();
   profile.openPicker();
 }
+
+// ── Spotify import ────────────────────────────────────────────────
+const spotifyClientId = ref('');
+const spotifyConnected = ref(false);
+
+// Playlist-by-URL
+const spotifyUrl = ref('');
+const spotifyCreatePlaylist = ref(true);
+
+const spotifyUserPlaylists = ref([]);
+
+// Shared import state
+const spotifyImporting = ref(false);
+const spotifyProgress = ref({ done: 0, total: 0, current: '', phase: '' });
+const spotifyResult = ref(null);
+
+onMounted(async () => {
+  try {
+    const { clientId, configured } = await api('/api/spotify/status');
+    spotifyClientId.value = clientId || '';
+    if (clientId && isSpotifyConnected()) {
+      spotifyConnected.value = true;
+      _refreshSpotifyInfo();
+    }
+  } catch {}
+});
+
+async function _refreshSpotifyInfo() {
+  try {
+    const token = await getSpotifyAccessToken(spotifyClientId.value);
+    if (!token) { spotifyConnected.value = false; return; }
+    const pls = await fetchUserPlaylists(token);
+    spotifyUserPlaylists.value = pls;
+  } catch {}
+}
+
+async function connectSpotify() {
+  if (!spotifyClientId.value) return;
+  haptics.light();
+  await startSpotifyAuth(spotifyClientId.value);
+}
+
+function disconnectSpotify() {
+  clearSpotifyAuth();
+  spotifyConnected.value = false;
+  spotifyLikedCount.value = null;
+  spotifyUserPlaylists.value = [];
+  spotifyResult.value = null;
+}
+
+async function _runImportJob(jobId) {
+  spotifyResult.value = null;
+  await new Promise((resolve, reject) => {
+    const es = new EventSource(apiUrlWithProfile(`/api/jobs/${jobId}/progress`));
+    es.onmessage = (event) => {
+      let data;
+      try { data = JSON.parse(event.data); } catch { return; }
+      if (data.type === 'progress') {
+        spotifyProgress.value = { done: data.done || 0, total: data.total || 0, current: data.current || '', phase: data.phase || '' };
+      } else if (data.type === 'ready') {
+        es.close();
+        spotifyResult.value = { imported: data.imported, skipped: data.skipped, total: data.total };
+        resolve();
+      } else if (data.type === 'error') {
+        es.close();
+        reject(new Error(data.error));
+      }
+    };
+    es.onerror = () => { es.close(); reject(new Error('Connexion perdue')); };
+  });
+}
+
+async function importByUrl() {
+  const url = spotifyUrl.value.trim();
+  if (!url || spotifyImporting.value) return;
+  spotifyImporting.value = true;
+  spotifyProgress.value = { done: 0, total: 0, current: '', phase: 'fetching' };
+  try {
+    const { id: jobId } = await api('/api/spotify/import', {
+      method: 'POST',
+      body: JSON.stringify({ url, createPlaylist: spotifyCreatePlaylist.value }),
+    });
+    await _runImportJob(jobId);
+    haptics.success();
+    lib.fetch();
+    playlists.fetch();
+    spotifyUrl.value = '';
+    showToast({ message: `${spotifyResult.value.imported} titres importés`, position: 'bottom' });
+  } catch (err) {
+    haptics.error();
+    showToast({ message: err.message, position: 'bottom', type: 'fail' });
+    spotifyResult.value = null;
+  } finally {
+    spotifyImporting.value = false;
+  }
+}
+
+async function importLiked() {
+  if (spotifyImporting.value) return;
+  spotifyImporting.value = true;
+  spotifyProgress.value = { done: 0, total: 0, current: '', phase: 'fetching' };
+  try {
+    const token = await getSpotifyAccessToken(spotifyClientId.value);
+    if (!token) throw new Error('Session Spotify expirée — reconnecte-toi');
+    const tracks = await fetchLikedTracks(token);
+    const { id: jobId } = await api('/api/spotify/import-tracks', {
+      method: 'POST',
+      body: JSON.stringify({ tracks, createPlaylist: true, playlistName: 'Titres aimés Spotify' }),
+    });
+    await _runImportJob(jobId);
+    haptics.success();
+    lib.fetch();
+    playlists.fetch();
+    showToast({ message: `${spotifyResult.value.imported} titres importés`, position: 'bottom' });
+  } catch (err) {
+    haptics.error();
+    showToast({ message: err.message, position: 'bottom', type: 'fail' });
+    spotifyResult.value = null;
+  } finally {
+    spotifyImporting.value = false;
+  }
+}
+
+async function importUserPlaylist(pl) {
+  if (spotifyImporting.value) return;
+  spotifyImporting.value = true;
+  spotifyProgress.value = { done: 0, total: 0, current: '', phase: 'fetching' };
+  try {
+    const token = await getSpotifyAccessToken(spotifyClientId.value);
+    if (!token) throw new Error('Session Spotify expirée — reconnecte-toi');
+    const tracks = await fetchPlaylistTracks(token, pl.id);
+    const { id: jobId } = await api('/api/spotify/import-tracks', {
+      method: 'POST',
+      body: JSON.stringify({ tracks, createPlaylist: true, playlistName: pl.name }),
+    });
+    await _runImportJob(jobId);
+    haptics.success();
+    lib.fetch();
+    playlists.fetch();
+    showToast({ message: `${spotifyResult.value.imported} titres importés · "${pl.name}"`, position: 'bottom' });
+  } catch (err) {
+    haptics.error();
+    showToast({ message: err.message, position: 'bottom', type: 'fail' });
+    spotifyResult.value = null;
+  } finally {
+    spotifyImporting.value = false;
+  }
+}
+
+const spotifyProgressPct = computed(() =>
+  spotifyProgress.value.total ? Math.round((spotifyProgress.value.done / spotifyProgress.value.total) * 100) : 0
+);
+const spotifyProgressLabel = computed(() => {
+  const p = spotifyProgress.value;
+  if (p.phase === 'fetching') return 'Lecture de la playlist…';
+  if (!p.total) return '';
+  return `${p.done} / ${p.total}${p.current ? ` — ${p.current}` : ''}`;
+});
 </script>
 
 <template>
@@ -288,6 +456,94 @@ function changeProfile() {
       />
     </van-cell-group>
 
+    <!-- ── Spotify ───────────────────────────────────────────── -->
+    <van-cell-group inset title="Spotify">
+      <template v-if="!spotifyClientId">
+        <van-cell title="Spotify non configuré">
+          <template #label>
+            <span class="spotify-hint">Ajoute WAX_SPOTIFY_CLIENT_ID et WAX_SPOTIFY_CLIENT_SECRET dans le .env</span>
+          </template>
+        </van-cell>
+      </template>
+
+      <template v-else>
+        <!-- Connexion utilisateur (titres aimés + playlists privées) -->
+        <van-cell
+          v-if="!spotifyConnected"
+          title="Connecter mon compte Spotify"
+          is-link
+          @click="connectSpotify"
+        >
+          <template #icon>
+            <Music2 :size="18" :stroke-width="2" color="#1DB954" class="cell-icon" />
+          </template>
+        </van-cell>
+        <template v-else>
+          <van-cell title="Compte Spotify connecté" value="Déconnecter" is-link @click="disconnectSpotify">
+            <template #icon>
+              <Music2 :size="18" :stroke-width="2" color="#1DB954" class="cell-icon" />
+            </template>
+          </van-cell>
+          <van-cell
+            title="Importer mes titres aimés"
+            :value="spotifyImporting ? '' : 'Importer'"
+            is-link
+            :disabled="spotifyImporting"
+            @click="importLiked"
+          />
+          <van-cell
+            v-for="pl in spotifyUserPlaylists"
+            :key="pl.id"
+            :title="pl.name"
+            :value="`${pl.total} titres`"
+            is-link
+            :disabled="spotifyImporting"
+            @click="importUserPlaylist(pl)"
+          />
+        </template>
+
+        <!-- Import par URL (playlists publiques, pas besoin de connexion) -->
+        <div class="spotify-url-section">
+          <div class="spotify-url-label">Ou coller une URL de playlist publique</div>
+          <div class="spotify-url-row">
+            <input
+              v-model="spotifyUrl"
+              class="spotify-url-input"
+              placeholder="https://open.spotify.com/playlist/…"
+              :disabled="spotifyImporting"
+            />
+            <button
+              class="spotify-url-btn"
+              :disabled="!spotifyUrl || spotifyImporting"
+              @click="importByUrl"
+            >
+              Importer
+            </button>
+          </div>
+          <label class="spotify-pl-toggle">
+            <input v-model="spotifyCreatePlaylist" type="checkbox" :disabled="spotifyImporting" />
+            Créer une playlist Wax
+          </label>
+        </div>
+
+        <!-- Progress -->
+        <div v-if="spotifyImporting" class="spotify-progress">
+          <van-progress
+            :percentage="spotifyProgressPct"
+            stroke-width="4"
+            color="#1DB954"
+            track-color="var(--border)"
+          />
+          <p class="spotify-progress-label">{{ spotifyProgressLabel }}</p>
+        </div>
+
+        <!-- Result -->
+        <div v-if="spotifyResult && !spotifyImporting" class="spotify-result">
+          {{ spotifyResult.imported }} importés · {{ spotifyResult.skipped }} non trouvés sur {{ spotifyResult.total }}
+        </div>
+      </template>
+    </van-cell-group>
+
     <van-cell-group inset title="À propos">
       <van-cell title="Version" value="0.7.3" />
       <van-cell title="Backend" :value="'proxy local'" />
@@ -409,5 +665,77 @@ function changeProfile() {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* Spotify */
+.spotify-hint { font-size: 12px; color: var(--text-muted); }
+
+.spotify-url-section {
+  padding: 12px 16px 6px;
+  border-top: 1px solid var(--border);
+}
+.spotify-url-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.spotify-url-row {
+  display: flex;
+  gap: 8px;
+}
+.spotify-url-input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  min-width: 0;
+}
+.spotify-url-input::placeholder { color: var(--text-muted); }
+.spotify-url-input:focus { border-color: #1DB954; }
+.spotify-url-btn {
+  background: #1DB954;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s;
+}
+.spotify-url-btn:disabled { opacity: 0.45; cursor: default; }
+.spotify-pl-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 10px;
+  cursor: pointer;
+}
+.spotify-pl-toggle input[type="checkbox"] { accent-color: #1DB954; }
+
+.spotify-progress {
+  padding: 10px 16px 6px;
+  border-top: 1px solid var(--border);
+}
+.spotify-progress-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.spotify-result {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: #1DB954;
+  border-top: 1px solid var(--border);
 }
 </style>

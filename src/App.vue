@@ -28,6 +28,7 @@ import { useAuthStore } from './stores/auth';
 import { useActionSheetStore } from './stores/actionSheet';
 import { haptics } from './lib/haptics';
 import { closeModal, modalState } from './lib/modal';
+import { handleSpotifyCallback } from './lib/spotifyAuth';
 
 const library = useLibraryStore();
 const playlists = usePlaylistsStore();
@@ -120,6 +121,11 @@ onMounted(async () => {
   prefs.load();
   auth.loadToken();
   setTimeout(() => player.setupMediaSession(), 0);
+
+  // Handle Spotify OAuth callback (PKCE redirect back to app root).
+  if (window.location.search.includes('code=') && window.location.search.includes('state=')) {
+    try { await handleSpotifyCallback(); } catch (e) { console.warn('[spotify]', e.message); }
+  }
 
   // Verify stored token first — LoginGate shows a spinner until done.
   await auth.verify();
