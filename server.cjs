@@ -974,23 +974,36 @@ app.get('/api/stream/:videoId', async (req, res) => {
   }
   if (aborted) return;
 
-  const opts = { agent: ytAgent, headers: { 'User-Agent': 'Mozilla/5.0' } };
-  if (req.headers.range) opts.headers['Range'] = req.headers.range;
+  const rangeHeader = req.headers.range;
 
-  upstream = https.get(audioUrl, opts, (audioRes) => {
-    if (aborted) { audioRes.destroy(); return; }
-    res.statusCode = audioRes.statusCode;
-    ['content-type', 'content-length', 'content-range', 'accept-ranges'].forEach(h => {
-      if (audioRes.headers[h]) res.setHeader(h, audioRes.headers[h]);
+  // YouTube CDN sometimes returns 302 redirects (redirector.googlevideo.com
+  // → actual rr*.googlevideo.com shard). Follow up to 5 hops so the browser
+  // always receives a 200/206 with audio data rather than a bare 302.
+  function fetchAndProxy(url, hopsLeft) {
+    const opts = { agent: ytAgent, headers: { 'User-Agent': 'Mozilla/5.0' } };
+    if (rangeHeader) opts.headers['Range'] = rangeHeader;
+
+    upstream = https.get(url, opts, (audioRes) => {
+      if (aborted) { audioRes.destroy(); return; }
+      if (audioRes.statusCode >= 300 && audioRes.statusCode < 400 && audioRes.headers.location && hopsLeft > 0) {
+        audioRes.resume(); // drain and ignore the redirect body
+        fetchAndProxy(audioRes.headers.location, hopsLeft - 1);
+        return;
+      }
+      res.statusCode = audioRes.statusCode;
+      ['content-type', 'content-length', 'content-range', 'accept-ranges'].forEach(h => {
+        if (audioRes.headers[h]) res.setHeader(h, audioRes.headers[h]);
+      });
+      audioRes.pipe(res);
+      req.on('close', () => audioRes.destroy());
     });
-    audioRes.pipe(res);
-    req.on('close', () => audioRes.destroy());
-  });
-  upstream.on('error', () => {
-    // URL might have expired, invalidate cache
-    streamUrlCache.delete(id);
-    if (!res.headersSent) res.status(500).end();
-  });
+    upstream.on('error', () => {
+      streamUrlCache.delete(id);
+      if (!res.headersSent) res.status(500).end();
+    });
+  }
+
+  fetchAndProxy(audioUrl, 5);
 });
 
 app.get('/api/preview/:videoId', (req, res) => {
