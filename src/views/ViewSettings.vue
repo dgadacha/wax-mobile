@@ -156,11 +156,13 @@ function changeProfile() {
             :key="t.id"
             class="theme-pill"
             :class="{ active: prefs.themeId === t.id }"
-            :style="{ background: `linear-gradient(135deg, ${t.swatch[0]} 0%, ${t.swatch[1]} 50%, ${t.swatch[2]} 100%)` }"
             :aria-label="t.id"
             @click="pickTheme(t.id)"
           >
-            <Check v-if="prefs.themeId === t.id" :size="14" :stroke-width="3" color="#fff" />
+            <span class="stripe" :style="{ background: t.swatch[0] }" />
+            <span class="stripe" :style="{ background: t.swatch[1] }" />
+            <span class="stripe" :style="{ background: t.swatch[2] }" />
+            <Check v-if="prefs.themeId === t.id" class="theme-pill-check" :size="14" :stroke-width="3" color="#fff" />
           </button>
         </div>
         <div class="theme-row-label">Clairs</div>
@@ -170,11 +172,13 @@ function changeProfile() {
             :key="t.id"
             class="theme-pill"
             :class="{ active: prefs.themeId === t.id }"
-            :style="{ background: `linear-gradient(135deg, ${t.swatch[0]} 0%, ${t.swatch[1]} 50%, ${t.swatch[2]} 100%)` }"
             :aria-label="t.id"
             @click="pickTheme(t.id)"
           >
-            <Check v-if="prefs.themeId === t.id" :size="14" :stroke-width="3" color="var(--bg)" />
+            <span class="stripe" :style="{ background: t.swatch[0] }" />
+            <span class="stripe" :style="{ background: t.swatch[1] }" />
+            <span class="stripe" :style="{ background: t.swatch[2] }" />
+            <Check v-if="prefs.themeId === t.id" class="theme-pill-check" :size="14" :stroke-width="3" color="#fff" />
           </button>
         </div>
       </div>
@@ -285,7 +289,7 @@ function changeProfile() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.5.1" />
+      <van-cell title="Version" value="0.5.2" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -335,16 +339,26 @@ function changeProfile() {
   gap: 8px;
 }
 .theme-pill {
+  position: relative;
   height: 44px;
   border-radius: 10px;
   border: 2px solid transparent;
   cursor: pointer;
-  display: grid;
-  place-items: center;
+  display: flex;
+  overflow: hidden;
+  padding: 0;
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
 .theme-pill:active { transform: scale(0.94); }
 .theme-pill.active { border-color: var(--accent); }
+.theme-pill .stripe { flex: 1 1 0; height: 100%; }
+.theme-pill-check {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+}
 
 /* Accent swatches (kept from before) */
 .accent-row {

@@ -186,9 +186,12 @@ export const usePrefsStore = defineStore('prefs', {
       if (!THEME_IDS.includes(id)) return;
       this.themeId = id;
       this.applyTheme();
-      this.save();
-      // Re-apply accent so --accent-bg picks up the new theme kind. Avoid a
-      // direct import (would create a circular dep with accent.js → prefs).
+      // Each theme carries a canonical accent in swatch[2]. Push it
+      // through the accent picker so the chosen color follows the
+      // theme — user can still override afterwards by tapping a swatch.
+      const t = themeById(id);
+      if (t && t.swatch[2]) this.setAccentColor(t.swatch[2]);
+      else this.save();
       window.dispatchEvent(new Event('wax:theme-changed'));
     },
     toggleSidebar() {
