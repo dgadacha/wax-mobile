@@ -147,20 +147,48 @@ bump();
 }
 
 .bulk-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   background: transparent;
   border: 0;
-  border-bottom: 1px solid var(--border);
   padding: 10px 20px;
   text-align: left;
   cursor: pointer;
   color: var(--text);
+  isolation: isolate;
 }
-.bulk-row:active { background: var(--card-hover); }
-.bulk-row.selected { background: var(--accent-soft); }
+/* Hairline between rows — drawn at the inset so it doesn't run under the
+ * selected pill. */
+.bulk-row + .bulk-row::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 76px;            /* skip past the thumb */
+  right: 20px;
+  height: 1px;
+  background: var(--border);
+}
+.bulk-row:active::before {
+  content: '';
+  position: absolute;
+  inset: 2px 12px;
+  background: var(--card-hover);
+  border-radius: 10px;
+  z-index: -1;
+}
+.bulk-row.selected::before {
+  content: '';
+  position: absolute;
+  inset: 2px 12px;
+  background: var(--accent-soft);
+  border-radius: 10px;
+  z-index: -1;
+}
+.bulk-row.selected + .bulk-row::after,
+.bulk-row.selected::after { display: none; }
 
 .bulk-thumb {
   width: 44px;
