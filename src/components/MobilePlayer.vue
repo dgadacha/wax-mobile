@@ -320,7 +320,6 @@ onMounted(() => {
   display: grid;
   place-items: center;
   cursor: pointer;
-  box-shadow: 0 12px 24px rgba(124, 92, 255, 0.4);
 }
 
 .np-extras {

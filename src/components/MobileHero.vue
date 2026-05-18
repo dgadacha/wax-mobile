@@ -161,6 +161,5 @@ const coverSrc = computed(() => apiUrl(props.cover));
   border: 0;
   display: grid;
   place-items: center;
-  box-shadow: 0 12px 28px rgba(124, 92, 255, 0.45);
 }
 </style>
