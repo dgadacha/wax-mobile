@@ -11,10 +11,10 @@ import { useViewStore } from '@/stores/view';
 import { useMixStore } from '@/stores/mix';
 import { fmtDuration, parseTrackTitle, normalizeArtistKey, gradientFromString } from '@/lib/format';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
-import { useActionSheet } from '@/composables/useActionSheet';
+import { useActionSheetStore } from '@/stores/actionSheet';
 
 const mix = useMixStore();
-const sheet = useActionSheet();
+const sheet = useActionSheetStore();
 
 const lib = useLibraryStore();
 const playlists = usePlaylistsStore();
@@ -260,15 +260,6 @@ function cardIcon(card) {
         </div>
       </div>
     </template>
-
-    <van-action-sheet
-      v-model:show="sheet.visible.value"
-      :actions="sheet.actions.value"
-      cancel-text="Annuler"
-      close-on-click-action
-      @select="sheet.onSelect"
-      @cancel="sheet.onCancel"
-    />
   </div>
 </template>
 

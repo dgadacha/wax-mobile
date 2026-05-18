@@ -2,9 +2,9 @@
 import { computed } from 'vue';
 import { showConfirmDialog } from 'vant';
 import { Plus, MoreHorizontal, ListMusic } from 'lucide-vue-next';
-import { useActionSheet } from '@/composables/useActionSheet';
+import { useActionSheetStore } from '@/stores/actionSheet';
 
-const sheet = useActionSheet();
+const sheet = useActionSheetStore();
 import { useViewStore } from '@/stores/view';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -169,14 +169,6 @@ async function deleteThis() {
       />
     </div>
 
-    <van-action-sheet
-      v-model:show="sheet.visible.value"
-      :actions="sheet.actions.value"
-      cancel-text="Annuler"
-      close-on-click-action
-      @select="sheet.onSelect"
-      @cancel="sheet.onCancel"
-    />
   </div>
 </template>
 

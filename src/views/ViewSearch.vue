@@ -10,7 +10,7 @@ import { useViewStore } from '@/stores/view';
 import { parseTrackTitle } from '@/lib/format';
 import { showToast } from 'vant';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
-import { useActionSheet } from '@/composables/useActionSheet';
+import { useActionSheetStore } from '@/stores/actionSheet';
 
 const search = useSearchStore();
 const lib = useLibraryStore();
@@ -18,7 +18,7 @@ const streams = useStreamsStore();
 const player = usePlayerStore();
 const mix = useMixStore();
 const view = useViewStore();
-const sheet = useActionSheet();
+const sheet = useActionSheetStore();
 
 const onUrlChange = makeSearchHandler(search);
 
@@ -135,14 +135,6 @@ function asTrack(r) {
       <div class="hint">ou colle une URL YouTube</div>
     </div>
 
-    <van-action-sheet
-      v-model:show="sheet.visible.value"
-      :actions="sheet.actions.value"
-      cancel-text="Annuler"
-      close-on-click-action
-      @select="sheet.onSelect"
-      @cancel="sheet.onCancel"
-    />
   </div>
 </template>
 

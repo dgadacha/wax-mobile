@@ -23,6 +23,7 @@ import { usePlayerStore } from './stores/player';
 import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
 import { useProfileStore } from './stores/profile';
+import { useActionSheetStore } from './stores/actionSheet';
 import { closeModal, modalState } from './lib/modal';
 
 const library = useLibraryStore();
@@ -32,6 +33,7 @@ const player = usePlayerStore();
 const prefs = usePrefsStore();
 const discover = useDiscoverStore();
 const profile = useProfileStore();
+const actionSheet = useActionSheetStore();
 
 // Top-level tab routes. Detail views (playlist, album, artist, mix) are
 // pushed on top of these and the active tab is whatever spawned them.
@@ -165,5 +167,17 @@ onMounted(async () => {
 
     <ModalRoot />
     <ProfileGate />
+
+    <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
+         here instead of per-view avoids the "two views stack two sheets in
+         the body teleport" bug. -->
+    <van-action-sheet
+      v-model:show="actionSheet.visible"
+      :actions="actionSheet.actions"
+      cancel-text="Annuler"
+      close-on-click-action
+      @select="actionSheet.onSelect"
+      @cancel="actionSheet.onCancel"
+    />
   </div>
 </template>

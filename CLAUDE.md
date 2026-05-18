@@ -130,8 +130,9 @@ The `view` store still drives "current page + back stack", same as desktop. `SUB
 - `ModalRoot.vue`, `BulkAddBody.vue`, `AddToPlaylistBody.vue` — **Still used**. `ModalRoot` is mounted by App.vue because the legacy imperative `promptModal` / `openComponentModal` flows (playlist create/rename, bulk-add to playlist) are still wired through it. They render the desktop look-and-feel inside a centered overlay — works on mobile but doesn't match Vant's bottom-sheet aesthetic; consider re-skinning if it bothers you.
 
 **`src/composables/`**:
-- `useActionSheet.js` — **New**. Tiny Promise-based wrapper around `<van-action-sheet>` (Vant 4 doesn't ship an imperative helper for ActionSheet). Returns `{ visible, actions, open, onSelect, onCancel }`; the caller drops `<van-action-sheet v-model:show="sheet.visible.value" :actions="sheet.actions.value" @select="sheet.onSelect" @cancel="sheet.onCancel" />` at the bottom of its template, and any control awaits `sheet.open([{name:'…'},…])` to get back `{ index, name }`.
 - `useVisualizer.js`, `useLyrics.js`, `useDragReorder.js` — legacy, still on disk. `useLyrics` is wired into the fullscreen `MobilePlayer` comment-icon button.
+
+**Action sheets**: `src/stores/actionSheet.js` is a **singleton** Pinia store wrapping `<van-action-sheet>`. Mounted exactly once at the bottom of `App.vue`; every view calls `useActionSheetStore().open([{name:'…'}, …])` and awaits `{ index, name }`. Don't drop per-view `<van-action-sheet>` elements — multiple views stay mounted via `v-show` and their sheets would all teleport to `body`, so clicks could fire the wrong handler. (We hit this exact bug: 5 options stacked with 4 more, mix action ended up triggering the wrong index.) Vant 4 ships ActionSheet as a component only — there's no imperative helper, hence the store wrapper.
 
 **`src/stores/`** — Pinia stores all preserved from the desktop project, nothing renamed. The shared model means a port can swap views in place without touching state:
 - `library.js`, `playlists.js`, `player.js`, `prefs.js`, `view.js`, `mix.js`, `search.js`, `streams.js`, `discover.js`, `jobs.js`, `accent.js`.
