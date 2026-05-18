@@ -1,0 +1,519 @@
+<script setup>
+import { computed, ref, watch } from 'vue';
+import { usePrefsStore } from '@/stores/prefs';
+import { useLibraryStore } from '@/stores/library';
+import { usePlaylistsStore } from '@/stores/playlists';
+import { darkThemes, lightThemes } from '@/lib/themes';
+import { setEq } from '@/composables/useVisualizer';
+import { showToast } from '@/lib/toast';
+import { confirmModal } from '@/lib/modal';
+import { exportToFile, readImportFile, importFromData, wipeAllData } from '@/lib/backup';
+import { t, SUPPORTED_LOCALES } from '@/lib/i18n';
+
+const prefs = usePrefsStore();
+const lib = useLibraryStore();
+const pls = usePlaylistsStore();
+
+// Tabs (General first — covers crossfade, language, data, library cleanup)
+const TABS = [
+  { id: 'general',    labelKey: 'settings.tabs.general' },
+  { id: 'appearance', labelKey: 'settings.tabs.appearance' },
+  { id: 'equalizer',  labelKey: 'settings.tabs.equalizer' },
+];
+const activeTab = ref('general');
+
+// Theme
+function swatchStyle(t) {
+  return {
+    '--swatch-bg': t.swatch[0],
+    '--swatch-card': t.swatch[1],
+    '--swatch-accent': t.swatch[2],
+  };
+}
+const themesDark = darkThemes();
+const themesLight = lightThemes();
+
+// EQ
+const eqBass = ref(prefs.eq.bass);
+const eqMid = ref(prefs.eq.mid);
+const eqTreble = ref(prefs.eq.treble);
+
+watch([eqBass, eqMid, eqTreble], ([b, m, tr]) => {
+  setEq(b, m, tr);
+  prefs.eq = { bass: b, mid: m, treble: tr };
+  prefs.save();
+});
+
+function resetEq() {
+  eqBass.value = 0;
+  eqMid.value = 0;
+  eqTreble.value = 0;
+}
+
+// Crossfade
+function onCrossfadeToggle(e) {
+  prefs.crossfadeEnabled = e.target.checked;
+  prefs.save();
+}
+function onCrossfadeDuration(e) {
+  prefs.crossfadeDuration = parseFloat(e.target.value);
+  prefs.save();
+}
+
+// Backup / restore — progress refs hold a 0-1 fraction during the op,
+// `null` when idle. `exporting` / `importing` are derived booleans.
+const importInput = ref(null);
+const exportProgress = ref(null);
+const importProgress = ref(null);
+const exporting = computed(() => exportProgress.value !== null);
+const importing = computed(() => importProgress.value !== null);
+
+async function doExport() {
+  exportProgress.value = 0;
+  try {
+    const data = await exportToFile({
+      onProgress: (p) => { exportProgress.value = p; },
+    });
+    showToast(t('settings.data.export_done', {
+      tracks: data.library.length,
+      playlists: data.playlists.length,
+    }), 'success');
+  } catch (e) {
+    showToast(t('common.error_prefix', e.message), 'error');
+  } finally {
+    // Hold the bar visibly full for a beat so it doesn't just flash by.
+    setTimeout(() => { exportProgress.value = null; }, 250);
+  }
+}
+
+function pickImport() {
+  importInput.value?.click();
+}
+
+async function onImportFile(e) {
+  const file = e.target.files?.[0];
+  e.target.value = ''; // allow re-picking the same file
+  if (!file) return;
+  importProgress.value = 0;
+  try {
+    const data = await readImportFile(file);
+    importProgress.value = 0.05;
+    const ok = await confirmModal({
+      title: t('settings.data.import_confirm.title'),
+      message: t('settings.data.import_confirm.message', {
+        tracks: data.library.length,
+        playlists: data.playlists.length,
+      }),
+      confirmLabel: t('settings.data.import'),
+      danger: true,
+    });
+    if (!ok) {
+      importProgress.value = null;
+      return;
+    }
+    const result = await importFromData(data, {
+      onProgress: (p) => { importProgress.value = p; },
+    });
+    showToast(t('settings.data.import_done', {
+      tracks: result.tracks ?? data.library.length,
+      playlists: result.playlists ?? data.playlists.length,
+    }), 'success');
+    // Reload so every store re-fetches against the freshly written files
+    // and prefs (theme, locale, EQ, …) re-apply from the restored snapshot.
+    setTimeout(() => window.location.reload(), 800);
+  } catch (e) {
+    showToast(t('common.error_prefix', e.message), 'error');
+    importProgress.value = null;
+  }
+}
+
+// Factory reset
+const wiping = ref(false);
+
+async function doWipe() {
+  const ok = await confirmModal({
+    title: t('settings.reset.confirm.title'),
+    message: t('settings.reset.confirm.message', {
+      tracks: lib.tracks.length,
+      playlists: pls.items.length,
+    }),
+    confirmLabel: t('settings.reset.button'),
+    danger: true,
+  });
+  if (!ok) return;
+  wiping.value = true;
+  try {
+    const result = await wipeAllData();
+    showToast(t('settings.reset.done'), 'success');
+    // Reload so every store re-fetches against the empty server state and
+    // the UI is back to a fresh-install look (still with the user's theme).
+    setTimeout(() => window.location.reload(), 700);
+  } catch (e) {
+    showToast(t('common.error_prefix', e.message), 'error');
+    wiping.value = false;
+  }
+}
+
+const activeProgress = computed(() => {
+  if (exporting.value) return exportProgress.value;
+  if (importing.value) return importProgress.value;
+  return null;
+});
+const progressLabel = computed(() => {
+  if (exporting.value) return t('settings.data.exporting');
+  if (importing.value) return t('settings.data.importing');
+  return '';
+});
+
+// Orphans
+const orphanCount = computed(() => {
+  const playlistTrackIds = new Set(pls.items.flatMap((pl) => pl.trackIds));
+  return lib.tracks.filter((t) => t.liked === false && !playlistTrackIds.has(t.id)).length;
+});
+// Album rescan — fire the POST, then read live progress from the
+// library store (driven by the server's SSE rescan events). The local
+// `posting` flag covers only the request flight; once the server
+// confirms, the progress bar takes over.
+const posting = ref(false);
+const rescanning = computed(() => posting.value || lib.albumRescan.running);
+const rescanPct = computed(() => {
+  const r = lib.albumRescan;
+  if (!r.total) return 0;
+  return Math.min(100, Math.round((r.done / r.total) * 100));
+});
+async function rescanAlbums() {
+  posting.value = true;
+  // Snapshot of how many tracks have an album right now — used at
+  // completion to compute "X new albums resolved" for the toast.
+  const beforeResolved = lib.tracks.filter((t) => t.album).length;
+  try {
+    const res = await fetch('/api/library/rescan-albums', { method: 'POST' });
+    if (!res.ok) {
+      showToast(t('settings.albums_rescan_error'), 'error');
+      return;
+    }
+    const data = await res.json();
+    if ((data.total || 0) === 0) {
+      showToast(t('settings.albums_rescan_nothing'), 'success');
+      return;
+    }
+    // Immediate confirmation — even when the rescan completes in <10 ms
+    // (every track is a cached miss), the user gets an unmistakable
+    // "yes I did something" signal here.
+    showToast(t('settings.albums_rescan_started', data.total), 'success');
+    // Seed bar only if we'd actually advance the state forward.
+    const current = lib.albumRescan;
+    const shouldSeed =
+      current.total !== data.total ||
+      (current.done < data.total && !current.running);
+    if (shouldSeed) {
+      lib.albumRescan = { running: true, done: data.done || 0, total: data.total };
+    }
+    pollRescanState(() => {
+      // Final summary — fires once the server reports running=false.
+      const newlyResolved = lib.tracks.filter((t) => t.album).length - beforeResolved;
+      if (newlyResolved > 0) {
+        showToast(t('settings.albums_rescan_resolved', newlyResolved), 'success');
+      } else {
+        showToast(t('settings.albums_rescan_no_new'), 'success');
+      }
+    });
+  } catch {
+    showToast(t('settings.albums_rescan_error'), 'error');
+  } finally {
+    posting.value = false;
+  }
+}
+
+// Polling fallback — resyncs lib.albumRescan from the server every 2 s
+// while running. Backstop for when SSE drops (EventSource closes
+// silently on Vite HMR + macOS sleep). Optional onDone fires once
+// when the server reports running=false (or the 60 s timeout hits).
+let rescanPollTimer = null;
+let rescanOnDone = null;
+async function pollRescanState(onDone) {
+  if (typeof onDone === 'function') rescanOnDone = onDone;
+  if (rescanPollTimer) return;
+  const start = Date.now();
+  const tick = async () => {
+    try {
+      const res = await fetch('/api/library/rescan-albums');
+      const data = await res.json();
+      if ((data.done || 0) > lib.albumRescan.done || data.total !== lib.albumRescan.total) {
+        lib.albumRescan = {
+          running: !!data.running,
+          done: data.done || 0,
+          total: data.total || 0,
+        };
+      } else if (!data.running && lib.albumRescan.running) {
+        lib.albumRescan = { ...lib.albumRescan, running: false };
+      }
+      if (!data.running || Date.now() - start > 60_000) {
+        clearInterval(rescanPollTimer);
+        rescanPollTimer = null;
+        if (rescanOnDone) {
+          const cb = rescanOnDone;
+          rescanOnDone = null;
+          cb();
+        }
+        return;
+      }
+    } catch {}
+  };
+  rescanPollTimer = setInterval(tick, 2000);
+  tick();
+}
+
+// Auto-start the poll any time lib.albumRescan.running flips to true
+// — covers rescans triggered by other sources (engagement events from
+// /api/library/add, etc.) where we never went through rescanAlbums().
+watch(
+  () => lib.albumRescan.running,
+  (running) => { if (running) pollRescanState(); },
+  { immediate: true },
+);
+
+const purging = ref(false);
+async function purge() {
+  purging.value = true;
+  try {
+    const n = await lib.purgeOrphans();
+    showToast(
+      n > 0 ? t('settings.library.clean_done', n) : t('settings.library.clean_nothing'),
+      'success',
+    );
+  } finally {
+    purging.value = false;
+  }
+}
+
+</script>
+
+<template>
+  <div class="settings-body">
+    <!-- Tabs -->
+    <div class="settings-tabs" role="tablist">
+      <button
+        v-for="tab in TABS"
+        :key="tab.id"
+        type="button"
+        class="settings-tab"
+        :class="{ active: activeTab === tab.id }"
+        role="tab"
+        :aria-selected="activeTab === tab.id"
+        @click="activeTab = tab.id"
+      >
+        {{ t(tab.labelKey) }}
+      </button>
+    </div>
+
+    <!-- Appearance tab -->
+    <section v-show="activeTab === 'appearance'" class="settings-pane">
+      <p class="settings-help">{{ t('settings.appearance.help') }}</p>
+      <h5 class="settings-subhead">{{ t('settings.appearance.dark') }}</h5>
+      <div class="theme-grid">
+        <button
+          v-for="th in themesDark"
+          :key="th.id"
+          type="button"
+          class="theme-card"
+          :class="{ active: prefs.themeId === th.id }"
+          :style="swatchStyle(th)"
+          :title="t(th.labelKey)"
+          :aria-label="t(th.labelKey)"
+          @click="prefs.setTheme(th.id)"
+        >
+          <span class="theme-swatch"></span>
+          <span class="theme-label">{{ t(th.labelKey) }}</span>
+        </button>
+      </div>
+      <h5 class="settings-subhead settings-subhead--spaced">{{ t('settings.appearance.light') }}</h5>
+      <div class="theme-grid">
+        <button
+          v-for="th in themesLight"
+          :key="th.id"
+          type="button"
+          class="theme-card"
+          :class="{ active: prefs.themeId === th.id }"
+          :style="swatchStyle(th)"
+          :title="t(th.labelKey)"
+          :aria-label="t(th.labelKey)"
+          @click="prefs.setTheme(th.id)"
+        >
+          <span class="theme-swatch"></span>
+          <span class="theme-label">{{ t(th.labelKey) }}</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- Equalizer tab -->
+    <section v-show="activeTab === 'equalizer'" class="settings-pane">
+      <p class="settings-help">{{ t('settings.eq.help') }}</p>
+      <div class="eq-grid">
+        <label class="eq-band">
+          <span class="eq-label">{{ t('settings.eq.bass') }}</span>
+          <input type="range" min="-12" max="12" step="0.5" v-model.number="eqBass" class="eq-slider" />
+          <span class="eq-value">{{ eqBass > 0 ? '+' : '' }}{{ eqBass }}</span>
+        </label>
+        <label class="eq-band">
+          <span class="eq-label">{{ t('settings.eq.mid') }}</span>
+          <input type="range" min="-12" max="12" step="0.5" v-model.number="eqMid" class="eq-slider" />
+          <span class="eq-value">{{ eqMid > 0 ? '+' : '' }}{{ eqMid }}</span>
+        </label>
+        <label class="eq-band">
+          <span class="eq-label">{{ t('settings.eq.treble') }}</span>
+          <input type="range" min="-12" max="12" step="0.5" v-model.number="eqTreble" class="eq-slider" />
+          <span class="eq-value">{{ eqTreble > 0 ? '+' : '' }}{{ eqTreble }}</span>
+        </label>
+      </div>
+      <button
+        type="button"
+        class="settings-clean-btn"
+        :disabled="eqBass === 0 && eqMid === 0 && eqTreble === 0"
+        style="margin-top: 14px"
+        @click="resetEq"
+      >
+        {{ t('settings.eq.reset') }}
+      </button>
+    </section>
+
+    <!-- General tab -->
+    <section v-show="activeTab === 'general'" class="settings-pane">
+      <!-- Crossfade -->
+      <div class="settings-section">
+        <h4>{{ t('settings.crossfade.title') }}</h4>
+        <p class="settings-help">{{ t('settings.crossfade.help') }}</p>
+      </div>
+      <label class="settings-toggle-row">
+        <span>{{ t('settings.crossfade.enable') }}</span>
+        <input
+          type="checkbox"
+          class="settings-toggle"
+          :checked="prefs.crossfadeEnabled"
+          @change="onCrossfadeToggle"
+        />
+      </label>
+      <label class="eq-band" :class="{ 'is-disabled': !prefs.crossfadeEnabled }" style="margin-top: 10px">
+        <span class="eq-label">{{ t('settings.crossfade.duration') }}</span>
+        <input
+          type="range"
+          min="1"
+          max="12"
+          step="0.5"
+          :value="prefs.crossfadeDuration"
+          :disabled="!prefs.crossfadeEnabled"
+          @input="onCrossfadeDuration"
+        />
+        <span class="eq-value">{{ prefs.crossfadeDuration }} s</span>
+      </label>
+
+      <!-- Language -->
+      <div class="settings-section settings-section--top-border">
+        <h4>{{ t('settings.language.title') }}</h4>
+        <p class="settings-help">{{ t('settings.language.help') }}</p>
+      </div>
+      <div class="settings-mode-row">
+        <button
+          v-for="loc in SUPPORTED_LOCALES"
+          :key="loc.id"
+          type="button"
+          class="settings-mode"
+          :class="{ active: prefs.locale === loc.id }"
+          @click="prefs.setLocale(loc.id)"
+        >
+          {{ loc.label }}
+        </button>
+      </div>
+
+      <!-- Data: export / import -->
+      <div class="settings-section settings-section--top-border">
+        <h4>{{ t('settings.data.title') }}</h4>
+        <p class="settings-help">{{ t('settings.data.help') }}</p>
+        <div class="settings-clean-row" style="margin-top: 8px">
+          <button
+            type="button"
+            class="settings-clean-btn"
+            :disabled="exporting || importing"
+            @click="doExport"
+          >
+            {{ exporting ? t('settings.data.exporting') : t('settings.data.export') }}
+          </button>
+          <button
+            type="button"
+            class="settings-clean-btn"
+            :disabled="exporting || importing"
+            @click="pickImport"
+          >
+            {{ importing ? t('settings.data.importing') : t('settings.data.import') }}
+          </button>
+          <input
+            ref="importInput"
+            type="file"
+            accept="application/json,.json"
+            style="display: none"
+            @change="onImportFile"
+          />
+        </div>
+        <div v-if="activeProgress !== null" class="settings-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: (activeProgress * 100) + '%' }"></div>
+          </div>
+          <span class="settings-progress-label">
+            {{ progressLabel }} {{ Math.round(activeProgress * 100) }}%
+          </span>
+        </div>
+      </div>
+
+      <!-- Library cleanup -->
+      <div class="settings-section settings-section--top-border">
+        <h4>{{ t('settings.library.title') }}</h4>
+        <p class="settings-help">{{ t('settings.library.help') }}</p>
+        <div class="settings-clean-row">
+          <span class="settings-orphan-count">{{ t('settings.library.orphans', orphanCount) }}</span>
+          <button
+            type="button"
+            class="settings-clean-btn"
+            :disabled="orphanCount === 0 || purging"
+            @click="purge"
+          >
+            {{ purging ? t('settings.library.cleaning') : t('settings.library.clean') }}
+          </button>
+        </div>
+        <div class="settings-clean-row" style="margin-top: 12px">
+          <span class="settings-orphan-count">{{ t('settings.albums_rescan_blurb') }}</span>
+          <button
+            type="button"
+            class="settings-clean-btn"
+            :disabled="rescanning"
+            @click="rescanAlbums"
+          >
+            {{ rescanning ? t('settings.albums_rescan_running') : t('settings.albums_rescan') }}
+          </button>
+        </div>
+        <div v-if="lib.albumRescan.running || (lib.albumRescan.total > 0 && lib.albumRescan.done < lib.albumRescan.total)" class="settings-progress">
+          <div class="progress-bar">
+            <div class="progress-fill" :style="{ width: rescanPct + '%' }"></div>
+          </div>
+          <span class="settings-progress-label">
+            {{ lib.albumRescan.done }} / {{ lib.albumRescan.total }}
+          </span>
+        </div>
+      </div>
+
+
+      <!-- Danger zone: factory reset -->
+      <div class="settings-section settings-section--top-border">
+        <h4 class="settings-danger-title">{{ t('settings.reset.title') }}</h4>
+        <p class="settings-help">{{ t('settings.reset.help') }}</p>
+        <button
+          type="button"
+          class="settings-clean-btn settings-danger-btn"
+          :disabled="wiping"
+          @click="doWipe"
+        >
+          {{ wiping ? t('settings.reset.wiping') : t('settings.reset.button') }}
+        </button>
+      </div>
+    </section>
+  </div>
+</template>

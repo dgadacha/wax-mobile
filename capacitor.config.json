@@ -1,0 +1,28 @@
+{
+  "appId": "org.ncmaiz.wax",
+  "appName": "Wax",
+  "webDir": "dist",
+  "ios": {
+    "contentInset": "always",
+    "scheme": "Wax"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "wax",
+    "cleartext": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "backgroundColor": "#0d0f14"
+    },
+    "StatusBar": {
+      "backgroundColor": "#0d0f14",
+      "style": "DARK",
+      "overlaysWebView": true
+    }
+  }
+}

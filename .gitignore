@@ -1,0 +1,31 @@
+node_modules/
+.DS_Store
+*.log
+library/audio/
+library/previews/
+library/covers/
+library/artists/
+library/albums/
+library/album-covers/
+library/users/
+library/library.json
+library/playlists.json
+library/profiles.json
+
+# Build outputs
+dist/
+release/
+out/
+.vite/
+
+# Capacitor native projects — regenerated per checkout via `npx cap add`
+ios/
+android/
+
+# Env (VITE_API_BASE_URL etc.). `.env.example` is the only committed copy.
+.env
+.env.local
+.env.*.local
+
+# Local Claude Code settings (per-machine permission overrides)
+.claude/settings.local.json

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wax-data
+  namespace: wax
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # Mostly downloaded MP3s + cached covers; 10 GiB covers a couple
+      # hundred tracks. Resize the PVC if your library grows past that.
+      storage: 10Gi

@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wax
+  namespace: wax
+  labels:
+    app: wax
+spec:
+  replicas: 1
+  # JSON library files on a RWO PVC — only one pod at a time. Recreate avoids
+  # the "rolling update tries to bind the PVC twice" race during deploys.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: wax
+  template:
+    metadata:
+      labels:
+        app: wax
+    spec:
+      imagePullSecrets:
+        - name: gitlab-registry
+      containers:
+        - name: wax
+          image: registry.gitlab.com/kidnar/wax:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+              name: http
+          env:
+            - name: PORT
+              value: "3000"
+            - name: WAX_LIBRARY_DIR
+              value: /data
+            - name: WAX_YT_DLP
+              value: /usr/local/bin/yt-dlp
+            - name: WAX_FFMPEG
+              value: /usr/bin/ffmpeg
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # Express doesn't expose a /healthz — a successful TCP accept on
+          # 3000 means the server is past startup.
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              # yt-dlp spawns up to 3 parallel processes (the in-process
+              # semaphore); each can briefly spike CPU during signature
+              # extraction. 2 cores headroom keeps things responsive.
+              memory: "1Gi"
+              cpu: "2000m"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wax-data

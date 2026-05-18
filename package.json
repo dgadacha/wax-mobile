@@ -1,0 +1,44 @@
+{
+  "name": "wax-mobile",
+  "version": "0.7.3",
+  "private": true,
+  "description": "Wax mobile — YouTube → MP3 player (iOS + Android via Capacitor)",
+  "type": "module",
+  "scripts": {
+    "server": "node server.cjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "cap:setup": "node scripts/setup-native.mjs",
+    "cap:sync": "cap sync && npm run cap:setup",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android",
+    "ios": "npm run build && cap sync ios && npm run cap:setup && cap open ios",
+    "android": "npm run build && cap sync android && npm run cap:setup && cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/filesystem": "^6.0.2",
+    "@capacitor/haptics": "^6.0.3",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/preferences": "^6.0.3",
+    "@capacitor/share": "^6.0.3",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2",
+    "express": "^4.21.0",
+    "lucide-vue-next": "^1.0.0",
+    "pinia": "^2.2.4",
+    "vant": "^4.9.14",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@vant/auto-import-resolver": "^1.3.0",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "unplugin-vue-components": "^0.27.4",
+    "vite": "^5.4.11",
+    "vite-plugin-pwa": "^1.3.0"
+  }
+}
