@@ -1,3 +1,6 @@
+# Exclude only stuff that doesn't belong in the image. src/, public/,
+# index.html, vite.config.js and capacitor.config.json are REQUIRED by
+# the web-builder stage to build the Vite bundle.
 node_modules
 dist
 ios
@@ -11,8 +14,7 @@ android
 .DS_Store
 docs
 build
-src
-public
-index.html
-vite.config.js
-capacitor.config.json
+library
+README.md
+CLAUDE.md
+LICENSE
