@@ -114,6 +114,39 @@ Le `Deployment` utilise `strategy: Recreate` (la lib JSON est sur un PVC RWO), `
 | `WAX_YT_DLP` | backend | Override du chemin `yt-dlp`. |
 | `WAX_FFMPEG` | backend | Override du chemin `ffmpeg`. |
 
+## Installation PWA (sans Xcode)
+
+Pour les utilisateurs qui n'ont pas de Mac : l'app est aussi une PWA installable depuis Safari iOS / Chrome Android sans passer par Xcode.
+
+### Servir la build statique
+
+```bash
+echo "VITE_API_BASE_URL=https://wax-api.nc-maiz.org" > .env
+npm run build
+# dist/ → n'importe quel hébergement statique :
+#   Cloudflare Pages / Netlify / Vercel / nginx / Caddy / GitHub Pages
+```
+
+### Installer sur iPhone
+
+1. Ouvre l'URL publique dans **Safari** (pas Chrome — Apple bloque l'install PWA sauf depuis Safari)
+2. Bouton **Partager** → **Sur l'écran d'accueil**
+3. L'icône Wax s'ajoute, l'app s'ouvre en plein écran (sans la barre Safari)
+
+### Installer sur Android
+
+1. Ouvre l'URL dans **Chrome**
+2. Menu → **Installer l'application** (ou prompt automatique en bas)
+3. L'app s'installe comme un APK natif
+
+### Limites PWA iOS (Safari)
+
+- **Audio en background** : Safari finit par tuer la lecture après quelques minutes en background. Pas de fix possible — c'est un choix Apple. Sur Android Chrome c'est mieux : la lecture continue tant que la notification média est active.
+- **Plugins natifs Capacitor** (haptics, filesystem offline, share OS) : non disponibles en PWA — l'app utilise les fallbacks web (vibration API, etc.) qui sont silencieux dans Safari.
+- **Offline** : le service worker précache l'app shell (HTML/CSS/JS/icônes), donc l'interface se lance hors-ligne. Mais les requêtes vers le backend (search, library, audio streams) ont besoin du réseau.
+
+Pour la version "vraie app" avec background audio illimité + haptics natifs, il faut passer par Capacitor + Xcode (iOS) ou Android Studio (Android). Voir la section précédente.
+
 ## Statut
 
 Pré-1.0, en chantier actif. Le shell mobile + les vues principales sont portées :
