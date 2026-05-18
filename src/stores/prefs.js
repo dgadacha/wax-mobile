@@ -20,6 +20,26 @@ export const ACCENT_SWATCHES = [
 
 const DEFAULT_ACCENT = ACCENT_SWATCHES[0].hex;
 
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+// Blend two hex colors. `mix=0` returns `a`, `mix=1` returns `b`. Used by
+// applyTheme to derive --card-hover / --bg-elev / --border from a theme's
+// two-color swatch instead of carrying a full per-theme palette.
+function mixHex(a, b, mix) {
+  const ra = hexToRgb(a), rb = hexToRgb(b);
+  if (!ra || !rb) return a;
+  const m = Math.max(0, Math.min(1, mix));
+  const r = Math.round(ra.r + (rb.r - ra.r) * m);
+  const g = Math.round(ra.g + (rb.g - ra.g) * m);
+  const bl = Math.round(ra.b + (rb.b - ra.b) * m);
+  return '#' + [r, g, bl].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
 function hexToHsl(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
   if (!m) return null;
@@ -139,6 +159,28 @@ export const usePrefsStore = defineStore('prefs', {
       root.classList.remove('light');
       root.classList.add(`theme-${t.id}`);
       if (t.kind === 'light') root.classList.add('light');
+
+      // Mobile doesn't import the desktop's giant style.css that contains
+      // the per-theme palettes — push the swatch values into our CSS
+      // variables directly. swatch[0] = bg, swatch[1] = card; we derive
+      // the rest. Accent stays under the user's accent-picker control.
+      const [bg, card] = t.swatch;
+      const s = root.style;
+      s.setProperty('--bg', bg);
+      s.setProperty('--main', bg);
+      s.setProperty('--card', card);
+      s.setProperty('--card-hover', mixHex(card, t.kind === 'light' ? bg : '#ffffff', 0.06));
+      s.setProperty('--bg-elev', mixHex(bg, card, 0.5));
+      s.setProperty('--border', mixHex(card, t.kind === 'light' ? '#000000' : '#ffffff', 0.08));
+      if (t.kind === 'light') {
+        s.setProperty('--text', '#15161c');
+        s.setProperty('--text-soft', '#3c3e48');
+        s.setProperty('--text-muted', '#7a7d88');
+      } else {
+        s.setProperty('--text', '#f3f4f6');
+        s.setProperty('--text-soft', '#c8ccd6');
+        s.setProperty('--text-muted', '#7d8595');
+      }
     },
     setTheme(id) {
       if (!THEME_IDS.includes(id)) return;
