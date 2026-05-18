@@ -113,18 +113,17 @@ bump();
 .bulk-toolbar {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--border);
-  margin: 0 -20px;
 }
 .bulk-toolbar :deep(.van-search) {
   background: transparent;
-  padding: 4px 16px;
+  padding: 4px 0 0;
 }
 .bulk-toolbar :deep(.van-search__content) { background: var(--bg); }
 .bulk-meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 20px 10px;
+  padding: 4px 0 10px;
   font-size: 12px;
 }
 .muted { color: var(--text-muted); }
@@ -142,53 +141,30 @@ bump();
 .bulk-list {
   flex: 1 1 auto;
   overflow-y: auto;
-  margin: 4px -20px 0;
+  padding: 4px 0 0;
   -webkit-overflow-scrolling: touch;
 }
 
+/* Rows sit inside the modal-body padding (no negative margins), so the
+ * selected pill stays naturally inset from the modal walls. The row owns
+ * the pill via background + border-radius — no pseudo gymnastics. */
 .bulk-row {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   background: transparent;
   border: 0;
-  padding: 10px 20px;
+  border-radius: 12px;
+  padding: 8px 12px;
   text-align: left;
   cursor: pointer;
   color: var(--text);
-  isolation: isolate;
+  transition: background 120ms;
 }
-/* Hairline between rows — drawn at the inset so it doesn't run under the
- * selected pill. */
-.bulk-row + .bulk-row::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 76px;            /* skip past the thumb */
-  right: 20px;
-  height: 1px;
-  background: var(--border);
-}
-.bulk-row:active::before {
-  content: '';
-  position: absolute;
-  inset: 2px 12px;
-  background: var(--card-hover);
-  border-radius: 10px;
-  z-index: -1;
-}
-.bulk-row.selected::before {
-  content: '';
-  position: absolute;
-  inset: 2px 12px;
-  background: var(--accent-soft);
-  border-radius: 10px;
-  z-index: -1;
-}
-.bulk-row.selected + .bulk-row::after,
-.bulk-row.selected::after { display: none; }
+.bulk-row + .bulk-row { margin-top: 2px; }
+.bulk-row:active { background: var(--card-hover); }
+.bulk-row.selected { background: var(--accent-soft); }
 
 .bulk-thumb {
   width: 44px;
