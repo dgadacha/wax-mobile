@@ -93,18 +93,33 @@ export function stopVisualizer() {
   document.querySelectorAll('.eq rect').forEach((r) => (r.style.transform = ''));
 }
 
+// Lazy: only set up the AudioContext chain when the user actually wants
+// EQ. Without this, just touching useVisualizer() would route every play
+// through an AudioContext destination — which iOS Safari suspends in
+// background, killing background playback in PWA mode. Once at least
+// one band is non-zero we materialize the chain; once we materialize it
+// we stay there (can't gracefully un-wire mid-track).
 export function setEq(bass, mid, treble) {
+  const hasEq = bass !== 0 || mid !== 0 || treble !== 0;
+  if (!viz.ctx && !hasEq) return;
+  if (!viz.ctx) init();
   if (viz.bass) viz.bass.gain.value = bass;
   if (viz.mid) viz.mid.gain.value = mid;
   if (viz.treble) viz.treble.gain.value = treble;
 }
 
-// Auto-start/stop in lockstep with playing state.
+// Auto-start/stop in lockstep with playing state. Only kicks the
+// visualizer RAF loop — does NOT touch the AudioContext init. The chain
+// is only built on demand by setEq() when the EQ actually needs to be
+// non-zero. Result: out-of-the-box, the <audio> element drives the
+// output directly (which is what lets iOS Safari keep playing in the
+// background when the PWA is locked).
 export function useVisualizer() {
   const player = usePlayerStore();
   watch(
     () => player.playing,
     (playing) => {
+      if (!viz.ctx) return; // No chain → no analyser → no visualizer
       if (playing) startVisualizer();
       else stopVisualizer();
     },

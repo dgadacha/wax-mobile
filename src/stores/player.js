@@ -395,12 +395,24 @@ export const usePlayerStore = defineStore('player', {
         return;
       }
       try {
+        // iOS Safari's Control Center fetches the artwork URL out of the
+        // page context — relative URLs don't resolve correctly there.
+        // Force absolute via location.href as base. Multiple sizes let
+        // iOS pick the best variant for the lock-screen / Now Playing.
+        const thumbAbs = track.thumbnail
+          ? new URL(track.thumbnail, location.href).href
+          : '';
         navigator.mediaSession.metadata = new MediaMetadata({
           title: track.title || '',
           artist: track.uploader || '',
-          album: 'Wax',
-          artwork: track.thumbnail
-            ? [{ src: track.thumbnail, sizes: '480x360', type: 'image/jpeg' }]
+          album: track.album || 'Wax',
+          artwork: thumbAbs
+            ? [
+                { src: thumbAbs, sizes: '96x96',   type: 'image/jpeg' },
+                { src: thumbAbs, sizes: '192x192', type: 'image/jpeg' },
+                { src: thumbAbs, sizes: '256x256', type: 'image/jpeg' },
+                { src: thumbAbs, sizes: '512x512', type: 'image/jpeg' },
+              ]
             : [],
         });
       } catch {}
