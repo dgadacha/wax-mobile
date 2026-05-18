@@ -82,6 +82,15 @@ export const usePrefsStore = defineStore('prefs', {
         if (p.locale && LOCALE_IDS.includes(p.locale)) {
           this.locale = p.locale;
         }
+        // One-time migration: the legacy desktop fork defaulted to 'en'.
+        // Mobile users expect French unless they switched explicitly. If
+        // the stored locale is 'en' and the migration flag is missing,
+        // switch to 'fr' once and stamp the flag so subsequent loads
+        // honour an explicit en choice. To re-pick en post-migration,
+        // use Settings → language (TODO).
+        if (this.locale === 'en' && !p.mobileLocaleMigrated) {
+          this.locale = 'fr';
+        }
         if (p.themeId && THEME_IDS.includes(p.themeId)) {
           this.themeId = p.themeId;
         } else if (p.theme === 'light') {
@@ -116,6 +125,7 @@ export const usePrefsStore = defineStore('prefs', {
           eq: this.eq,
           sidebarExpanded: this.sidebarExpanded,
           accentColor: this.accentColor,
+          mobileLocaleMigrated: true,
         }));
       } catch {}
     },

@@ -16,7 +16,10 @@ export const SUPPORTED_LOCALES = [
   { id: 'fr', label: 'Français' },
 ];
 
-export const DEFAULT_LOCALE = 'en';
+// Mobile defaults to French — the desktop fork left this `'en'` but every
+// hardcoded string in the mobile views is in French already, so the legacy
+// modals (playlist create / rename / lyrics / bulk-add) need fr to match.
+export const DEFAULT_LOCALE = 'fr';
 
 const messages = {
   en: {
