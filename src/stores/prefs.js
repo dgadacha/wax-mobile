@@ -181,6 +181,38 @@ export const usePrefsStore = defineStore('prefs', {
         s.setProperty('--text-soft', '#c8ccd6');
         s.setProperty('--text-muted', '#7d8595');
       }
+
+      // Drive iOS Safari's status-bar tint + Android Chrome's system UI
+      // color via the <meta name="theme-color"> tag. Without this, the
+      // status-bar zone keeps the static theme-color from index.html
+      // (#0d0f14, dark) — looks fine on dark themes but creates a black
+      // strip above the page when the user switches to a light theme.
+      let themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (!themeMeta) {
+        themeMeta = document.createElement('meta');
+        themeMeta.name = 'theme-color';
+        document.head.appendChild(themeMeta);
+      }
+      themeMeta.content = bg;
+      // Apple's apple-mobile-web-app-status-bar-style also flips dark/
+      // light icons. `default` = dark icons (best on light bg),
+      // `black-translucent` = white icons (best on dark bg). Updated at
+      // theme switch even though Safari only reads it on PWA INSTALL
+      // — at least new installs get the right one. Existing PWAs need
+      // to be re-added to the Home Screen for the icon color to change.
+      let appleStatus = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (!appleStatus) {
+        appleStatus = document.createElement('meta');
+        appleStatus.name = 'apple-mobile-web-app-status-bar-style';
+        document.head.appendChild(appleStatus);
+      }
+      appleStatus.content = t.kind === 'light' ? 'default' : 'black-translucent';
+
+      // Make sure html + body bg fill iOS safe-area zones (status-bar +
+      // home-indicator). Without these explicit settings, the safe-area
+      // zones show iOS's default white in PWA standalone mode.
+      document.documentElement.style.backgroundColor = bg;
+      document.body.style.backgroundColor = bg;
     },
     setTheme(id) {
       if (!THEME_IDS.includes(id)) return;
@@ -191,7 +223,10 @@ export const usePrefsStore = defineStore('prefs', {
       // theme — user can still override afterwards by tapping a swatch.
       const t = themeById(id);
       if (t && t.swatch[2]) this.setAccentColor(t.swatch[2]);
-      else this.save();
+      // Belt + suspenders: explicit save in case setAccentColor
+      // short-circuits on a malformed hex, or some future refactor
+      // breaks that chain. The chosen themeId persists regardless.
+      this.save();
       window.dispatchEvent(new Event('wax:theme-changed'));
     },
     toggleSidebar() {

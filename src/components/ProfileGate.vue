@@ -155,7 +155,11 @@ async function deleteProfile(p) {
 .gate {
   position: fixed;
   inset: 0;
+  /* Always a dark gradient (Netflix-style), regardless of the user's
+   * theme. Hardcoded so the gate stays visible/legible whether the
+   * active theme is light (dawn / mint / paper / …) or dark. */
   background: linear-gradient(180deg, #0a0c11 0%, #15181f 100%);
+  color: #f3f4f6;
   z-index: 100;
   display: grid;
   place-items: center;
@@ -177,7 +181,7 @@ async function deleteProfile(p) {
   font-family: var(--font-display);
   font-size: 28px;
   font-weight: 700;
-  color: var(--text);
+  color: #f3f4f6;
   margin: 0;
   letter-spacing: -0.4px;
 }
@@ -247,13 +251,13 @@ async function deleteProfile(p) {
 
 .gate-name {
   font-size: 14px;
-  color: var(--text-soft);
+  color: #c8ccd6;
 }
 
 .manage-btn {
   background: transparent;
-  border: 1px solid var(--border);
-  color: var(--text-soft);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #c8ccd6;
   padding: 10px 22px;
   border-radius: 999px;
   font-size: 13px;
@@ -265,7 +269,7 @@ async function deleteProfile(p) {
 .cancel-btn {
   background: transparent;
   border: 0;
-  color: var(--text-muted);
+  color: #7d8595;
   font-size: 13px;
   margin-top: -16px;
   padding: 8px 12px;
