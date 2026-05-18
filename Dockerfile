@@ -1,23 +1,48 @@
 # syntax=docker/dockerfile:1.7
 #
-# Wax backend image. Only ships server.cjs + its Express deps + yt-dlp +
-# ffmpeg. The Vue/Vant frontend lives inside the Capacitor app — it is NOT
-# served by this container. The backend speaks HTTP to whichever client
-# (mobile, dev browser) points at it.
+# Wax all-in-one image: backend (server.cjs) + frontend (built Vite app).
+# Same pattern as kuro — one image, one URL, no separate static host. The
+# backend serves dist/ at the root and falls back to index.html for SPA
+# routes; API endpoints take precedence via path-prefix matching.
 
 ############################
-# 1) Install backend deps in a clean layer
+# 1) Build the Vite frontend (Vue + Vant + PWA)
+############################
+FROM node:20-bookworm-slim AS web-builder
+WORKDIR /web
+
+# Install dev deps so Vite + plugins are available.
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+# Copy only the bits Vite needs (source + config + assets) — avoids
+# busting the npm cache layer when server.cjs / k8s / Docker stuff
+# changes.
+COPY index.html vite.config.js capacitor.config.json ./
+COPY src ./src
+COPY public ./public
+
+# Build args let the CI pass VITE_API_BASE_URL at build time. Empty by
+# default → relative API URLs → same-origin requests (perfect when the
+# backend itself serves the bundle). Override only when hosting the
+# frontend on a different domain than the backend (e.g. GitHub Pages
+# pointing at an external API).
+ARG VITE_API_BASE_URL=
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
+
+RUN npm run build
+# Result: /web/dist with index.html, /assets/*, manifest.webmanifest, sw.js, …
+
+############################
+# 2) Install backend deps in a clean layer (no devDeps in the image)
 ############################
 FROM node:20-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-# Frontend toolchain (vite, vant, capacitor) is dev-only and irrelevant to
-# the server runtime. We still need express + a few small server-side libs
-# pulled in via package.json `dependencies`, so use `npm ci --omit=dev`.
 RUN npm ci --omit=dev --no-audit --no-fund
 
 ############################
-# 2) Runtime image
+# 3) Runtime image
 ############################
 FROM node:20-bookworm-slim AS runtime
 
@@ -39,15 +64,18 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=web-builder /web/dist ./dist
 COPY server.cjs ./
 COPY package.json ./
 
-# Library dir defaults to /data (mounted PVC in k8s).
+# Library dir defaults to /data (mounted PVC in k8s). Frontend dir
+# defaults to /app/dist where the web-builder put it.
 RUN mkdir -p /data \
  && chown -R wax:wax /app /data
 
 ENV PORT=3000 \
     WAX_LIBRARY_DIR=/data \
+    WAX_FRONTEND_DIR=/app/dist \
     WAX_YT_DLP=/usr/local/bin/yt-dlp \
     WAX_FFMPEG=/usr/bin/ffmpeg
 

@@ -15,7 +15,7 @@
   &nbsp;
   <a href="https://github.com/dgadacha/wax-mobile/actions/workflows/deploy-pages.yml"><img alt="Pages" src="https://img.shields.io/github/actions/workflow/status/dgadacha/wax-mobile/deploy-pages.yml?branch=main&label=Pages&logo=github"/></a>
   &nbsp;
-  <a href="https://dgadacha.github.io/wax-mobile/"><img alt="Démo" src="https://img.shields.io/badge/d%C3%A9mo-dgadacha.github.io%2Fwax--mobile-7c5cff"/></a>
+  <a href="https://wax.nc-maiz.org"><img alt="Démo" src="https://img.shields.io/badge/d%C3%A9mo-wax.nc--maiz.org-7c5cff"/></a>
 </p>
 
 ---
@@ -24,7 +24,7 @@
 
 ### Sur iPhone (Safari)
 
-1. Ouvre <https://dgadacha.github.io/wax-mobile/> dans **Safari** (Chrome marche pas pour l'install — c'est Apple qui bloque).
+1. Ouvre <https://wax.nc-maiz.org> dans **Safari** (Chrome marche pas pour l'install — c'est Apple qui bloque).
 2. Bouton **Partager** (le carré avec la flèche vers le haut).
 3. Fais défiler et tape **Sur l'écran d'accueil**.
 4. Confirme. L'icône Wax apparaît, l'app s'ouvre en plein écran sans la barre Safari.
@@ -33,7 +33,7 @@
 
 ### Sur Android (Chrome)
 
-1. Ouvre <https://dgadacha.github.io/wax-mobile/> dans **Chrome**.
+1. Ouvre <https://wax.nc-maiz.org> dans **Chrome**.
 2. Menu (⋮) en haut à droite → **Installer l'application**, ou attends le prompt qui sort tout seul en bas.
 3. L'app s'installe comme un APK natif — apparaît dans le tiroir et l'écran d'accueil.
 
@@ -114,26 +114,16 @@ npm run android        # build + cap sync + cap:setup + cap open android
 
 `npm run cap:sync` enchaîne `cap sync && cap:setup` pour ré-appliquer après chaque sync (Capacitor peut régénérer certains fichiers natifs).
 
-## Déploiement PWA (GitHub Pages)
+## Déploiement (k8s + Cloudflare Tunnel, façon kuro)
 
-Un workflow `.github/workflows/deploy-pages.yml` build et publie à chaque push sur `main`. Setup une seule fois :
-
-1. **Settings → Pages → Source** = "GitHub Actions".
-2. **Settings → Secrets and variables → Actions** → New repository secret :
-   - Name : `VITE_API_BASE_URL`
-   - Value : l'URL publique de ton backend (ex. `https://wax-api.nc-maiz.org`)
-3. Push sur `main`. Le workflow tourne et publie sur `https://<user>.github.io/<repo>/`.
-
-Pas besoin de toucher au `.env` local — le secret est injecté pendant le build CI.
-
-## Déploiement backend (k8s + Cloudflare Tunnel, façon kuro)
+L'image Docker bake le frontend (build Vite) dans `/app/dist` et `server.cjs` le sert au root + SPA fallback. Un seul conteneur, un seul URL, pas de CORS, pas de host statique séparé. Exactement le pattern kuro.
 
 ```bash
-# Build + push
+# Build (frontend + backend dans la même image)
 docker build -t registry.gitlab.com/kidnar/wax:latest .
 docker push registry.gitlab.com/kidnar/wax:latest
 
-# Déploiement
+# Déploiement k8s
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/pvc.yaml
 kubectl apply -f k8s/deployment.yaml
@@ -141,9 +131,9 @@ kubectl apply -f k8s/service.yaml
 kubectl apply -f k8s/ingress.yaml   # LAN seulement (Traefik)
 ```
 
-Le `Deployment` utilise `strategy: Recreate` (lib JSON sur PVC RWO), `imagePullSecrets: gitlab-registry` (à créer une fois avec `kubectl create secret docker-registry gitlab-registry ...`), expose `:3000`. CORS est permissif (`Access-Control-Allow-Origin: <origin>`) donc la PWA hébergée sur n'importe quel domaine peut taper dessus.
+Le `Deployment` utilise `strategy: Recreate` (lib JSON sur PVC RWO), `imagePullSecrets: gitlab-registry` (à créer une fois avec `kubectl create secret docker-registry gitlab-registry ...`), expose `:3000`.
 
-L'accès public passe par un Cloudflare Tunnel pointant vers le `Service` ClusterIP — même pattern que [kuro](https://gitlab.com/kidnar/kuro) (cluster ne expose aucun port entrant).
+Accès public via un Cloudflare Tunnel pointant vers le `Service` ClusterIP — pas de port entrant exposé. Le `Tunnel` mappe `wax.nc-maiz.org` → `wax.wax.svc.cluster.local:80`. Ton pote ouvre cette URL dans Safari iPhone et l'installe sur l'écran d'accueil.
 
 ### Sans cluster k8s, vite fait
 
@@ -151,7 +141,16 @@ Le `Dockerfile` est déployable tel quel sur :
 
 - **Fly.io** (free tier généreux) : `flyctl launch` + `flyctl deploy`.
 - **Render** (free tier, app dort après inactivité).
-- **Cloudflare Tunnel quick** sur ton Mac : `cloudflared tunnel --url http://localhost:3000` te donne une URL `*.trycloudflare.com` temporaire — parfait pour tester avec un pote, sans dépendance externe.
+- **Cloudflare Tunnel quick** sur ton Mac : `node server.cjs &` + `cloudflared tunnel --url http://localhost:3000` te donne un URL `*.trycloudflare.com` temporaire — parfait pour tester avec un pote, sans dépendance externe.
+
+### Frontend hébergé séparément (optionnel, fallback)
+
+Si tu préfères servir le frontend depuis un host statique séparé (GitHub Pages, Cloudflare Pages, etc.), le workflow `.github/workflows/deploy-pages.yml` push automatiquement `dist/` sur Pages à chaque push `main`. Configuration une seule fois :
+
+1. **Settings → Pages → Source** = "GitHub Actions".
+2. **Settings → Secrets and variables → Actions → New repository secret** : `VITE_API_BASE_URL` = `https://wax.nc-maiz.org` (l'URL de ton backend).
+
+Le backend a un CORS permissif donc la PWA hébergée n'importe où peut taper dessus. Utile comme miroir si ton backend est temporairement HS — le shell se charge quand même.
 
 ## Variables d'environnement
 
@@ -161,6 +160,7 @@ Le `Dockerfile` est déployable tel quel sur :
 | `VITE_DEV_PROXY_TARGET` | frontend, dev | Override de la cible du proxy Vite. Défaut `http://localhost:3000`. |
 | `PORT` | backend | Port Express. Défaut 3000. |
 | `WAX_LIBRARY_DIR` | backend | Répertoire de la bibliothèque. Défaut `./library`, l'image Docker pointe sur `/data`. |
+| `WAX_FRONTEND_DIR` | backend | Répertoire du frontend buildé (sert au root + SPA fallback). Défaut `./dist`, image Docker `/app/dist`. Si absent, le serving frontend est désactivé (utile en dev quand Vite tourne sur :5173). |
 | `WAX_YT_DLP` | backend | Override du chemin `yt-dlp`. |
 | `WAX_FFMPEG` | backend | Override du chemin `ffmpeg`. |
 
@@ -184,7 +184,9 @@ Le `Dockerfile` est déployable tel quel sur :
                  │   ┌─────────────────────────────────┐    │
                  │   │ Deployment wax (server.cjs)     │    │
                  │   │   - Express :3000               │    │
-                 │   │   - yt-dlp + ffmpeg             │    │
+                 │   │   - /app/dist served at /       │    │
+                 │   │     + SPA fallback              │    │
+                 │   │   - /api/* yt-dlp + ffmpeg      │    │
                  │   │   - per-user library JSON       │    │
                  │   │   - SSE pour download progress  │    │
                  │   └────────────┬────────────────────┘    │
@@ -198,7 +200,7 @@ Le `Dockerfile` est déployable tel quel sur :
                  └──────────────────────────────────────────┘
 ```
 
-Chaque profil a son propre `users/<id>/library.json` + `playlists.json` (multi-user clean). Les MP3 audio et les covers sont partagés (déterministes par `ytId`). Voir `CLAUDE.md` pour le détail.
+Un seul conteneur sert le frontend (build Vite baked-in via le `web-builder` stage du Dockerfile) ET l'API. Pas de CORS, pas de host statique séparé. Chaque profil a son propre `users/<id>/library.json` + `playlists.json` (multi-user clean). Les MP3 audio et les covers sont partagés (déterministes par `ytId`). Voir `CLAUDE.md` pour le détail.
 
 ## Statut
 

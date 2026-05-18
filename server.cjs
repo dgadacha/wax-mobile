@@ -92,6 +92,11 @@ const PORT = process.env.PORT || 3000;
 
 const ROOT = __dirname;
 const PUBLIC_DIR = process.env.WAX_PUBLIC_DIR || path.join(ROOT, 'public');
+// Frontend build output. In prod (Docker / k8s), the image bakes the Vite
+// build into /app/dist and we serve it at the root + SPA fallback below —
+// kuro pattern. In dev, dist/ doesn't exist; the static middleware just
+// no-ops and Vite serves the frontend on :5173 with its own proxy.
+const FRONTEND_DIR = process.env.WAX_FRONTEND_DIR || path.join(ROOT, 'dist');
 const LIBRARY_DIR = process.env.WAX_LIBRARY_DIR || path.join(ROOT, 'library');
 const AUDIO_DIR = path.join(LIBRARY_DIR, 'audio');
 const PREVIEW_DIR = path.join(LIBRARY_DIR, 'previews');
@@ -193,6 +198,26 @@ app.use((req, _res, next) => {
 app.use(express.static(PUBLIC_DIR));
 app.use('/audio', express.static(AUDIO_DIR, { maxAge: '1d' }));
 app.use('/preview-files', express.static(PREVIEW_DIR, { maxAge: '1h' }));
+
+// Frontend (kuro pattern: backend serves the built Vite app at the root,
+// no separate static host needed). Only mounts when dist/ exists — in
+// dev, Vite serves it on :5173 and this is a no-op. Heavy precaching
+// (hashed JS / CSS) gets a long max-age; index.html and the PWA
+// manifest must stay fresh for service-worker updates to propagate.
+if (fs.existsSync(FRONTEND_DIR)) {
+  app.use(express.static(FRONTEND_DIR, {
+    maxAge: '30d',
+    setHeaders: (res, filePath) => {
+      const base = path.basename(filePath);
+      if (base === 'index.html' || base === 'manifest.webmanifest' || base === 'sw.js' || base === 'registerSW.js') {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }));
+  console.log(`[frontend] serving ${FRONTEND_DIR} at /`);
+} else {
+  console.log(`[frontend] dist/ not found at ${FRONTEND_DIR} — run \`npm run build\` for prod, or use Vite dev on :5173`);
+}
 
 const YT_REGEX = /^https?:\/\/(www\.|m\.|music\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/|playlist\?list=)|youtu\.be\/)[A-Za-z0-9_\-=&?%/]+/;
 
@@ -1747,6 +1772,20 @@ app.delete('/api/profiles/:id', (req, res) => {
   } catch {}
   res.json({ ok: true });
 });
+
+// SPA fallback: any unknown route that's not an API / asset path returns
+// index.html so client-side routing works on direct deep-link loads.
+// Skips API + audio + preview-files (those should 404 cleanly if missing)
+// AND only kicks in when the frontend bundle exists. `app.get('*')` must
+// be the LAST route — it catches everything that didn't match above.
+if (fs.existsSync(FRONTEND_DIR)) {
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/audio/') || req.path.startsWith('/preview-files/')) {
+      return next();
+    }
+    res.sendFile(path.join(FRONTEND_DIR, 'index.html'));
+  });
+}
 
 app.listen(PORT, () => {
   console.log(`Serveur lancé sur http://localhost:${PORT}`);
