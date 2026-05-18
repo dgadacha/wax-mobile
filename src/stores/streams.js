@@ -1,6 +1,7 @@
 // Stream tracks (live YouTube stream playback). Equivalent to the
 // `state.streams` Map + prefetch/streamSearchResult helpers.
 import { defineStore } from 'pinia';
+import { apiUrl } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { t } from '@/lib/i18n';
 
@@ -19,7 +20,7 @@ export const useStreamsStore = defineStore('streams', {
     prefetch(videoId) {
       if (this.prefetched.has(videoId)) return;
       this.prefetched.add(videoId);
-      fetch(`/api/stream/${videoId}/prefetch`, { method: 'POST' }).catch(() => {
+      fetch(apiUrl(`/api/stream/${videoId}/prefetch`), { method: 'POST' }).catch(() => {
         this.prefetched.delete(videoId);
       });
     },

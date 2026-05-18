@@ -1,265 +1,200 @@
-# CLAUDE.md — Wax codebase map
+# CLAUDE.md — Wax mobile codebase map
 
-This file is for **you, future Claude**. Read it first when starting a session on this repo. It's the fastest way back into the codebase without re-discovering everything from scratch.
+This file is for **you, future Claude**. Read it first when starting a session on `wax-mobile`. It is a mobile-first fork of the desktop Wax app (Electron + Vue 3) — the desktop version still lives at `dgadacha/wax`; this repo (`dgadacha/wax-mobile`) only targets iOS + Android via **Capacitor**.
 
 ## TL;DR — what is this?
 
-**Wax** is a desktop YouTube → MP3 player. Single Electron app, single backend:
-- `server.js` (Express) shells out to `yt-dlp` for searching, downloading, streaming.
-- `src/` — Vue 3 + Vite + Pinia renderer. Wrapped by `electron/main.cjs` (forks `server.js`, opens a BrowserWindow). Packaged via `electron-builder` to `.dmg` / `.exe` / `.AppImage`.
+**Wax mobile** is a mobile music app for iOS + Android:
+- **Frontend** — Vue 3 + Vite + Pinia + **Vant** (mobile UI kit) + **Lucide** icons, wrapped in **Capacitor** to produce `.ipa` / `.apk`. Multi-profile (Netflix-style "Qui écoute ?" gate at launch).
+- **Backend** — `server.cjs` (Express) shells out to `yt-dlp` + `ffmpeg`. Same code as the desktop project, just renamed `.cjs` because the package is now `"type": "module"`. Per-profile library/playlists storage; audio MP3s shared across profiles. Packaged as a Docker image and deployed to k8s (Cloudflare Tunnel in front).
 
 The user is a senior dev who writes in French. Communicate concisely, in **French**. Confirm before destructive ops.
 
 ## Quick reference
 
 ```bash
-npm run dev          # vite + electron + server, with HMR
-npm run build        # vite build → dist/
-npm run dist:mac     # → release/Wax-{version}.dmg
-npm run dist:win     # → release/Wax-Setup-{version}.exe
-node server.js       # backend only (port 3000)
+# Frontend
+npm install                        # vue + vite + vant + capacitor (cli + plugins)
+npm run dev                        # vite dev server on :5173, proxies /api → :3000
+npm run build                      # dist/ — webDir consumed by Capacitor
+
+# Backend
+node server.cjs                    # Express on :3000 (needs yt-dlp + ffmpeg on PATH)
+
+# Capacitor (run after `npm run build`)
+npx cap add ios                    # first time only; needs Xcode
+npx cap add android                # first time only; needs Android Studio
+npm run ios                        # build + cap sync ios + cap open ios
+npm run android                    # build + cap sync android + cap open android
+
+# Docker / k8s
+docker build -t registry.gitlab.com/kidnar/wax:latest .
+docker push registry.gitlab.com/kidnar/wax:latest
+kubectl apply -f k8s/
 ```
 
-Dev URLs: Vite at `http://localhost:5173`, Express at `http://localhost:3000`.
-Vite proxies `/api/*`, `/audio/*`, `/preview-files/*` → `localhost:3000`.
+Dev URLs: Vite at `http://localhost:5173`, Express at `http://localhost:3000`. Vite proxies `/api/*`, `/audio/*`, `/preview-files/*` → `localhost:3000` (override target via `VITE_DEV_PROXY_TARGET`).
 
-Runtime deps (PATH): `yt-dlp`, `ffmpeg`. Falls back via `WAX_YT_DLP` / `WAX_FFMPEG` env vars when the Electron app bundles them.
+Runtime deps (PATH for `server.cjs`): `yt-dlp`, `ffmpeg`. The Docker image installs both; override with `WAX_YT_DLP` / `WAX_FFMPEG` env vars.
+
+## API base URL — Capacitor vs dev
+
+Capacitor packages the built `dist/` into the native app and serves it from `capacitor://localhost` (iOS) / `https://localhost` (Android) inside a WebView. There is no Vite dev server in prod, so relative URLs like `/api/library` would hit the WebView's own origin and fail.
+
+`src/lib/api.js` exports `apiUrl(path)` which prefixes `import.meta.env.VITE_API_BASE_URL` to any backend-bound path, and `apiUrlWithProfile(path)` which additionally appends `?profile=<id>` for SSE endpoints (EventSource can't set headers). Every place that constructs a URL the backend needs to serve **must** go through one of these:
+
+- Regular requests: `fetch('/api/...')` → `api()` (auto-prefixes + sets `X-Wax-Profile`) or raw `fetch(apiUrl('/api/...'), { headers: { 'X-Wax-Profile': … } })`
+- SSE: `new EventSource(apiUrlWithProfile('/api/...'))`
+- `audio.src = track.file` → `audio.src = apiUrl(track.file)`
+- `audio.src = '/api/stream/<id>'` → `audio.src = apiUrl('/api/stream/<id>')`
+- `<img :src="track.thumbnail">` — **TODO**, the legacy tracks carry `/api/cover/<id>` strings; for now `apiUrl()` happens to be a no-op in dev (`VITE_API_BASE_URL=''` → relative URLs → Vite proxy) but the production Capacitor build will need every image binding wrapped too. The artist photo in `ViewArtist.vue` is already wrapped; the rest of the views still bind raw strings.
+
+In dev, leave `VITE_API_BASE_URL` empty (default in `.env.example`) and the Vite proxy handles forwarding. In Capacitor builds, set it to the deployed backend URL (e.g. `https://wax-api.nc-maiz.org`) before running `npm run build && cap sync`.
+
+## Multi-profile (Netflix-style)
+
+Every backend request carries `X-Wax-Profile: <id>`; the server routes to `library/users/<id>/library.json` + `library/users/<id>/playlists.json`. Audio MP3s, covers, artist photos and Deezer caches stay shared at the library root — they're keyed by ytId / artist name so per-user duplication would be wasteful.
+
+- **Default profile** (`id: 'default'`) is auto-created on first boot. If a legacy root `library/library.json` exists from a pre-multi-profile install, it's auto-migrated into `users/default/`.
+- **Client store**: `src/stores/profile.js` holds the profile list + active id (persisted in `localStorage` under `wax:active-profile`). `api.js` reads the same key directly so it works without a Pinia round-trip.
+- **`<ProfileGate />`** (mounted in `App.vue`) blocks the UI behind a full-screen "Qui écoute ?" overlay whenever `profile.needsPicker` is true. Includes inline profile creation (name + color picked from `ACCENT_SWATCHES`) and a "Gérer les profils" toggle that exposes rename / delete affordances on existing avatars (except `default`, which is undeletable).
+- **`/api/profiles`** endpoints: `GET` lists, `POST {name, color}` creates, `PATCH /:id {name?, color?}` updates, `DELETE /:id` removes (and `rm -rf`s the user's data dir; refuses to delete `default`).
+- **Switching profiles** triggers a full `location.reload()` — every Pinia store re-fetches against the new `X-Wax-Profile`. Lazier in-place rehydration could replace this later but reload is bulletproof.
+- **Album backfill across profiles**: `autoBackfillOnStartup` iterates `listProfileIds()` so every user's library gets the Deezer pass on server start. `scheduleAlbumBackfill(profileId, track, onComplete)` now takes an explicit profileId since it's also called from no-req contexts.
+
+## Accent color picker
+
+`src/stores/prefs.js` exports `ACCENT_SWATCHES` (8 named hex values: violet, sky, emerald, amber, rose, crimson, lime, pearl) and `applyAccent(hex)` which converts to HSL and writes `--accent`, `--accent-bright`, `--accent-dark`, `--accent-soft`, `--accent-glow` on `documentElement`. The chosen swatch persists in `prefs.accentColor` (localStorage `ytmp3:prefs`) and re-applies on `prefs.load()`. The Settings screen renders the swatches as a grid of round dots — the active one shows a Lucide `Check` overlay. Profile avatar colors are independent (stored on the profile record).
+
+## Safe areas
+
+- `index.html` has `viewport-fit=cover` so `env(safe-area-inset-*)` resolves to real values on notched devices (iPhones, Android cutouts).
+- `capacitor.config.json` sets `StatusBar.overlaysWebView: true` so the WebView slides under the status bar.
+- `App.vue` uses `safe-area-inset-top` on the `<van-nav-bar>` and `safe-area-inset-bottom` on the `<van-tabbar>` — Vant handles the inset additions internally when those props are set. The mini player and `<ProfileGate>` overlay also pad via `--safe-top` / `--safe-bottom`.
+
+## Icons
+
+The whole app uses **Lucide** (`lucide-vue-next`) — a single consistent SVG icon family, tree-shaken per import. `<van-icon>` is no longer used in the mobile shell except where Vant components render internal icons themselves (which we now override via `#icon` / `#left` slots).
+
+Standard imports per file: `import { House, Search, Library, Settings, ChevronLeft, Heart, ... } from 'lucide-vue-next'`. Each icon is a component: `<Heart :size="20" :stroke-width="2" color="…" :fill="…" />`. Use `fill` to render filled variants (filled hearts for "liked", filled play arrows on the index column, etc.).
 
 ## File map (where things live)
 
 ### Backend
-- **`server.js`** (~700 lines) — Express. Single-file, no framework beyond Express. Spawns `yt-dlp` for: search (`ytsearch10:`), playlist enumeration (`--flat-playlist`), single-track stream URL extraction (`-g`), MP3 download (`-x --audio-format mp3`), Mix enumeration (`RD<videoId>` playlist), preview clips (`--download-sections`).
-  - JSON storage: `library/library.json` + `library/playlists.json`. No DB.
-  - Audio files: `library/audio/<id>.mp3`. Preview cache: `library/previews/<id>.mp3`.
-  - Stream URL cache: in-memory Map, 5h TTL.
-  - **yt-dlp concurrency limited to 3** via a semaphore (`runYtDlp`) — prevents CPU saturation when prefetching 10+ search results in parallel. Every SSE progress event is enriched with `ytdlpActive` + `ytdlpQueued` so the sidebar badge can surface global queue depth without polling.
-  - SSE for download progress: `GET /api/jobs/:id/progress` streams `data: {type, progress, phase, ytdlpActive, ytdlpQueued}\n\n` lines.
-  - Backup endpoints: `GET /api/export` returns `{version, exportedAt, library, playlists}`. `POST /api/import` (per-route 32mb body limit override since the global cap is 1mb) validates the shape and overwrites both `library.json` and `playlists.json` atomically. Used by `src/lib/backup.js`.
-  - Factory reset: `POST /api/wipe` empties `library.json` + `playlists.json` and deletes every file in `library/audio/` and `library/previews/`. Returns `{ok, removed: {audio, previews}}`. Client-side prefs (theme, locale, EQ, volume, crossfade) live in `localStorage` and are NOT touched — they're UI settings, not data.
-  - **Cover pipeline** (`/api/cover/:ytId`): every track thumbnail in the app is served through this endpoint. The endpoint checks `library/covers/<ytId>.jpg` first; if missing, fetches from YouTube trying `maxresdefault` → `hqdefault` → `mqdefault` → `default`, rejects YouTube's 120×90 grey placeholder for missing maxres (size < 5 KB), saves the first hit to disk, and serves it (`Cache-Control: max-age=604800`). 404 if every variant fails — the client then swaps to `/placeholder-cover.svg`. `getLibrary()` rewrites every track's `thumbnail` to `coverUrl(t.ytId)` on read; `/api/search`, `/api/trending`, `/api/mix`, `/api/playlist-info`, `/api/info`, `/api/library/add` and the download job all use `coverUrl(id)` too. The download job pre-caches the cover (`fetchCoverFromYouTube` fire-and-forget) so downloaded tracks have their artwork on disk alongside the MP3 — fully offline.
-  - **Album metadata pipeline** (`/api/album-lookup?artist=&title=` + `/api/album-tracklist?albumId=`): yt-dlp doesn't expose any `album` field for YouTube videos, so we resolve album info via the **Deezer Search API** — free, no auth, generous rate limit (~50 req/sec), and a single response carries album name + cover URL + Deezer numeric album id. Cover URLs are direct CDN links the client hits without a proxy, so there's no `/api/album-cover` endpoint and no Cover Art Archive cache anymore. Why Deezer over MusicBrainz: MB is volunteer-curated and over-represents bootlegs/live/deluxe editions for popular artists, which forced a complex scoring layer; Deezer is a streaming service so its catalogue is naturally organised around canonical releases, plus its francophone coverage (Tsew The Kid, Jok'Air, Josman, etc.) is materially better. Query strategy: `artist:"X" track:"Y"` strict first, free-text `X Y` fallback for accents/apostrophes; results filtered to those whose primary artist normalizes to the query artist, then `album.type === 'album'` preferred over `'single'`, then by Deezer's own `rank`. Disk cache: `library/albums/<sha1(normalizedArtist|normalizedTitle)>.json` with the new Deezer shape (`albumId` numeric); old MB-shaped cache entries are detected and re-resolved automatically. Miss sentinel `.miss` re-tried after 7 days. **Auto-backfill is fully transparent** — the server scans the library on boot (`autoBackfillOnStartup`) and queues a Deezer lookup for every track missing an `album` field OR an `albumId` (catches old MB-resolved tracks during migration). `POST /api/library/add`, PATCH liked → true, and playlist add (single + bulk) also enqueue via the debounced `scheduleAutoBackfill()` (trailing-edge 2 s) so a bulk drag-drop coalesces into one library walk. `scheduleAlbumBackfill` skip-writes when the resolved album matches what's already on the track — cache-hit re-runs become free. Both pathways write to library.json on success and broadcast over SSE on `/api/album-progress` (`{type:'album', trackId, album, albumId, albumCoverUrl, albumReleaseDate}`); a `{type:'rescan', done, total, running}` channel drives the Settings re-scan progress bar. The client subscribes via `library._listenAlbumProgress()` from `App.vue` mount, coalesces incoming events via `requestAnimationFrame` (latest payload per trackId wins per frame so the boot-time backfill's ~50 events/sec collapse to one reactive flush per frame), and retries entries up to 5x at 200 ms each when `findById` misses (race when SSE beats the HTTP response on `/api/library/add`). Heartbeats every 25 s keep the SSE alive through middleboxes; `EventSource.onerror` reconnects after 5 s. `parseTrackTitle` mirrored server-side to clean YouTube cruft before querying Deezer.
-  - **Artist photo pipeline** (`/api/artist-photo/:name`): scrapes the artist's official YouTube channel avatar via two yt-dlp calls + an HTML fallback. Step 1 — `ytsearch5:<name>` flat-playlist with `--print '%(channel)s|||%(channel_url)s|||%(uploader)s|||%(uploader_url)s|||%(channel_id)s|||%(uploader_id)s'`, then scores every distinct channel by `normalizeArtistKey()` match (exact = 100, prefix = 70, contains = 40, otherwise 0) + small SERP-rank tiebreaker — demands score ≥ 40 to avoid serving a fan/lyrics/reaction channel's avatar. Step 2 — `<channel_url> --playlist-items 0 -J`, parse the channel JSON's `thumbnails` array, prefer `id === 'avatar_uncropped'` then largest square (width === height) then any `/avatar/` id. Last-ditch fallback: HTTPS GET the channel page HTML and regex out `<meta property="og:image" content="…">` (YouTube always populates that with the avatar even when yt-dlp's JSON only carries banner thumbnails — covers Tame Impala, FKA twigs, Yves Tumor, etc. that the JSON path misses). Cache hit: disk path `library/artists/<normalizedKey>.jpg`. In-flight dedupe via a `Map<key, Promise>` so concurrent requests for the same artist coalesce into one yt-dlp run. Negative cache `library/artists/<key>.miss` (empty sentinel file) re-tried after 24h to spare yt-dlp on truly absent artists. 404 → client falls back to the gradient hero. `normalizeArtistKey` is mirrored server-side in `server.js` so the cache key matches the client's clustering of channel suffix variants.
+- **`server.cjs`** — Express, single file, identical to the desktop project's `server.js` (just renamed because of `"type": "module"`). All endpoints preserved: search (`ytsearch10:`), playlist enumeration, single-track stream URL extraction (`-g`), MP3 download (`-x --audio-format mp3`), Mix enumeration (`RD<id>`), Deezer album lookup, YouTube artist photo scrape, cover proxy with disk cache. yt-dlp concurrency limited to 3 via the `runYtDlp` semaphore. SSE on `/api/jobs/:id/progress` for downloads and `/api/album-progress` for the auto-backfill stream.
+- See the desktop CLAUDE.md (in `dgadacha/wax`) for the long-form description of every endpoint and pipeline — they are unchanged here.
 
-### Electron
-- **`electron/main.cjs`** — Forks `server.js` with env vars (`PORT=3000`, `WAX_LIBRARY_DIR=<userData>/library`, etc.). Creates `BrowserWindow` with `titleBarStyle: 'hiddenInset'` on macOS. Loads Vite URL in dev, `dist/index.html` in prod. Apps launched from Finder/LaunchServices inherit a minimal `PATH`, so the fork augments it with `/opt/homebrew/bin`, `/usr/local/bin`, etc., to make user-installed `yt-dlp` / `ffmpeg` discoverable.
-- **`electron/preload.cjs`** — Exposes `window.wax = { platform, versions }` to the renderer via `contextBridge`. Currently informational only.
-- The root-level `main.cjs` is a leftover from an earlier layout — not wired in (`package.json` `main` points to `electron/main.cjs`). Safe to ignore or delete.
+### Capacitor
+- **`capacitor.config.json`** — `appId: org.nc-maiz.wax`, `webDir: dist`. iOS + Android schemes are set so the WebView origin is stable. SplashScreen + StatusBar plugins are configured for the dark palette (`#0d0f14`).
+- **`ios/`** + **`android/`** — Native projects. NOT committed by default; generated by `npx cap add ios` / `npx cap add android`. Re-add on a fresh checkout.
 
-### Marketing / landing (`docs/`)
-- `docs/index.html` — single-file vanilla HTML/CSS landing page used as the project showcase (Reddit posts, social shares, repo About). Mirrors the app's Sombre theme palette with a violet accent. Served via **GitHub Pages** from the `docs/` folder of `main`, public URL `https://dgadacha.github.io/wax/`.
-- `docs/assets/` — logos (`logo-dark.png`, `textlogo-dark.png`) plus screenshots used in the landing's hero + showcase rows (`screenshot-discover.png`, `screenshot-search.png`, `screenshot-playlist.png`, `screenshot-mix.png`, `screenshot-theme.png`). All taken in the Midnight theme. To refresh visuals: drop new PNGs with the same filenames; the landing references them by relative path.
+### Docker / k8s
+- **`Dockerfile`** — Two-stage: `deps` installs production npm deps, `runtime` installs python3 + ffmpeg + latest `yt-dlp` from GitHub releases, copies `server.cjs` + node_modules in, runs as a non-root `wax` user on port 3000. The frontend is NOT shipped in the image — Capacitor bundles it into the native app.
+- **`k8s/`** — calqued on the kuro project structure:
+  - `namespace.yaml` — `wax` namespace.
+  - `deployment.yaml` — `replicas: 1`, `strategy: Recreate` (the JSON library files live on a RWO PVC), TCP probes on :3000, 2-core CPU limit (yt-dlp can spike during signature extraction), `imagePullSecrets: gitlab-registry`.
+  - `service.yaml` — ClusterIP, :80 → :3000.
+  - `ingress.yaml` — Traefik internal (`wax.maiz.local`); public access is through a Cloudflare Tunnel (same pattern as kuro).
+  - `pvc.yaml` — RWO 10 GiB for `/data` (library JSON + audio MP3s + covers).
 
 ### Frontend (`src/`)
 
-**Entry point**: `src/main.js` mounts `App.vue` to `#app` in `index.html` (root-level Vite entry HTML, NOT in `public/`).
+**Entry point**: `src/main.js` imports Vant CSS + `mobile.css`, creates the Pinia store, mounts `App.vue` to `#app`.
 
-**`App.vue`**: 5 views (`v-show` toggle, all kept mounted) — Search, Library, Smart, Mix, Playlist. Sidebar always visible. Player + Queue panel + ModalRoot + Toast as siblings of `<main>`.
+**`App.vue`** — Mobile shell:
+- Top: `van-nav-bar` (dynamic title from `view.name`, left arrow when in a sub-view; title hidden on top-level tabs so each view's own big heading owns the visual hierarchy — Spotify pattern).
+- Middle: `.view-scroll` container that renders the active view via `v-show` (home / download / library / settings — top-level tabs) or `v-if` for the drill-down sub-views (playlist / album / artist / mix).
+- `<MobilePlayer />` — mini bar always visible above the tab bar; tap to expand into a fullscreen `van-popup`.
+- Bottom: `van-tabbar` with 4 items (Accueil / Rechercher / Bibliothèque / Réglages).
+- `<ModalRoot />` for confirm/prompt/lyrics modals (legacy imperative API, works on mobile for `promptModal` text-input flows that Vant doesn't natively cover — playlist create/rename, for example).
 
-**`src/views/`**:
-- `ViewSearch.vue` — the "Rechercher" page. Single input that dispatches: YouTube URL → preview/playlist-source; otherwise → text search via `/api/search`. Heart button to add to library, stream button to play, prefetches all 10 result URLs in parallel on search.
-- `ViewLibrary.vue` — "Favoris". Lists everything in `lib.tracks`. Drag-reorder enabled.
-- `ViewPlaylist.vue` — single playlist details. Drag-reorder; bulk-add modal; "Tout télécharger" cascade-downloads anything not yet offline.
-- `ViewMix.vue` — temporary view shown after clicking ✨ on any track. Holds a 50-track stream queue from YouTube's RD-mix; "Sauvegarder" persists it as a real playlist (downloading missing tracks in background).
-- `ViewArtist.vue` — lists every library track parsed as belonging to the same artist + a "More from this artist" recommendations section pulled from YouTube search. Reached by clicking the artist name under any track row. Uses `lib.tracksByArtist(name)` which normalizes channel suffixes (`VEVO`, `Official`, `Music`, `- Topic`, etc.) so tracks from `TheWeekndVEVO` / `The Weeknd` / `The Weeknd Topic` cluster under one canonical artist. Hero shows a circular **artist avatar** (`<img class="hero-avatar">` pointed at `/api/artist-photo/<name>`, hidden via `@error` on 404 — gradient takes over). Top-left of the hero has a circular **back button** (`hero-back`) that calls `view.back()` — always rendered (the `back()` action defaults to Favoris when history is empty). Recommendations heading row carries an "Add all to favorites" ghost button that batches `lib.add(..., {silent:true})` for every reco not already in the library, then drops the freshly-added entries from the recs list (they show up in the library section above) and emits a single recap toast (`artist.add_all_done`).
-- `ViewAlbums.vue` — index page surfaced by the sidebar "Albums" entry. Renders `lib.albums` as a square-cover grid (`grid-template-columns: repeat(auto-fill, minmax(170px, 1fr))`); each card pulls its cover from `track.albumCoverUrl` (Deezer CDN) and falls back to a 2x2 mosaic of the album's library track thumbs when the cover URL is missing or 404s. Shimmer overlay (`cover-loading`) sits over each img until `@load` fires. Click → `view.switchTo('album', key)`.
-- `ViewAlbum.vue` — single-album detail. Resolves `album` from `view.selectedAlbumKey` via `lib.albumByKey(key)` (so renames/additions reflect instantly without a re-fetch). Hero composes a 220×220 square cover (`hero-cover`) + back arrow + title + artist + year + track-count + total duration; below the hero, a "Play all" circle and the track list. Reuses `TrackRow` so all standard interactions (play, fav, mix, queue, rename, delete) keep working.
+The `view` store still drives "current page + back stack", same as desktop. `SUBVIEW_PARENT` in `App.vue` maps `playlist` / `album` / `artist` to the `library` tab (Spotify-style "drill from your library"), and `mix` to the `download` tab.
 
-**`src/components/`** (reusable UI):
-- `Sidebar.vue` — brand (textlogo.png) + Search / Settings nav + "Ta bibliothèque" with Favoris, an **Albums** entry (only rendered when `library.albums.length > 0` so cold-start users don't see an empty section), and user playlists. Each playlist gets a name-hashed gradient cover when no track thumbnail is available. Drop targets: Favoris and every user playlist accept dragged tracks (stream rows from search/discover/mix included; they're silently added to the library with `liked:false` first to get a stable id). Pulsing badge surfaces `library.ytdlpStatus.active + queued` when yt-dlp is busy.
-- `Player.vue` — sticky bottom bar. Audio elements (`audioRef`, `audio2Ref` for crossfade) bound to player store on mount. All transport controls + like/lyrics/crossfade/queue/mute/volume.
-- `TrackRow.vue` — the most reused component. Composes track-num (with eq SVG when current) + thumb + meta + persistent offline indicator (✓ when downloaded; on hover it morphs into × to call `lib.removeDownload`) + duration + hover-only actions: heart, mix, +playlist, **rename** (✏️ via `promptModal` → `lib.renameTrack`), ⬇offline-download, **add-to-queue** (`player.addToQueue`), delete/remove. `draggable="true"` — `handleDragStart` writes both `wax/track` (rich JSON) and `text/plain` (track id) for compatibility with `useDragReorder`. **In-artist-view dedup**: when `view.name === 'artist'` and the row's parsed artist normalizes to the active `view.selectedArtist`, the row swaps to a cleaner display — `displayTitle` shows the parsed song name alone (no `Artist - ` prefix) and the redundant `track-sub` artist link is hidden via `v-if="!isInArtistView"`. Other views keep the original full title + clickable artist link.
-- `NowPlaying.vue` — right column (380 px). Holds the current cover, title/artist, like/lyrics actions, and the inline queue. The Player's queue button toggles the column via `player.nowPlayingOpen`; when collapsed, `.app.np-collapsed` hides the column and recenters the player. The old slide-in `QueuePanel.vue` was deleted in v1.23 — the right column now owns both responsibilities.
-- `ModalRoot.vue` — single mounted modal that renders different variants (`confirm`, `prompt`, `lyrics`, `component`) based on `modalState.variant`. Imperatively driven via `lib/modal.js`.
-- `Toast.vue` — single toast bottom-center, driven by `lib/toast.js`.
-- `BulkAddBody.vue`, `AddToPlaylistBody.vue` — modal bodies.
-- `SettingsBody.vue` — Settings modal content, organized as **3 tabs** (`activeTab` ref, default `'general'`): **General** (Crossfade toggle + duration slider, Language picker — `prefs.setLocale(id)` over `SUPPORTED_LOCALES`, Backup — Export / Import via `@/lib/backup` with an inline progress bar, Library cleanup — orphan count + "Clean" → `lib.purgeOrphans`, **Reset** danger zone — `wipeAllData()` with a strongly-worded confirm modal showing the exact counts to be deleted), **Theme** (theme picker — two sub-grids, dark and light, `prefs.setTheme(id)`), **Equalizer** (3-band ±12 dB sliders → `setEq` from `useVisualizer` + persisted in `prefs.eq`). All labels in the modal use `t()` so the tabs and section content re-render in the chosen language. The import and reset flows both reload the page on success so every store re-fetches against the freshly written state.
-- `settings.js` — settings modal opener (custom because it has interactive state).
+**`src/views/`** — Status of each view in the mobile world:
+- `ViewHome.vue` — **New, mobile-only**. Greeting ("Bonjour" / "Bonsoir" by hour), a 2-col "récemment écoutés" pill grid (from the player queue, falls back to favorites), and a 2-col "Pour toi" cover grid backed by the `discover` store. Refresh button re-rolls the seed.
+- `ViewSearch.vue` — **Rewritten mobile**. `van-search` + custom track cells. Tap row → stream, heart icon → add/remove from favorites. URL-paste flow (preview / playlist enumeration / download to library) is NOT ported yet — the desktop search store still supports it but the mobile view ignores it.
+- `ViewLibrary.vue` — **Unified Spotify-style bib**. Sticky `van-search` + horizontal chips (`Tout` / `Playlists` / `Albums` / `Artistes` / `Titres`). `Tout` shows playlists + albums + artists as cards (cover/photo + name + meta); `Titres` switches to the favorites track list with action-sheet on the `…` button. Tapping a card pushes the corresponding detail view via `view.switchTo(...)`. The `Playlists` chip surfaces a "Nouvelle playlist" row that calls the legacy `playlists.create()` (which opens its `promptModal` via ModalRoot).
+- `ViewPlaylist.vue` — **Rewritten mobile**. `<MobileHero>` with the first track's cover + gradient fallback + "Playlist" eyebrow + `+` and `…` action buttons. Action sheet on `…` exposes rename / add tracks / download all / delete. Per-row action sheet on each track's `…`.
+- `ViewAlbum.vue` — **Rewritten mobile**. `<MobileHero>` with the Deezer album cover. Tracklist uses the same Deezer canonical order + library-match logic as the desktop view, with `MobileTrackCell` in `index` variant: matched tracks play immediately, unmatched ones resolve to YouTube on first tap (loading spinner on the index). "Sauvegarder comme playlist" lives in the `…` action sheet — kept the inline implementation rather than depending on legacy code.
+- `ViewArtist.vue` — **Rewritten mobile**. `<MobileHero shape="circle">` with the scraped artist photo (via `apiUrl('/api/artist-photo/...')`). Two sections: "Dans ta bibliothèque" and "Recommandé" (filtered to tracks that cluster under the same `normalizeArtistKey`). "Tout aimer" button on the recos section batches `lib.add({silent:true})`.
+- `ViewMix.vue` — **Rewritten mobile**. `<MobileHero>` with the first track's cover, "Sauvegarder" pill button in the actions slot. Track list uses `thumb` variant of `MobileTrackCell`.
+- `ViewSettings.vue` — **Mobile-only**. `van-cell-group` cards for Bibliothèque counts, version, backend URL, and a "Tout effacer" danger row that confirms via `showConfirmDialog`. Theme picker / language / EQ / backup / playlists management are NOT ported yet.
+- `ViewAlbums.vue` — **Removed from routing**. The unified `ViewLibrary` handles the album grid via the `Albums` chip; the legacy view file remains on disk but is no longer imported.
 
-**`src/stores/`** (Pinia):
-- `library.js` — `tracks`, `loading`, `search`, `libraryDownloads` (Map), `ytdlpStatus: {active, queued}` (driven by SSE — server enriches every progress event with the current semaphore counters). Actions: `fetch`, `add(r, opts)` (opts.liked default true; opts.silent skips the toast), `remove`, `removeByYtId`, `deleteTrack`, `toggleFav` (toggles `liked` flag, doesn't delete), `_setLiked` (PATCH /api/library/:id), `reorder`, `renameTrack(id, title)` (PATCH /api/library/:id with title; optimistic + rollback on error), `removeDownload(id)` (DELETE /api/library/:id/download — strips `file` but keeps the metadata row), `purgeOrphans` (deletes every track with `liked:false` not referenced by any playlist), `downloadTrack`, `_listenLibraryProgress` (SSE). Getters: `favorites` (tracks where `liked !== false`), `filtered` (favorites + search filter), `isInLibrary(track)`, `isFavorite(track)`, `tracksByArtist(name)` (every library track whose `parseTrackTitle().artist` normalizes to the same key as `name` — used by ViewArtist), `albums` (groups tracks by `albumReleaseGroupId` or fallback `normalizedArtist::albumName`; sorts by releaseDate desc then alpha; tracks with no `album` field are excluded), `albumByKey(key)` (the inverse — every track belonging to a given album key). **All mutations are local-first** (no full re-fetch round-trip after add/remove).
-- `playlists.js` — `items`. Actions: `fetch`, `dropTrackLocally` (called by library.remove), `create`, `remove`, `rename`, `addTrack`, `addTracksBulk`, `removeTrack`, `reorder`.
-- `player.js` — `queue`, `index`, `playing`, `loading` (true between `loadAndPlay()` and the first audio `playing` event), `shuffle`, `repeat`, `volume`, `currentTime`, `duration`, `audioEl`, `audio2El`. Actions: `bindAudio` (wires `play`/`pause`/`playing`/`waiting`/`error`/`timeupdate`/`ended` events; on `error` shows a toast and auto-skips after 3 s if there's another track in the queue), `playFromList`, `loadAndPlay` (also prefetches the next streamable track in queue — look-ahead), `togglePlay`, `next`, `prev`, `stop`, `seekToPct`, `setVolume`, `addToQueue(trackId)` (inserts at `index+1`, blocks duplicates with a toast), MediaSession setup, persistence (save/restore to localStorage), crossfade orchestration.
-- `prefs.js` — `volume`, `crossfadeEnabled`, `crossfadeDuration`, `themeId` (one of `THEME_IDS` from `@/lib/themes`), `locale` (one of `SUPPORTED_LOCALES` from `@/lib/i18n` — `'en'` default, `'fr'`), `eq: {bass, mid, treble}`. Persisted via `ytmp3:prefs` localStorage key. `setTheme(id)` swaps the `theme-<id>` class on `documentElement` (also toggles the shared `light` class for light-kind themes), saves prefs, and dispatches a `wax:theme-changed` window event so `App.vue` can re-derive the accent (the hero band's `--accent-bg` lightness depends on theme kind). `setLocale(loc)` calls into `i18n.setLocale()` (mutates the reactive `i18nState.locale`), saves prefs — every call site that uses `t()` re-renders. `load()` migrates any pre-existing `theme: 'light' | 'dark'` to the new `themeId` (legacy `light` → `cream`, since the original crisp-white light palette was too harsh). Stale `accentMode` / `accentColor` keys from older saved prefs are ignored — the accent system was retired in favor of theme-baked accents.
-- `accent.js` — theme-driven accent. Single action `applyThemeAccent()` reads `prefs.themeId`, resolves the theme via `themeById`, and pushes the third `swatch` entry (the theme's accent hex) through `hexToHsl` + the internal `applyHsl` (sets `--accent`, `--accent-bright`, `--accent-dark`, `--accent-soft`, `--accent-bg`, `--accent-glow` on `documentElement.style`). The hero band's `--accent-bg` is theme-kind aware (L=86% pastel for light, L=22% saturated for dark). No more cover-derived accent or user-picked palette — the previous `extractDominantColor` / `applyUserAccent` / `adaptToTrack` / `ACCENT_PRESETS` are all gone.
-- `view.js` — `name` ('download' | 'library' | 'playlist' | 'mix' | 'artist' | 'albums' | 'album'), `selectedPlaylistId`, `selectedArtist`, `selectedAlbumKey`, `history` (capped to 50). Actions: `switchTo(name, arg)` (pushes the current `{name, arg}` onto `history` then routes), `back()` (pops the history stack, defaults to `library` when empty). Getter `canGoBack` exposed for affordance UI but the back action is safe to call unconditionally. Internal `_goto(name, arg, pushHistory)` skips duplicate-consecutive entries to keep the stack clean across re-clicks of the same artist/album link.
-- `mix.js` — `tempMix` (the 50-track YouTube Mix in flight). Actions: `streamFrom` (no bulk prefetch; relies on player look-ahead), `save` (creates playlist + adds metadata-only library entries with `liked: false` + bulk-attaches them — never downloads), `close`, `playAll`.
-- `search.js` — `query`, `results`, `playlistSource`, `playlistSelection`, `preview`. Drives `ViewSearch.vue`.
-- `streams.js` — `entries` Map<id, virtualTrack> for ephemeral streamed tracks (those not in library). `prefetched` Set + `prefetch(videoId)` action.
-- `discover.js` — `tracks`, `loading`, `seedTrack`. Action `refresh()` picks a random favorite (or library track) → calls `/api/mix/:ytId`. Falls back to `/api/trending` (YouTube's `RDCLAK5uy_ly6s4irLuZAcjEDwJmqcA_UtSipMyGgbQ` "Today's Top Hits" playlist) when the library is empty. Filters out already-favorited entries.
-- `jobs.js` — `pending` Map<id, job> for download jobs in flight. `startDownload(url, hint, onReady)` + SSE listener.
+**`src/components/`** — Mobile additions vs legacy:
+- `MobileHero.vue` — **New**. Reusable detail-page hero: blurred backdrop derived from the cover, eyebrow + title + subtitle stacked, square or circular cover, right-aligned `actions` slot (action-sheet trigger, etc.), and a round play FAB. Used by ViewPlaylist / ViewAlbum / ViewArtist / ViewMix.
+- `MobileTrackCell.vue` — **New**. Reusable list row with `thumb` or `index` variant (number column for albums/playlists, cover thumbnail for search/mix). Emits `play` / `like` / `more` so the parent can wire the right action sheet.
+- `MobilePlayer.vue` — **New**. Hosts both `<audio>` elements (so the legacy `player` store's `bindAudio()` still works) + the mini player + the fullscreen `van-popup` with cover, seek (`van-slider`), prev/next, like, lyrics, queue.
+- `Player.vue`, `NowPlaying.vue`, `BigPicture.vue`, `Sidebar.vue` — **Legacy desktop, no longer imported by App.vue**. Kept on disk for reference. Safe to delete later.
+- `TrackRow.vue`, `TrackListHeader.vue`, `JobItem.vue`, `QueueItem.vue`, `DiscoverGrid.vue`, `Toast.vue`, `SettingsBody.vue` — legacy, no longer referenced. Kept for reference.
+- `ModalRoot.vue`, `BulkAddBody.vue`, `AddToPlaylistBody.vue` — **Still used**. `ModalRoot` is mounted by App.vue because the legacy imperative `promptModal` / `openComponentModal` flows (playlist create/rename, bulk-add to playlist) are still wired through it. They render the desktop look-and-feel inside a centered overlay — works on mobile but doesn't match Vant's bottom-sheet aesthetic; consider re-skinning if it bothers you.
 
 **`src/composables/`**:
-- `useVisualizer.js` — Web Audio API graph: `audio → bass (lowshelf 100Hz) → mid (peaking 1kHz Q=1) → treble (highshelf 3kHz) → analyser → destination`. AnalyserNode FFT 64, smoothingTimeConstant 0.55. On `player.playing` → RAF loop drives all `.eq.is-playing rect` elements via inline `transform: scaleY(...)`. Sensitivity: `minS 0.08`, `gain 1.4`, sqrt curve via `Math.pow(v, 0.55)`. Exports `setEq(bass, mid, treble)` to update the BiquadFilter gains live (called by `SettingsBody.vue`).
-- `useLyrics.js` — `showLyrics` opens a lyrics modal, fetches from `/api/lyrics?artist=&title=`. Uses `guessArtistAndTitle(track)` to split YouTube titles like "Artist - Song (Slowed)".
-- `useDragReorder.js` — HTML5 DnD helpers, used by track rows in library/playlist views. Sets `text/plain` to the track id; `Sidebar.vue` uses that as a fallback when `wax/track` is missing (so a row dragged with reorder semantics still works as a sidebar drop).
+- `useActionSheet.js` — **New**. Tiny Promise-based wrapper around `<van-action-sheet>` (Vant 4 doesn't ship an imperative helper for ActionSheet). Returns `{ visible, actions, open, onSelect, onCancel }`; the caller drops `<van-action-sheet v-model:show="sheet.visible.value" :actions="sheet.actions.value" @select="sheet.onSelect" @cancel="sheet.onCancel" />` at the bottom of its template, and any control awaits `sheet.open([{name:'…'},…])` to get back `{ index, name }`.
+- `useVisualizer.js`, `useLyrics.js`, `useDragReorder.js` — legacy, still on disk. `useLyrics` is wired into the fullscreen `MobilePlayer` comment-icon button.
 
-**`src/lib/`**:
-- `api.js` — fetch wrapper, throws on non-2xx with the server's `{error}` message.
-- `modal.js` — imperative modal bus (`reactive` state). Functions: `confirmModal`, `promptModal`, `openComponentModal`, `openLyricsModal`, `closeModal`, `confirmFromModal`, `setModalCloseHandler` (cross-module write to `modalState.onCancel`). **i18n convention**: every helper resets `confirmLabel` / `cancelLabel` to `''` on open and lets `ModalRoot.vue` resolve them via `modalState.X || t('common.X')` at render time. Don't put hardcoded labels (`'Annuler'`, `'OK'`, etc.) into `modalState` defaults — they'd freeze in whichever language was active at module load and override the per-render i18n fallback.
-- `toast.js` — imperative toast bus (`showToast(msg, kind)`).
-- `format.js` — `fmtDuration`, `debounce`, `gradientFromString` (hash-based color, fades to `var(--main)`), `eqHtml`, `YT_REGEX`, `isYoutubeUrl`, `isPlaylistUrl`, `isStreamId`. `parseTrackTitle(track)` returns `{ artist, song }` by stripping common YouTube cruft (`(Official Video)`, `[HD]`, `(Slowed)`, `(8D)`, etc. — see `TITLE_CRUFT` regex) and splitting on `-` / `–` / `—` / `|`; falls back to `track.uploader` for the artist when no separator is found. `normalizeArtistKey(name)` lowercases + alphanumeric-only + strips trailing `vevo` / `official` / `music` / `tv` / `hd` / `records` / `- topic` so different YouTube channels for the same artist cluster under one key (used by `lib.tracksByArtist`). `onThumbError` swaps the `<img>`'s `src` to `/placeholder-cover.svg` (a neutral grey vinyl placeholder under `public/`) on failure; the loop guard checks `src.endsWith('placeholder-cover.svg')` rather than a sticky dataset flag so long-lived `<img>` elements (like the player thumb that gets a new `src` on every track change) keep behaving correctly. `onThumbLoad` is now a no-op kept for template-binding backward compat — server-side cover endpoint handles all variant fallback and grey-placeholder rejection.
-- `icons.js` — all SVG icon constants. Includes `ICON_EDIT` (rename), `ICON_QUEUE_ADD`, `ICON_CLOCK` (recent), `ICON_CHART` (top).
-- `themes.js` — registry of theme presets. Each entry: `{id, labelKey, kind: 'dark'|'light', swatch: [bg, card, accent]}`. 22 themes total — **14 dark** (`dark`, `ardoise`, `midnight`, `vinyle`, `mocha`, `bordeaux`, `forest`, `studio`, `dracula`, `nord`, `tokyo-night`, `rose-pine`, `gruvbox`, `neon`) and **8 light** (`paper`, `lin`, `cream`, `sable`, `peche`, `mint`, `glacier`, `lavende`). `labelKey` is an i18n key (`theme.<id>`) — the picker resolves it through `t()` so theme names follow the active locale. The CSS palette for each lives in `style.css` under `html.theme-<id>` blocks. Each block also overrides `--modal-bg` / `--pill-bg` so modals fit the theme instead of falling back to the neutral grey defaults. `swatch` drives the preview pill in the Settings theme picker (`darkThemes()` / `lightThemes()` helpers split the list for the two sub-grids in `SettingsBody.vue`).
-- `backup.js` — full app export / import / wipe. `exportToFile({onProgress})` GETs `/api/export` (streaming the response via `Response.body.getReader()` to track bytes received vs `Content-Length`), merges with `localStorage` (`ytmp3:prefs` + `wax:player`), and triggers a JSON download (`wax-backup-YYYYMMDD.json`). `readImportFile(file)` parses + validates the JSON. `importFromData(data, {onProgress})` POSTs library + playlists to `/api/import` via **`XMLHttpRequest`** (not fetch — XHR's `upload.onprogress` is the only way to track upload progress without manually wrapping the body in a tracking ReadableStream). Server overwrites both files atomically; on success restores localStorage prefs + player state. Both functions accept an optional `onProgress(fraction)` callback (0..1) that the Settings UI feeds into a progress bar under the Export/Import buttons. `wipeAllData()` POSTs `/api/wipe` (empties library + playlists + deletes all offline MP3s server-side) and clears the `wax:player` localStorage key — UI prefs (theme, locale, EQ) are kept. **Audio MP3s aren't included in the export** — the export bundles metadata only. Tracks keep their `file` paths on import; if the corresponding MP3 isn't present on the new machine, the player falls back to streaming until the user re-downloads. The Settings UI (General tab → "Backup" / "Reset" sections) reloads after a successful import or wipe so every store re-fetches against the freshly written state.
-- `i18n.js` — tiny reactive i18n. Exports `t(key, params)`, `setLocale(loc)`, `i18nState` (reactive), `SUPPORTED_LOCALES` (`[{id: 'en', label: 'English'}, {id: 'fr', label: 'Français'}]`), `DEFAULT_LOCALE` (`'en'`). Catalogs are flat key → string-or-function maps; functions take a single arg (number for plurals, object for multiple params). Every component that uses `t()` inside its render function re-renders on locale change because `t()` reads `i18nState.locale`. The `<html lang="…">` attribute mirrors the active locale via a `watchEffect`. **Every user-visible string lives here** — when adding new strings, add the key to both `en` and `fr` catalogs, then call `t('your.key')` in the component. The English catalog is the source of truth for missing-key fallback.
+**`src/stores/`** — Pinia stores all preserved from the desktop project, nothing renamed. The shared model means a port can swap views in place without touching state:
+- `library.js`, `playlists.js`, `player.js`, `prefs.js`, `view.js`, `mix.js`, `search.js`, `streams.js`, `discover.js`, `jobs.js`, `accent.js`.
+- `accent.js` is unused in the mobile shell (mobile.css has a hardcoded palette) but kept around in case the theme picker is ported.
 
-**`src/styles/style.css`** — single global stylesheet, ~1700 lines. CSS variables in `:root`:
-- Layout: `--main`, `--card`, `--card-hover`, `--text`, `--text-soft`, `--text-muted`, `--border`
-- Accent (dynamic, set by `applyHsl`): `--accent`, `--accent-bright`, `--accent-dark`, `--accent-soft`, `--accent-bg`, `--accent-glow`
-- Typography: `--font-body` (Inter), `--font-display` (Bricolage Grotesque)
-- Transitions: `--t-accent` (0.8s ease for color shifts)
+**`src/lib/`** — Preserved + extended:
+- `api.js` — now exports `apiUrl(path)` alongside `api(path, opts)`. See the "API base URL — Capacitor vs dev" section above.
+- `format.js`, `icons.js`, `themes.js`, `i18n.js`, `modal.js`, `toast.js`, `backup.js` — unchanged from desktop. `backup.js` was sweeped to use `apiUrl()` for `/api/export`, `/api/import`, `/api/wipe`.
 
-The grid template `.app` is `280px 1fr` columns × `1fr auto` rows. Below 880px, sidebar moves under main as a horizontal scroller.
-
-Drag region for window movement: `-webkit-app-region: drag` on `.brand` and `.sidebar-section.sidebar-top`. Buttons inside opt out via `no-drag`. `padding-top: 28px` on sidebar-top reserves space for macOS traffic lights (titleBarStyle: hiddenInset).
+**`src/styles/`**:
+- `mobile.css` — **New**. CSS-vars palette (single "Midnight" dark theme for now), Vant `--van-*` overrides, layout primitives (`.app-shell`, `.view-scroll`, `.tab-bar`, `.mini-player`), and the `.track-cell` base used by Search + Library mobile views.
+- `style.css` — **Legacy desktop, no longer imported**. ~1700 lines. Kept on disk for reference while porting the remaining views (a lot of details like the `.eq` visualizer SVG transforms, hero band gradients, theme blocks for the 22-theme picker live there).
 
 ## Key flows (data flow tracing)
 
-### Search → stream a track
-1. User types in `#url-input` → `ViewSearch.vue` calls `search.handleInput()` (debounced 500ms)
-2. Detects URL vs query. For query: `api('/api/search?q=...')` → results in `search.results`.
-3. Each result displays: ▶ stream button + ❤ add-to-favoris + (preview button removed). Hovering the stream button calls `streams.prefetch(r.id)` which POSTs `/api/stream/:id/prefetch` (warms the URL cache).
-4. User clicks ▶ → `streams.streamSearchResult(r, btn)`:
-   - Generates a virtual `stream-<ytId>` track
-   - Adds to `streams.entries` Map + sets `player.queue` = [streamId]
-   - `player.loadAndPlay()` sets `audio.src = '/api/stream/:ytId'`
-5. Server `/api/stream/:videoId` calls `getStreamUrl(videoId)` (yt-dlp -g, cached) → 302 proxy of YouTube CDN m4a stream.
+### Search → stream a track (mobile)
+1. User types in `van-search` → `ViewSearch.onSearchInput` updates `search.inputValue` and calls the debounced `makeSearchHandler` (500 ms).
+2. `search.runSearch` decides URL vs free-text. For text: `api('/api/search?q=...')` → `search.results`.
+3. Tap a result → `streams.streamSearchResult(r, null, player)` registers a virtual `stream-<ytId>` track, sets `player.queue = [streamId]`, and the player loads `apiUrl('/api/stream/:ytId')`.
+4. Audio element is in `MobilePlayer.vue`, bound to the `player` store via `player.bindAudio(audioRef, audio2Ref)` on mount.
 
-### Search → add to library
-1. User clicks ❤ on a search result → `library.add(r)` posts `/api/library/add` with `{ ytId, title, uploader, duration, thumbnail, url }`.
-2. Server creates `track.file = null` entry in `library.json`.
-3. Frontend mutates `lib.tracks.unshift(data.track)` locally — no full re-fetch.
-4. Track now playable (will stream via `/api/stream/:ytId` on play since `file` is null).
+### Library track → offline (unchanged from desktop)
+Same `lib.downloadTrack(trackId)` → POST `/api/library/:id/download` → SSE `/api/jobs/:jobId/progress` → local mutation on `lib.findById(trackId).file`. The UI affordance to trigger it is NOT yet wired into the mobile Library view (`ViewLibrary.vue` has no download button) — pending port.
 
-### Library track → offline
-1. User hovers a track → ⬇ button visible in actions
-2. Click → `lib.downloadTrack(trackId)` POSTs `/api/library/:trackId/download` → server starts a yt-dlp download job, returns jobId
-3. Frontend opens SSE on `/api/jobs/:jobId/progress`
-4. Each `progress` event updates `lib.libraryDownloads.get(trackId).progress` → `TrackRow.vue` re-renders the persistent indicator with circular progress
-5. On `ready` event: `lib.findById(trackId).file = '/audio/:trackId.mp3'` (local mutation, no fetch). Indicator becomes ✓.
+## Conventions / style (mobile-specific)
 
-### Mix from a track
-1. ✨ button in `TrackRow.vue` → `mix.streamFrom(track, callback)` calls `/api/mix/:ytId`
-2. Server runs `yt-dlp --flat-playlist <RD${videoId} url>` → returns up to 50 video metadata.
-3. Frontend creates virtual stream tracks for all 50, populates `mix.tempMix.queueIds`, switches view to `mix`.
-4. Prefetches all 50 stream URLs in parallel (server semaphore = 3).
-5. User can play any track (clicks row) or "Sauvegarder" → cascades downloads + creates playlist.
-
-### Theme-driven accent
-1. On app mount: `prefs.load()` → `accent.applyThemeAccent()`.
-2. On theme switch: `prefs.setTheme(id)` saves and dispatches `wax:theme-changed` → `App.vue` listener calls `accent.applyThemeAccent()`.
-3. `applyThemeAccent` reads `theme.swatch[2]` (the canonical accent hex), runs `hexToHsl`, then `applyHsl` writes the six accent CSS vars on `documentElement.style`.
-4. `--accent-bg` is theme-kind aware (L=86% pastel in light themes, L=22% saturated band in dark).
-5. `--t-accent` transition (0.8s) keeps the swap feeling smooth.
-
-### Découverte
-1. App mount: after `library.fetch()`, calls `discover.refresh()`.
-2. If favoris/library has at least one ytId, picks a random one → `GET /api/mix/:ytId` → up to 30 tracks (filtered to exclude favorites).
-3. Else (cold start), `GET /api/trending` → YouTube's auto-curated "Today's Top Hits" playlist.
-4. Each result is registered as a stream track in the streams store and exposed via the `discover.tracks` array.
-5. `<DiscoverGrid>` renders them as a grid of cards (cover + title + uploader). Click → `player.playFromList(track.id, queueIds)`. The grid is hidden whenever the search input is non-empty.
-6. The refresh button (↻) re-rolls the seed.
-
-## Conventions / style
-
-- **Vue**: Composition API + `<script setup>`. No Options API.
-- **Stores**: Pinia, defined with `defineStore('name', { state, getters, actions })`. Action names: `add`, `remove`, `fetch`, `reorder`, `toggleFav` — short imperative verbs. `_listenSomethingProgress` prefix for SSE event handlers.
-- **State mutations**: prefer **local-first** (mutate the Pinia state directly after a successful API call) over re-fetch. Only refetch when truly stale.
-- **Imports**: use `@/` alias for `src/`. ES modules everywhere (no CommonJS in `src/`, only in `electron/*.cjs` and `server.js`).
-- **CSS**: avoid scoped styles unless really necessary. The single global stylesheet covers everything via class selectors. Use CSS vars for theming.
-- **Icons**: SVG strings in `lib/icons.js`. Inline via `v-html` in templates.
-- **Modals**: imperative API via `lib/modal.js`. Don't try to mount modals declaratively — `ModalRoot.vue` handles everything. For interactive modal content (e.g. bulk-add with selection state), pass a Vue component as `componentProps` to `openComponentModal`.
-- **Toasts**: `showToast(msg, kind?)` — `kind` is `'success' | 'error' | undefined`.
-- **Emoji in code**: avoid in source files unless the user explicitly asks (per repo norm).
-- **i18n is mandatory for user-visible strings** — call `t('namespace.key')`, never inline literals. Add the key to both `en` and `fr` catalogs in `src/lib/i18n.js`. Code, comments, console logs stay in English. **Server-side error messages live in English** (`{error: 'Lyrics not found'}`, `'trackId required'`, etc.) — they ride out of the API verbatim and the client wraps them via `t('common.error_prefix', e.message)`. Don't translate them server-side; the convention is "error payloads are technical and English-only, the client adds the localized prefix".
-- **Variable shadowing watch-out**: `t` is the i18n function, but `t` is also a popular loop/track variable name historically. In stores and templates that import `i18n`, prefer `track` / `tr` for track variables. Inside `v-for="t in …"` Vue treats the loop variable as local scope, so calling i18n's `t()` *outside* the v-for in the same template is fine — but inside the v-for body it would resolve to the loop variable.
-
-## Common tasks
-
-### Add a new view
-1. Create `src/views/ViewFoo.vue`
-2. Register it in `App.vue` (`<ViewFoo v-show="currentView === 'foo'" />`)
-3. Add a sidebar entry in `Sidebar.vue` (or wherever the user navigates from)
-4. Update `view.switchTo` if needed (no-op — store accepts any string for `name`)
-
-### Add a backend endpoint
-1. Edit `server.js`. Add `app.METHOD('/api/...', handler)`.
-2. The Vite dev proxy already covers `/api/*` so no client config needed.
-3. For long-running jobs, use the existing SSE pattern (see `/api/jobs/:id/progress`).
-
-### Add a Pinia store
-1. Create `src/stores/foo.js`
-2. `import { defineStore } from 'pinia'`
-3. `export const useFooStore = defineStore('foo', { state, getters, actions })`
-4. Use in components: `const foo = useFooStore()` — props automatically reactive.
-
-### Debug a runtime issue
-1. In dev, **DevTools is the entry point**: View → Toggle Developer Tools in Electron menu, or `Cmd+Option+I`.
-2. Network tab shows `/api/*` calls.
-3. Console shows Vue + Vite errors.
-4. The `vue-devtools` extension can be enabled in Electron via `electron-devtools-installer` (not currently set up).
-
-## Fragile / gotchas
-
-- **`@distube/ytdl-core` is currently REMOVED** from the stream path. We tried it (10× faster than yt-dlp -g) but it broke when YouTube changed their format selection ("Failed to find any playable formats" / "no playable format"). yt-dlp is the only path now. If you re-add it, wrap in try/catch with quick timeout fallback.
-- **yt-dlp uses `--extractor-args "youtube:player_client=android,web"`** plus `-f 'bestaudio[ext=m4a]/bestaudio/best'`. android first because it's ~2× faster (no SABR/sig dance) and rock-solid; trade-off is it only returns the combined 360p mp4 (itag 18) which makes Chromium's ffmpeg emit `Unsupported pixel format: -1` for every track. We tried web-first (v1.24.2) and ios,web,android (v1.24.3) to silence the demuxer noise — both made playback noticeably less reliable (sig challenges on long sessions, more "Impossible de lire" errors). v1.24.4 reverts to android,web and silences the noise at the Electron layer instead via `app.commandLine.appendSwitch('disable-logging')` in `electron/main.cjs`. There's also a 25 s SIGKILL safety net on the spawn so a wedged yt-dlp can't hold a semaphore slot forever.
-- **Mix endpoint URL**: must be `https://www.youtube.com/watch?v=<id>&list=RD<id>` (the watch-page form). The `playlist?list=RD<id>` form returns "This playlist type is unviewable" since mid-2026.
-- **Trending playlist**: hardcoded to `RDCLAK5uy_ly6s4irLuZAcjEDwJmqcA_UtSipMyGgbQ` (YouTube's "Today's Top Hits" radio). Stable URL but contents auto-rotate.
-- **yt-dlp concurrency**: limited to 3 simultaneous processes via `runYtDlp` semaphore. Prefixed prefetches (10 results) queue silently — no UI feedback for the queue position. The Mix `streamFrom` no longer bulk-prefetches all 50 tracks; only the player's `loadAndPlay` look-ahead prefetches the next track in queue.
-- **`createMediaElementSource` is one-shot**: once called on the audio element, the audio MUST flow through the AudioContext destination. Don't call it twice.
-- **Crossfade with two audio elements**: `audio` plays the new track, `audio2` plays the outgoing one. Volumes ramp via `requestAnimationFrame` over 3 s. Make sure not to break this if you touch `Player.vue` or `player.js`.
-- **MediaSession API is browser-version-sensitive**: gracefully degrades if not supported, but always test on Electron's bundled Chromium.
-- **Drag-reorder uses HTML5 DnD**: reordering inside long lists can have flicker if the data is mutated mid-drag. Current implementation calls the API non-blockingly and reverts on error.
-- **Modal cancel callback**: when a modal is closed via overlay/Escape, `modalState.onCancel` fires. When a modal is confirmed, `confirmFromModal` clears `onCancel` first to avoid double-resolve. Be careful if you add new modal patterns.
-- **Sidebar drag region**: clickable elements inside the drag area need `-webkit-app-region: no-drag` or they swallow drag and become unclickable.
-- **`liked` flag semantic**: undefined or `true` → favori; only `false` excludes from Favoris. Backward compat with rows added before the field existed.
-- **Library mutation on download "ready"**: previously did a full `lib.fetch()` after each download. Now mutates `track.file = '/audio/<id>.mp3'` locally on the existing entry. Don't add another `lib.fetch()` here unless you want to nuke the local-first optimization.
-- **Search → TrackRow**: search results are converted to virtual `stream-<ytId>` tracks registered in the streams store, then rendered through TrackRow. Same component path as mix/playlist tracks. Spinner / heart / mix / look-ahead all reused.
-- **EQ filter chain is wired into the source path**: `useVisualizer.init()` builds `source → bass → mid → treble → analyser → destination` once. If you ever bypass the analyser you'll also bypass the EQ — keep them on the same chain.
-- **Drop targets in Sidebar**: `parseDrop(event)` reads `wax/track` (rich JSON) first, then falls back to `text/plain` (track id, set by `useDragReorder`). Don't strip either or sidebar drops break for one drag origin or the other. Stream rows are silently added to the library with `liked:false` before being attached to a playlist (so playlists always reference real library ids).
-- **Theme classes live on `documentElement`**: `prefs.applyTheme()` adds `theme-<id>` plus the shared `light` class for light-kind themes. CSS is keyed on `html.theme-<id>` (per-theme palette deltas) and `html.light .selector` (light-family overrides — modal overlay, lyrics panel, `.icon-btn.round`, `.track.is-playing` highlight, hero glow). Don't move the class to `<body>` without rewriting every override. When adding a theme: register in `lib/themes.js`, add the `html.theme-<id>` block in `style.css`, done — no JS changes needed.
-- **Hero `--accent-bg` is theme-aware**: `applyHsl` reads `documentElement.classList.contains('light')` and picks L=86%/low-saturation for light themes vs L=22%/medium-saturation for dark. The `wax:theme-changed` event (dispatched by `prefs.setTheme`) is listened to in `App.vue` to re-run `accent.applyThemeAccent()`, keeping the band in sync after a theme switch.
-- **Thumbnail fallback chain**: server upgrades stored thumbs to `maxresdefault` on read. Templates that render thumbs MUST wire `@error="onThumbError"` AND `@load="onThumbLoad"` — the load handler is what catches YouTube's silent 120×90 grey placeholder (HTTP 200, no `onerror`).
-- **`addToQueue` insert position**: inserts at `index+1` so the next-up slot is predictable. If the queue is empty it inserts at 0 — which means hitting "Ajouter à la queue" with no track playing primes the queue but does NOT auto-start playback.
-- **Stream error auto-skip**: the audio `error` listener waits 3 s before calling `next()`. The delay exists so a transient blip doesn't skip a track the user wanted; if you shorten it, expect noisier behavior on flaky networks.
-
-## Migration history (context for understanding the codebase)
-
-The project went through **two major refactors**:
-
-1. **Vanilla JS → ES modules** (early): single 2400-line `app.js` split into 19 modules under `public/js/`. Snapshot preserved in `legacy-public/` (gitignored).
-2. **ES modules → Vue 3 + Vite + Electron** (later): full rewrite of the frontend to SFCs + Pinia, wrapped in Electron for `.dmg`/`.exe` distribution. Backend (`server.js`) preserved verbatim with three additive `WAX_*` env vars for prod packaging.
-
-`MIGRATION.md` documents the module-by-module mapping from legacy to Vue.
+- **Vant**: components are auto-imported via `unplugin-vue-components` + `@vant/auto-import-resolver` (see `vite.config.js`). You can use `<van-button>`, `<van-cell>`, etc. directly in templates without imports. For imperative APIs (`showToast`, `showConfirmDialog`, `showNotify`) and the type for setup state, import from `'vant'` explicitly. The base CSS bundle `vant/lib/index.css` is loaded once in `main.js`.
+- **Safe areas**: every fixed element honors `env(safe-area-inset-top/bottom)` via the `--safe-top` / `--safe-bottom` CSS vars defined in `mobile.css`. The nav bar, tab bar, and mini player are the three callers — if you add another fixed element, pad it the same way.
+- **Single theme for now**: only "Midnight" (dark). The desktop's 22-theme picker is not ported. When/if it lands, palette vars from `mobile.css` move into per-theme `html.theme-<id>` blocks like the desktop, and the Vant `--van-*` overrides re-derive from them.
+- **i18n**: legacy `lib/i18n.js` is still on disk but the mobile views use raw French strings inline for now. To bring i18n back, call `t('...')` and add to both `en` / `fr` catalogs — same convention as desktop.
+- **Composition API + `<script setup>`** only.
 
 ## Active TODOs / known gaps
 
-- `build/icon.icns` and `build/icon.ico` not committed — `dist:mac` / `dist:win` will fail until they're added.
-- No code signing / notarization configured.
-- No keyboard shortcut help overlay (Space play/pause + Esc close-modal exist but aren't documented in-app).
-- Discover never auto-refreshes when favorites change. User must click the ↻ button on the section header.
-- Root-level `main.cjs` is a stale duplicate of `electron/main.cjs` (not referenced by `package.json`). Should be removed.
+- Capacitor native projects (`ios/`, `android/`) not generated yet — run `npx cap add ios` / `npx cap add android` on first setup, then add icons + splash artwork.
+- Background audio plugin not wired — iOS will pause when the WebView goes to background. Pick `@capacitor-community/native-audio` or a custom plugin with `AVAudioSession` / `MediaSessionService` integration.
+- Offline storage: download flow still writes to `server.cjs`'s `library/audio/<id>.mp3` (server-side filesystem). For Capacitor, the client should download via `@capacitor/filesystem` so MP3s sit on the device storage, not the backend's PVC. Big architectural shift — design decision pending.
+- Prefs storage still uses `localStorage`. Could migrate to `@capacitor/preferences` for better iOS sandboxing, but localStorage works in the WebView so this is optional.
+- Image bindings (`<img :src="track.thumbnail">`) NOT prefixed with `apiUrl()`. They work in dev (Vite proxy) but will 404 in the Capacitor build. Sweep needed before first build: every `:src="x.thumbnail"`, `:src="x.coverUrl"`, `:src="x.albumCoverUrl"`. The artist photo (ViewArtist.vue) is already wrapped.
+- `SettingsBody.vue` (legacy desktop settings) NOT ported. The mobile `ViewSettings.vue` covers profile / accent / library counts / reset; theme picker (22 themes) / language / EQ / backup are still pending.
+- Drag-reorder on Playlist track list not ported (was HTML5 DnD on desktop; mobile needs `van-draggable` or a long-press handle).
+- Playlist create / rename still goes through the legacy `promptModal` (mounted via `ModalRoot.vue`) because Vant has no text-input dialog. Profile rename uses a native `window.prompt` for the same reason — consider building a `MobilePromptSheet`.
+- Lyrics modal (opened from `MobilePlayer`'s comment icon) is the legacy desktop modal.
+- Profile avatars are letter-on-color circles only — no upload-an-image-from-the-camera flow. Capacitor `@capacitor/camera` could do it but adds permissions complexity.
+- No tests, no CI for the mobile build yet.
 
 ## Communication style
 
 - French, casual. The user says "tu" and writes informally.
 - Explain decisions briefly when proposing options. Confirm before destructive changes.
-- The user values **performance** and **polish**: small UX issues (alignment, perceived latency, jank) get flagged.
+- The user values **performance** and **polish**: small UX issues (alignment, perceived latency, jank, safe-area mistakes) get flagged.
 - They often iterate: small change → review → next ask. Don't over-engineer.
-- When something is broken, the user describes the symptom (not always the cause). Investigate before fixing.
 
 ## Workflow: "commit et pousse" / "commit and push"
 
 When the user asks to commit & push (any phrasing — "commit et pousse", "commit and push", "push", "envoie ça", etc.), do all four of these in **one** flow before pushing:
 
 1. **Bump the version** in `package.json`.
-   - Default: **patch** bump (1.0.0 → 1.0.1) — bug fixes, polish, doc-only changes, refactors with no user-visible impact.
-   - **Minor** bump (1.0.0 → 1.1.0) — new feature, new endpoint, new view, new public store action.
-   - **Major** bump (1.x → 2.0.0) — only when the user asks for it explicitly, or for a breaking change they flagged.
-2. **Update `README.md`** if the change is user-visible (new feature, removed feature, new install/build step, new dep). Skip if it's an internal refactor or a tiny fix.
+   - Default: **patch** (0.1.0 → 0.1.1) — bug fix, polish, doc-only.
+   - **Minor** (0.1.0 → 0.2.0) — new screen, new public store action, new Capacitor plugin.
+   - **Major** (0.x → 1.0.0) — only when the user asks for it explicitly, or for a breaking change they flagged. We are pre-1.0 for now.
+2. **Update `README.md`** if the change is user-visible (new feature, new install step, new dep). Skip if it's an internal refactor or tiny fix.
 3. **Update `CLAUDE.md`** if architecture, files, stores, key flows, gotchas, or active TODOs shifted. Skip for cosmetic-only fixes.
-4. **Then commit and push** in a single commit that includes the version bump + doc updates alongside the actual code change.
+4. **Then commit and push** in a single commit. Don't ask permission for any of the four — just do them. If a step is genuinely a no-op (e.g. CLAUDE.md needs no change), say so in one line in the reply.
 
-Don't ask permission for any of the four — just do them. If a step is genuinely a no-op (e.g. CLAUDE.md needs no change), say so in one line in the reply.
-
-Commit message: imperative, French or English (match the codebase — recent history is mixed). Do NOT prepend `vX.Y.Z:` — the version lives in `package.json`, not in commit subjects.
+Commit message: imperative, French or English (match the codebase). Do NOT prepend `vX.Y.Z:` — the version lives in `package.json`, not in commit subjects.

@@ -1,0 +1,221 @@
+/* Wax mobile — base palette + Vant theme overrides + layout primitives.
+ *
+ * Single dark "Midnight" palette for now. The full theme picker (14 dark +
+ * 8 light themes from the desktop build) will land in a later iteration.
+ */
+
+:root {
+  /* Palette */
+  --bg: #0d0f14;
+  --bg-elev: #15181f;
+  /* Legacy alias for code that still references --main (e.g. gradientFromString). */
+  --main: #0d0f14;
+  --card: #1b1f27;
+  --card-hover: #232833;
+  --border: #262b36;
+  --text: #f3f4f6;
+  --text-soft: #c8ccd6;
+  --text-muted: #7d8595;
+  --accent: #7c5cff;
+  --accent-bright: #9b82ff;
+  --accent-dark: #5a3edb;
+  --accent-soft: rgba(124, 92, 255, 0.18);
+  --danger: #ff5d6c;
+  --success: #5dd39e;
+
+  /* Type */
+  --font-body: -apple-system, BlinkMacSystemFont, 'Inter', 'SF Pro Text',
+    Roboto, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
+
+  /* Layout */
+  --nav-height: 52px;
+  --tab-height: 56px;
+  --mini-height: 60px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Vant variables — keep the dark UI consistent across components */
+  --van-background: var(--bg);
+  --van-background-2: var(--bg-elev);
+  --van-text-color: var(--text);
+  --van-text-color-2: var(--text-soft);
+  --van-text-color-3: var(--text-muted);
+  --van-primary-color: var(--accent);
+  --van-border-color: var(--border);
+  --van-active-color: var(--card-hover);
+  --van-cell-background: transparent;
+  --van-cell-text-color: var(--text);
+  --van-cell-value-color: var(--text-muted);
+  --van-cell-border-color: var(--border);
+  --van-cell-vertical-padding: 12px;
+  --van-nav-bar-background: var(--bg);
+  --van-nav-bar-title-text-color: var(--text);
+  --van-nav-bar-icon-color: var(--text);
+  --van-tabbar-background: var(--bg-elev);
+  --van-tabbar-item-text-color: var(--text-muted);
+  --van-tabbar-item-active-color: var(--accent);
+  --van-tabbar-item-active-background: transparent;
+  --van-tabbar-height: 56px;
+  --van-popup-background: var(--bg-elev);
+  --van-action-sheet-background: var(--bg-elev);
+  --van-action-sheet-item-text-color: var(--text);
+  --van-search-background: var(--bg);
+  --van-search-content-background: var(--card);
+  --van-field-input-text-color: var(--text);
+  --van-field-placeholder-text-color: var(--text-muted);
+  --van-toast-background: rgba(20, 22, 28, 0.95);
+  --van-button-primary-background: var(--accent);
+  --van-button-primary-border-color: var(--accent);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+body {
+  /* Lock the body to the viewport — internal scroll containers handle scrolling
+   * so the tab bar / nav bar stay pinned. */
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; }
+
+img { max-width: 100%; display: block; }
+
+/* App shell ---------------------------------------------------------------- */
+
+.app-shell {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.app-shell .nav-bar {
+  flex: 0 0 auto;
+  padding-top: var(--safe-top);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 4;
+}
+
+.app-shell .view-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* Reserve room at the bottom for the mini-player + tab bar so the last
+   * card isn't hidden under the chrome. */
+  padding-bottom: calc(var(--mini-height) + var(--tab-height) + var(--safe-bottom) + 8px);
+}
+
+/* van-tabbar handles fixed positioning + safe-area-inset-bottom itself
+ * via its `safe-area-inset-bottom` prop. We just nudge z-index so it
+ * sits above the mini-player and add a subtle separator. */
+.app-shell .tab-bar.van-tabbar {
+  z-index: 5;
+  border-top: 1px solid var(--border);
+}
+
+.app-shell .mini-player {
+  position: fixed;
+  bottom: calc(var(--tab-height) + var(--safe-bottom));
+  left: 8px;
+  right: 8px;
+  z-index: 6;
+}
+
+/* Track cells — used by Search / Library / Playlist views */
+
+.track-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.track-cell .thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: var(--card);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.track-cell .thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.track-cell .meta {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.track-cell .title {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-cell .sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.track-cell .actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.track-cell.is-playing .title { color: var(--accent-bright); }
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  padding: 60px 24px;
+  color: var(--text-muted);
+}
+.empty-state .icon {
+  margin-bottom: 12px;
+  opacity: 0.5;
+  color: var(--text-muted);
+}
+.empty-state .label {
+  font-size: 15px;
+  margin-bottom: 4px;
+  color: var(--text-soft);
+}
+.empty-state .hint {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Util */
+.text-ellipsis {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

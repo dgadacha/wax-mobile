@@ -1,110 +1,169 @@
 <script setup>
 import { onMounted, computed, watch } from 'vue';
-import Sidebar from './components/Sidebar.vue';
-import Player from './components/Player.vue';
-import NowPlaying from './components/NowPlaying.vue';
-import BigPicture from './components/BigPicture.vue';
+import { showToast as vantToast } from 'vant';
+
+import { House, Search, Library, Settings, ChevronLeft } from 'lucide-vue-next';
+import MobilePlayer from './components/MobilePlayer.vue';
 import ModalRoot from './components/ModalRoot.vue';
-import Toast from './components/Toast.vue';
+import ProfileGate from './components/ProfileGate.vue';
+
+import ViewHome from './views/ViewHome.vue';
 import ViewSearch from './views/ViewSearch.vue';
 import ViewLibrary from './views/ViewLibrary.vue';
+import ViewSettings from './views/ViewSettings.vue';
 import ViewPlaylist from './views/ViewPlaylist.vue';
-import ViewMix from './views/ViewMix.vue';
-import ViewArtist from './views/ViewArtist.vue';
-import ViewAlbums from './views/ViewAlbums.vue';
 import ViewAlbum from './views/ViewAlbum.vue';
+import ViewArtist from './views/ViewArtist.vue';
+import ViewMix from './views/ViewMix.vue';
 
-import { usePrefsStore } from './stores/prefs';
-import { useAccentStore } from './stores/accent';
 import { useLibraryStore } from './stores/library';
 import { usePlaylistsStore } from './stores/playlists';
 import { useViewStore } from './stores/view';
 import { usePlayerStore } from './stores/player';
+import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
+import { useProfileStore } from './stores/profile';
 import { closeModal, modalState } from './lib/modal';
 
-const prefs = usePrefsStore();
-const accent = useAccentStore();
 const library = useLibraryStore();
 const playlists = usePlaylistsStore();
 const view = useViewStore();
 const player = usePlayerStore();
+const prefs = usePrefsStore();
 const discover = useDiscoverStore();
+const profile = useProfileStore();
 
-const currentView = computed(() => view.name);
+// Top-level tab routes. Detail views (playlist, album, artist, mix) are
+// pushed on top of these and the active tab is whatever spawned them.
+const TABS = [
+  { id: 'home',     label: 'Accueil',      icon: House },
+  { id: 'download', label: 'Rechercher',   icon: Search },
+  { id: 'library',  label: 'Bibliothèque', icon: Library },
+  { id: 'settings', label: 'Réglages',     icon: Settings },
+];
 
-let discoverRefreshTimer = null;
-watch(() => library.favorites.length, (newLen, oldLen) => {
-  if (newLen === oldLen) return;
-  clearTimeout(discoverRefreshTimer);
-  discoverRefreshTimer = setTimeout(() => discover.refresh(), 2500);
+// Sub-views inherit their parent tab so the tab bar highlights stay coherent
+// as the user drills down into details.
+const SUBVIEW_PARENT = {
+  playlist: 'library',
+  album:    'library',
+  artist:   'library',
+  mix:      'download',
+};
+
+const activeTab = computed({
+  get: () => SUBVIEW_PARENT[view.name] || view.name,
+  set: (id) => { if (view.name !== id) view.switchTo(id); },
 });
 
-// Mirror player.playing onto body[data-playing] so CSS-only effects
-// (cover glow pulse, play button pulse, etc.) can react without
-// component-level work. Cheap; runs on every play/pause toggle.
+const isSubview = computed(() => !!SUBVIEW_PARENT[view.name]);
+
+const navTitle = computed(() => {
+  switch (view.name) {
+    case 'home':     return 'Accueil';
+    case 'download': return 'Rechercher';
+    case 'library':  return 'Bibliothèque';
+    case 'settings': return 'Réglages';
+    case 'artist':   return view.selectedArtist || 'Artiste';
+    case 'album':    return 'Album';
+    case 'playlist': return playlists.items.find(p => p.id === view.selectedPlaylistId)?.name || 'Playlist';
+    case 'mix':      return 'Mix';
+    default:         return 'Wax';
+  }
+});
+
+// On the top-level tabs Spotify hides the title (the view renders its own
+// big heading) — keep the title visible only on sub-views so the user has a
+// stable "where am I" affordance.
+const showNavTitle = computed(() => isSubview.value);
+
 watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
 }, { immediate: true });
 
+// Land on Home for new sessions; legacy view stores may have persisted
+// 'download' as the default.
 onMounted(async () => {
   prefs.load();
-  accent.applyThemeAccent();
-
-  // Theme controls the accent now — re-derive on every switch so the hero
-  // band's --accent-bg picks up the new lightness.
-  window.addEventListener('wax:theme-changed', () => accent.applyThemeAccent());
-
-  // Player MediaSession (after audio elements are bound from Player.vue)
-  // queued for next tick so Player has had a chance to mount.
+  profile.loadActiveFromStorage();
+  if (view.name === 'download' || view.name == null) {
+    view.switchTo('home');
+  }
   setTimeout(() => player.setupMediaSession(), 0);
 
-  // Initial fetches
-  await library.fetch();
+  // Fetch profiles first — the gate blocks the rest of the UI until a
+  // profile is active (the user picks or one is remembered + still valid).
+  try { await profile.fetch(); }
+  catch { vantToast({ message: 'Backend injoignable', type: 'fail' }); }
+
+  if (profile.needsPicker) {
+    // Don't bother fetching library/playlists yet — they'd go through the
+    // default profile but get replaced on the page reload after picking.
+    return;
+  }
+
+  try {
+    await library.fetch();
+  } catch (e) {
+    vantToast({ message: 'Backend injoignable', type: 'fail' });
+  }
   player.restorePlayerState();
   playlists.fetch();
-  // Subscribe to album-resolved SSE so MusicBrainz lookups completed
-  // server-side stream into the local library state in real time.
   library._listenAlbumProgress();
-  // Populate Découverte once the library is loaded — no-op if empty.
   discover.refresh();
 
-  // Global keyboard
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modalState.visible) {
-      closeModal();
-      return;
-    }
-    if (
-      e.key === ' ' &&
-      !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) &&
-      player.visible
-    ) {
-      e.preventDefault();
-      player.togglePlay();
-    }
+    if (e.key === 'Escape' && modalState.visible) closeModal();
   });
 });
 </script>
 
 <template>
-  <div class="app" :class="{ 'np-collapsed': !player.nowPlayingOpen, 'sidebar-expanded': prefs.sidebarExpanded }">
-    <Sidebar />
-    <main class="main">
-      <div class="content">
-        <ViewSearch v-show="currentView === 'download'" />
-        <ViewLibrary v-show="currentView === 'library'" />
-        <ViewMix v-show="currentView === 'mix'" />
-        <ViewPlaylist v-show="currentView === 'playlist'" />
-        <ViewArtist v-show="currentView === 'artist'" />
-        <ViewAlbums v-show="currentView === 'albums'" />
-        <ViewAlbum v-show="currentView === 'album'" />
-      </div>
-    </main>
-    <NowPlaying />
-    <Player />
-    <BigPicture />
+  <div class="app-shell">
+    <van-nav-bar
+      class="nav-bar"
+      :title="showNavTitle ? navTitle : ''"
+      :border="false"
+      fixed
+      placeholder
+      safe-area-inset-top
+      @click-left="view.back()"
+    >
+      <template v-if="isSubview" #left>
+        <ChevronLeft :size="26" :stroke-width="2" color="var(--text)" />
+      </template>
+    </van-nav-bar>
+
+    <div class="view-scroll">
+      <ViewHome     v-show="view.name === 'home'" />
+      <ViewSearch   v-show="view.name === 'download'" />
+      <ViewLibrary  v-show="view.name === 'library'" />
+      <ViewSettings v-show="view.name === 'settings'" />
+      <ViewPlaylist v-if="view.name === 'playlist'" />
+      <ViewAlbum    v-if="view.name === 'album'" />
+      <ViewArtist   v-if="view.name === 'artist'" />
+      <ViewMix      v-if="view.name === 'mix'" />
+    </div>
+
+    <MobilePlayer />
+
+    <van-tabbar
+      v-model="activeTab"
+      class="tab-bar"
+      :border="false"
+      safe-area-inset-bottom
+      active-color="var(--accent)"
+      inactive-color="var(--text-muted)"
+    >
+      <van-tabbar-item v-for="tab in TABS" :key="tab.id" :name="tab.id">
+        <template #icon>
+          <component :is="tab.icon" :size="22" :stroke-width="2" />
+        </template>
+        {{ tab.label }}
+      </van-tabbar-item>
+    </van-tabbar>
+
     <ModalRoot />
-    <Toast />
+    <ProfileGate />
   </div>
 </template>

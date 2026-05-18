@@ -98,18 +98,98 @@ const PREVIEW_DIR = path.join(LIBRARY_DIR, 'previews');
 const COVERS_DIR = path.join(LIBRARY_DIR, 'covers');
 const ARTISTS_DIR = path.join(LIBRARY_DIR, 'artists');
 const ALBUMS_DIR = path.join(LIBRARY_DIR, 'albums');           // Deezer lookup JSON cache
-const LIBRARY_FILE = path.join(LIBRARY_DIR, 'library.json');
-const PLAYLISTS_FILE = path.join(LIBRARY_DIR, 'playlists.json');
+// Per-profile storage. Each user gets their own `library.json` +
+// `playlists.json` under `library/users/<profileId>/`. Audio MP3s, covers,
+// artist photos and Deezer caches stay shared at the library root — they're
+// keyed by ytId/artist name so there's nothing per-user about them.
+const USERS_DIR = path.join(LIBRARY_DIR, 'users');
+const PROFILES_FILE = path.join(LIBRARY_DIR, 'profiles.json');
 
 fs.mkdirSync(AUDIO_DIR, { recursive: true });
 fs.mkdirSync(PREVIEW_DIR, { recursive: true });
 fs.mkdirSync(COVERS_DIR, { recursive: true });
 fs.mkdirSync(ARTISTS_DIR, { recursive: true });
 fs.mkdirSync(ALBUMS_DIR, { recursive: true });
-if (!fs.existsSync(LIBRARY_FILE)) fs.writeFileSync(LIBRARY_FILE, '[]');
-if (!fs.existsSync(PLAYLISTS_FILE)) fs.writeFileSync(PLAYLISTS_FILE, '[]');
+fs.mkdirSync(USERS_DIR, { recursive: true });
+
+function sanitizeProfileId(id) {
+  return String(id || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32) || 'default';
+}
+function libraryFile(profileId) {
+  return path.join(USERS_DIR, sanitizeProfileId(profileId), 'library.json');
+}
+function playlistsFile(profileId) {
+  return path.join(USERS_DIR, sanitizeProfileId(profileId), 'playlists.json');
+}
+function ensureProfileDir(profileId) {
+  const id = sanitizeProfileId(profileId);
+  fs.mkdirSync(path.join(USERS_DIR, id), { recursive: true });
+  if (!fs.existsSync(libraryFile(id))) fs.writeFileSync(libraryFile(id), '[]');
+  if (!fs.existsSync(playlistsFile(id))) fs.writeFileSync(playlistsFile(id), '[]');
+}
+function listProfileIds() {
+  try {
+    return fs.readdirSync(USERS_DIR).filter((name) =>
+      fs.existsSync(libraryFile(name)),
+    );
+  } catch { return []; }
+}
+
+ensureProfileDir('default');
+
+// One-shot migration: if a legacy root `library.json` / `playlists.json`
+// (from before multi-profile) still exists and the default profile is
+// empty, move them into the default user's folder.
+const legacyLibrary = path.join(LIBRARY_DIR, 'library.json');
+const legacyPlaylists = path.join(LIBRARY_DIR, 'playlists.json');
+for (const [src, dst] of [
+  [legacyLibrary, libraryFile('default')],
+  [legacyPlaylists, playlistsFile('default')],
+]) {
+  if (fs.existsSync(src)) {
+    try {
+      const srcContent = fs.readFileSync(src, 'utf8');
+      const dstContent = fs.readFileSync(dst, 'utf8');
+      if (dstContent.trim() === '[]' && srcContent.trim() !== '[]') {
+        fs.writeFileSync(dst, srcContent);
+        console.log('[migrate] moved legacy', path.basename(src), '→ users/default/');
+      }
+      fs.unlinkSync(src);
+    } catch (e) { console.warn('[migrate]', e.message); }
+  }
+}
+
+// Bootstrap the default profile entry if profiles.json is empty/missing.
+if (!fs.existsSync(PROFILES_FILE)) {
+  fs.writeFileSync(PROFILES_FILE, JSON.stringify([
+    { id: 'default', name: 'Moi', color: '#7c5cff', createdAt: new Date().toISOString() },
+  ], null, 2));
+}
 
 app.use(express.json({ limit: '1mb' }));
+
+// Permissive CORS — Capacitor apps run under the capacitor:// / https://localhost
+// origin and need access to every endpoint + the SSE channels.
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', req.header('Origin') || '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Wax-Profile');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// Per-request profile resolution. Header takes precedence (mobile app
+// sends X-Wax-Profile); query param `profile=` is a fallback for SSE
+// EventSource which can't set headers.
+app.use((req, _res, next) => {
+  const headerId = req.header('X-Wax-Profile');
+  const queryId = typeof req.query.profile === 'string' ? req.query.profile : '';
+  req.profileId = sanitizeProfileId(headerId || queryId || 'default');
+  ensureProfileDir(req.profileId);
+  next();
+});
+
 app.use(express.static(PUBLIC_DIR));
 app.use('/audio', express.static(AUDIO_DIR, { maxAge: '1d' }));
 app.use('/preview-files', express.static(PREVIEW_DIR, { maxAge: '1h' }));
@@ -660,16 +740,19 @@ app.get('/api/album-tracklist', async (req, res) => {
   }
 });
 
-const getLibrary = () => readJson(LIBRARY_FILE).map(t => ({
+// All four take a profileId. Endpoints pass `req.profileId`; background
+// timers (scheduleAlbumBackfill / autoBackfillOnStartup) iterate
+// `listProfileIds()` so every user's library gets backfilled.
+const getLibrary = (profileId) => readJson(libraryFile(profileId)).map(t => ({
   ...t,
   // Funnel every thumbnail through the local cover endpoint — works offline
   // once cached, gives us a single fallback path. Tracks without a ytId
   // (rare, defensive) keep their stored URL as-is.
   thumbnail: t.ytId ? coverUrl(t.ytId) : t.thumbnail,
 }));
-const saveLibrary = (lib) => writeJson(LIBRARY_FILE, lib);
-const getPlaylists = () => readJson(PLAYLISTS_FILE);
-const savePlaylists = (pls) => writeJson(PLAYLISTS_FILE, pls);
+const saveLibrary = (profileId, lib) => writeJson(libraryFile(profileId), lib);
+const getPlaylists = (profileId) => readJson(playlistsFile(profileId));
+const savePlaylists = (profileId, pls) => writeJson(playlistsFile(profileId), pls);
 
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
@@ -982,7 +1065,7 @@ function startJob(job) {
   const outputTemplate = path.join(AUDIO_DIR, `${job.trackId}.%(ext)s`);
 
   if (!job.updateExisting) {
-    const lib = getLibrary();
+    const lib = getLibrary(req.profileId);
     if (lib.some(t => t.url === job.url && t.file)) {
       const existing = lib.find(t => t.url === job.url && t.file);
       job.status = 'ready';
@@ -1052,13 +1135,13 @@ function startJob(job) {
     try { info = JSON.parse(fs.readFileSync(infoJsonFile, 'utf8')); } catch {}
 
     let track;
-    const currentLib = getLibrary();
+    const currentLib = getLibrary(req.profileId);
     if (job.updateExisting) {
       track = currentLib.find(t => t.id === job.trackId);
       if (track) {
         track.file = `/audio/${job.trackId}.mp3`;
         if (!track.duration && info.duration) track.duration = info.duration;
-        saveLibrary(currentLib);
+        saveLibrary(req.profileId, currentLib);
       }
     } else {
       const safeTitle = String(info.title || 'Sans titre').replace(/[\/\\:*?"<>|]/g, '').slice(0, 200);
@@ -1078,7 +1161,7 @@ function startJob(job) {
         addedAt: Date.now(),
       };
       currentLib.unshift(track);
-      saveLibrary(currentLib);
+      saveLibrary(req.profileId, currentLib);
     }
 
     try { fs.unlinkSync(infoJsonFile); } catch {}
@@ -1147,7 +1230,7 @@ app.get('/api/jobs/:id/progress', (req, res) => {
 });
 
 app.get('/api/library', (req, res) => {
-  res.json({ tracks: getLibrary() });
+  res.json({ tracks: getLibrary(req.profileId) });
 });
 
 // -------------------------------------------------------------
@@ -1161,8 +1244,8 @@ app.get('/api/export', (req, res) => {
   res.json({
     version: 1,
     exportedAt: new Date().toISOString(),
-    library: readJson(LIBRARY_FILE),
-    playlists: getPlaylists(),
+    library: readJson(libraryFile(req.profileId)),
+    playlists: getPlaylists(req.profileId),
   });
 });
 
@@ -1187,8 +1270,8 @@ app.post('/api/import', express.json({ limit: '32mb' }), (req, res) => {
       return res.status(400).json({ error: 'Invalid playlist entry' });
     }
   }
-  saveLibrary(library);
-  savePlaylists(playlists);
+  saveLibrary(req.profileId, library);
+  savePlaylists(req.profileId, playlists);
   res.json({ ok: true, tracks: library.length, playlists: playlists.length });
 });
 
@@ -1199,8 +1282,8 @@ app.post('/api/import', express.json({ limit: '32mb' }), (req, res) => {
 app.post('/api/wipe', (req, res) => {
   try {
     const removed = { audio: 0, previews: 0, covers: 0 };
-    saveLibrary([]);
-    savePlaylists([]);
+    saveLibrary(req.profileId, []);
+    savePlaylists(req.profileId, []);
     for (const [dir, key] of [[AUDIO_DIR, 'audio'], [PREVIEW_DIR, 'previews'], [COVERS_DIR, 'covers']]) {
       if (!fs.existsSync(dir)) continue;
       for (const file of fs.readdirSync(dir)) {
@@ -1219,7 +1302,7 @@ app.post('/api/wipe', (req, res) => {
 app.post('/api/library/add', (req, res) => {
   const { ytId, title, uploader, duration, thumbnail, url, liked } = req.body || {};
   if (!ytId || !title) return res.status(400).json({ error: 'ytId + title required' });
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const existing = lib.find(t => t.ytId === ytId);
   if (existing) return res.json({ track: existing, duplicate: true });
   const id = crypto.randomBytes(6).toString('hex');
@@ -1236,13 +1319,12 @@ app.post('/api/library/add', (req, res) => {
     addedAt: Date.now(),
   };
   lib.unshift(track);
-  saveLibrary(lib);
+  saveLibrary(req.profileId, lib);
   res.json({ track });
-  // Fire-and-forget: resolve the album via MusicBrainz for the new
-  // track, plus give every other pending track another shot — cache
-  // hits short-circuit, so this is cheap when the library is mostly
-  // resolved and meaningful when it isn't.
-  scheduleAlbumBackfill(track);
+  // Fire-and-forget: resolve the album for the new track in this user's
+  // library, plus give every other pending track (across every profile)
+  // another shot — cache hits short-circuit, so this is cheap.
+  scheduleAlbumBackfill(req.profileId, track);
   scheduleAutoBackfill();
 });
 
@@ -1269,7 +1351,7 @@ function broadcastAlbumEvent(payload) {
 // already on the track (cache-hit case where we re-process tracks
 // during a debounced rescan), we don't re-write library.json or
 // broadcast — saves disk I/O + saves the client from no-op patches.
-function scheduleAlbumBackfill(track, onComplete) {
+function scheduleAlbumBackfill(profileId, track, onComplete) {
   const parsed = parseTrackTitle(track.title, track.uploader);
   if (!parsed.artist || !parsed.song) {
     if (onComplete) onComplete();
@@ -1278,7 +1360,7 @@ function scheduleAlbumBackfill(track, onComplete) {
   resolveAlbum(parsed.artist, parsed.song)
     .then((album) => {
       if (album) {
-        const fresh = readJson(LIBRARY_FILE);
+        const fresh = readJson(libraryFile(profileId));
         const idx = fresh.findIndex((t) => t.id === track.id);
         if (idx !== -1) {
           const cur = fresh[idx];
@@ -1295,13 +1377,12 @@ function scheduleAlbumBackfill(track, onComplete) {
             cur.albumId = newId;
             cur.albumCoverUrl = newCover;
             cur.albumReleaseDate = newDate;
-            // Strip stale MB-shaped fields if any are still hanging around
-            // from before the Deezer migration — keeps library.json clean.
             delete cur.albumReleaseGroupId;
             delete cur.albumReleaseId;
-            saveLibrary(fresh);
+            saveLibrary(profileId, fresh);
             broadcastAlbumEvent({
               type: 'album',
+              profileId,
               trackId: track.id,
               album: album.album,
               albumId: newId,
@@ -1361,7 +1442,7 @@ app.get('/api/library/rescan-albums', (req, res) => {
 
 app.post('/api/library/rescan-albums', (req, res) => {
   if (albumRescanState.running) return res.json(albumRescanState);
-  const lib = readJson(LIBRARY_FILE);
+  const lib = readJson(libraryFile(req.profileId));
   const targets = lib.filter((t) => !t.album || !t.albumId);
   albumRescanState = { running: true, done: 0, total: targets.length };
   res.json(albumRescanState);
@@ -1370,15 +1451,10 @@ app.post('/api/library/rescan-albums', (req, res) => {
     broadcastAlbumEvent({ type: 'rescan', done: 0, total: 0, running: false });
     return;
   }
-  // Defer the loop to the next macrotask so the HTTP response's socket
-  // write flushes before any SSE events from this batch fire. Without
-  // this, cache-hit completions broadcast `done > 0` events
-  // synchronously (well, via microtask) that can arrive at the client
-  // before the HTTP response and then get overwritten by the response's
-  // `done: 0` seed — leaving the progress bar visually stuck.
+  const profileId = req.profileId;
   setImmediate(() => {
     for (const track of targets) {
-      scheduleAlbumBackfill(track, () => {
+      scheduleAlbumBackfill(profileId, track, () => {
         albumRescanState.done++;
         const finished = albumRescanState.done >= albumRescanState.total;
         if (finished) albumRescanState.running = false;
@@ -1390,7 +1466,7 @@ app.post('/api/library/rescan-albums', (req, res) => {
         });
       });
     }
-    console.log(`[album] rescan queued ${targets.length} track(s)`);
+    console.log(`[album] rescan queued ${targets.length} track(s) for profile=${profileId}`);
   });
 });
 
@@ -1403,15 +1479,17 @@ app.post('/api/library/rescan-albums', (req, res) => {
 // Deezer had no match get a `.miss` sentinel re-tried after 7 days.
 function autoBackfillOnStartup() {
   let triggered = 0;
-  try {
-    const lib = readJson(LIBRARY_FILE);
-    for (const track of lib) {
-      const needsRescan = !track.album || !track.albumId;
-      if (!needsRescan) continue;
-      scheduleAlbumBackfill(track);
-      triggered++;
-    }
-  } catch {}
+  for (const profileId of listProfileIds()) {
+    try {
+      const lib = readJson(libraryFile(profileId));
+      for (const track of lib) {
+        const needsRescan = !track.album || !track.albumId;
+        if (!needsRescan) continue;
+        scheduleAlbumBackfill(profileId, track);
+        triggered++;
+      }
+    } catch {}
+  }
   if (triggered > 0) {
     console.log(`[album] queued ${triggered} library track(s) for Deezer lookup`);
   }
@@ -1419,7 +1497,7 @@ function autoBackfillOnStartup() {
 }
 
 app.post('/api/library/:trackId/download', (req, res) => {
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const track = lib.find(t => t.id === req.params.trackId);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
   if (track.file) return res.status(409).json({ error: 'Déjà téléchargée' });
@@ -1444,20 +1522,20 @@ app.post('/api/library/:trackId/download', (req, res) => {
 });
 
 app.delete('/api/library/:trackId/download', (req, res) => {
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const track = lib.find(t => t.id === req.params.trackId);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
   if (!track.file) return res.status(409).json({ error: 'Pas téléchargée' });
   try { fs.unlinkSync(path.join(AUDIO_DIR, `${track.id}.mp3`)); } catch {}
   track.file = null;
-  saveLibrary(lib);
+  saveLibrary(req.profileId, lib);
   res.json({ track });
 });
 
 app.put('/api/library/order', (req, res) => {
   const trackIds = Array.isArray(req.body?.trackIds) ? req.body.trackIds : null;
   if (!trackIds) return res.status(400).json({ error: 'trackIds required' });
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const byId = new Map(lib.map(t => [t.id, t]));
   const reordered = [];
   for (const id of trackIds) {
@@ -1466,12 +1544,12 @@ app.put('/api/library/order', (req, res) => {
     if (t) { reordered.push(t); byId.delete(id); }
   }
   for (const t of byId.values()) reordered.push(t);
-  saveLibrary(reordered);
+  saveLibrary(req.profileId, reordered);
   res.json({ ok: true });
 });
 
 app.patch('/api/library/:id', (req, res) => {
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const track = lib.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
   const wasLiked = track.liked !== false;
@@ -1479,7 +1557,7 @@ app.patch('/api/library/:id', (req, res) => {
   if (typeof req.body?.title === 'string' && req.body.title.trim()) {
     track.title = req.body.title.trim().slice(0, 200);
   }
-  saveLibrary(lib);
+  saveLibrary(req.profileId, lib);
   res.json({ track });
   // Toggling a track to liked = true is a meaningful "user is engaging
   // with this" signal — re-trigger the album scan so anything still
@@ -1490,43 +1568,43 @@ app.patch('/api/library/:id', (req, res) => {
 });
 
 app.post('/api/library/:id/play', (req, res) => {
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const track = lib.find(t => t.id === req.params.id);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
   track.playCount = (track.playCount || 0) + 1;
   track.lastPlayedAt = Date.now();
-  saveLibrary(lib);
+  saveLibrary(req.profileId, lib);
   res.json({ track });
 });
 
 app.delete('/api/library/:id', (req, res) => {
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   const idx = lib.findIndex(t => t.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Piste introuvable' });
   const [track] = lib.splice(idx, 1);
-  saveLibrary(lib);
+  saveLibrary(req.profileId, lib);
 
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   let plsChanged = false;
   for (const pl of pls) {
     const before = pl.trackIds.length;
     pl.trackIds = pl.trackIds.filter(tid => tid !== track.id);
     if (pl.trackIds.length !== before) plsChanged = true;
   }
-  if (plsChanged) savePlaylists(pls);
+  if (plsChanged) savePlaylists(req.profileId, pls);
 
   try { fs.unlinkSync(path.join(AUDIO_DIR, `${track.id}.mp3`)); } catch {}
   res.json({ ok: true });
 });
 
 app.get('/api/playlists', (req, res) => {
-  res.json({ playlists: getPlaylists() });
+  res.json({ playlists: getPlaylists(req.profileId) });
 });
 
 app.post('/api/playlists', (req, res) => {
   const name = String(req.body?.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Name required' });
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const playlist = {
     id: crypto.randomBytes(6).toString('hex'),
     name: name.slice(0, 100),
@@ -1534,12 +1612,12 @@ app.post('/api/playlists', (req, res) => {
     createdAt: Date.now(),
   };
   pls.push(playlist);
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ playlist });
 });
 
 app.put('/api/playlists/:id', (req, res) => {
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const pl = pls.find(p => p.id === req.params.id);
   if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
   if (typeof req.body?.name === 'string' && req.body.name.trim()) {
@@ -1548,29 +1626,29 @@ app.put('/api/playlists/:id', (req, res) => {
   if (Array.isArray(req.body?.trackIds)) {
     pl.trackIds = req.body.trackIds.filter(t => typeof t === 'string');
   }
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ playlist: pl });
 });
 
 app.delete('/api/playlists/:id', (req, res) => {
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const idx = pls.findIndex(p => p.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Playlist introuvable' });
   pls.splice(idx, 1);
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ ok: true });
 });
 
 app.post('/api/playlists/:id/tracks', (req, res) => {
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const pl = pls.find(p => p.id === req.params.id);
   if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
   const trackId = String(req.body?.trackId || '');
   if (!trackId) return res.status(400).json({ error: 'trackId required' });
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   if (!lib.find(t => t.id === trackId)) return res.status(404).json({ error: 'Piste introuvable' });
   if (!pl.trackIds.includes(trackId)) pl.trackIds.push(trackId);
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ playlist: pl });
   // Adding to a playlist is a "user cares about this" signal — give
   // any still-pending album lookups another shot.
@@ -1578,11 +1656,11 @@ app.post('/api/playlists/:id/tracks', (req, res) => {
 });
 
 app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const pl = pls.find(p => p.id === req.params.id);
   if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
   const trackIds = Array.isArray(req.body?.trackIds) ? req.body.trackIds : [];
-  const lib = getLibrary();
+  const lib = getLibrary(req.profileId);
   let added = 0;
   for (const tid of trackIds) {
     if (typeof tid !== 'string') continue;
@@ -1592,24 +1670,85 @@ app.post('/api/playlists/:id/tracks/bulk', (req, res) => {
       added++;
     }
   }
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ playlist: pl, added });
   if (added > 0) scheduleAutoBackfill();
 });
 
 app.delete('/api/playlists/:plId/tracks/:trackId', (req, res) => {
-  const pls = getPlaylists();
+  const pls = getPlaylists(req.profileId);
   const pl = pls.find(p => p.id === req.params.plId);
   if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
   pl.trackIds = pl.trackIds.filter(tid => tid !== req.params.trackId);
-  savePlaylists(pls);
+  savePlaylists(req.profileId, pls);
   res.json({ playlist: pl });
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Profiles — Netflix-style multi-user. Each entry maps to a folder under
+// `library/users/<id>/` that holds the user's `library.json` +
+// `playlists.json`. Audio MP3s and covers stay shared.
+// ──────────────────────────────────────────────────────────────────────
+function readProfiles() {
+  try { return JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); }
+  catch { return []; }
+}
+function writeProfiles(list) {
+  fs.writeFileSync(PROFILES_FILE, JSON.stringify(list, null, 2));
+}
+
+app.get('/api/profiles', (_req, res) => {
+  res.json({ profiles: readProfiles() });
+});
+
+app.post('/api/profiles', (req, res) => {
+  const { name, color } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name required' });
+  }
+  const cleanName = name.trim().slice(0, 32);
+  const cleanColor = /^#[0-9a-f]{6}$/i.test(color || '') ? color : '#7c5cff';
+  const id = crypto.randomBytes(6).toString('hex');
+  const profile = { id, name: cleanName, color: cleanColor, createdAt: new Date().toISOString() };
+  const profiles = readProfiles();
+  profiles.push(profile);
+  writeProfiles(profiles);
+  ensureProfileDir(id);
+  res.json({ profile });
+});
+
+app.patch('/api/profiles/:id', (req, res) => {
+  const profiles = readProfiles();
+  const p = profiles.find((x) => x.id === req.params.id);
+  if (!p) return res.status(404).json({ error: 'not found' });
+  if (typeof req.body?.name === 'string' && req.body.name.trim()) {
+    p.name = req.body.name.trim().slice(0, 32);
+  }
+  if (typeof req.body?.color === 'string' && /^#[0-9a-f]{6}$/i.test(req.body.color)) {
+    p.color = req.body.color;
+  }
+  writeProfiles(profiles);
+  res.json({ profile: p });
+});
+
+app.delete('/api/profiles/:id', (req, res) => {
+  const id = req.params.id;
+  if (id === 'default') {
+    return res.status(400).json({ error: "Le profil par défaut ne peut pas être supprimé" });
+  }
+  const profiles = readProfiles();
+  const idx = profiles.findIndex((p) => p.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  profiles.splice(idx, 1);
+  writeProfiles(profiles);
+  // Best-effort: remove the user's data dir.
+  try {
+    fs.rmSync(path.join(USERS_DIR, sanitizeProfileId(id)), { recursive: true, force: true });
+  } catch {}
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
   console.log(`Serveur lancé sur http://localhost:${PORT}`);
-  // Kick off album resolution for any track that doesn't already have
-  // metadata. Throttled, fire-and-forget, broadcasts via SSE as each
-  // track resolves so connected clients update in place.
   autoBackfillOnStartup();
 });

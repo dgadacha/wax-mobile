@@ -11,6 +11,8 @@
 //     without manually wrapping the body in a ReadableStream that tracks
 //     reads.
 
+import { apiUrl } from './api';
+
 const PREFS_KEY = 'ytmp3:prefs';
 const PLAYER_STATE_KEY = 'wax:player';
 const EXPORT_VERSION = 1;
@@ -47,7 +49,7 @@ function assemble(server) {
 }
 
 export async function buildExportBlob({ onProgress } = {}) {
-  const res = await fetch('/api/export');
+  const res = await fetch(apiUrl('/api/export'));
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -123,7 +125,7 @@ export async function readImportFile(file) {
 // Client-side prefs (theme, locale, EQ, …) are kept — they're UI settings,
 // not data.
 export async function wipeAllData() {
-  const res = await fetch('/api/wipe', { method: 'POST' });
+  const res = await fetch(apiUrl('/api/wipe'), { method: 'POST' });
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try { const j = await res.json(); msg = j.error || msg; } catch {}
@@ -138,7 +140,7 @@ export async function wipeAllData() {
 export function importFromData(data, { onProgress } = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/import');
+    xhr.open('POST', apiUrl('/api/import'));
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;

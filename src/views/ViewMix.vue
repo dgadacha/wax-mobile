@@ -1,12 +1,13 @@
 <script setup>
 import { computed } from 'vue';
+import { Bookmark, Sparkles } from 'lucide-vue-next';
 import { useMixStore } from '@/stores/mix';
 import { useViewStore } from '@/stores/view';
 import { useStreamsStore } from '@/stores/streams';
 import { usePlayerStore } from '@/stores/player';
-import { t } from '@/lib/i18n';
-import TrackRow from '@/components/TrackRow.vue';
-import TrackListHeader from '@/components/TrackListHeader.vue';
+import { gradientFromString } from '@/lib/format';
+import MobileHero from '@/components/MobileHero.vue';
+import MobileTrackCell from '@/components/MobileTrackCell.vue';
 
 const mix = useMixStore();
 const view = useViewStore();
@@ -21,78 +22,85 @@ const tracks = computed(() => {
 });
 
 const queueIds = computed(() => mix.current?.queueIds || []);
-const meta = computed(() =>
-  mix.current
-    ? `${t('common.tracks', mix.current.queueIds.length)} · ${t('mix.unsaved')}`
-    : '',
-);
+const sourceTitle = computed(() => mix.current?.sourceTitle || 'Mix');
+const cover = computed(() => tracks.value[0]?.thumbnail || '');
+const bgGradient = computed(() => gradientFromString(sourceTitle.value));
+
+const subtitle = computed(() => {
+  const n = queueIds.value.length;
+  if (!n) return '';
+  return `${n} titres · Mix temporaire`;
+});
 
 function playAll() {
-  if (!mix.current || mix.current.queueIds.length === 0) return;
-  player.queue = [...mix.current.queueIds];
+  if (queueIds.value.length === 0) return;
+  player.queue = [...queueIds.value];
   player.index = 0;
   player.loadAndPlay();
+}
+
+function playTrack(t) {
+  player.playFromList(t.id, queueIds.value);
 }
 
 function save() {
   mix.save((newPlaylistId) => view.switchTo('playlist', newPlaylistId));
 }
-
-function close() {
-  mix.close();
-  view.switchTo('library');
-}
 </script>
 
 <template>
-  <section id="view-mix" class="view active">
-    <header class="hero hero-mix">
-      <div class="hero-content">
-        <span class="eyebrow">{{ t('mix.eyebrow_temp') }}</span>
-        <h1 v-if="mix.current">
-          {{ t('mix.hero_prefix') }}
-          <span class="hero-italic">«&nbsp;{{ mix.current.sourceTitle }}&nbsp;»</span>
-        </h1>
-        <h1 v-else>{{ t('mix.eyebrow') }}</h1>
-        <p class="hero-meta">{{ meta }}</p>
-      </div>
-    </header>
-    <div class="page-body">
-      <div class="action-row">
-        <button class="play-circle" :title="t('playlist.play_all')" @click="playAll">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M8 5v14l11-7z" />
-          </svg>
-          <span>{{ t('common.play') }}</span>
+  <div v-if="mix.current" class="mix-view">
+    <MobileHero
+      :cover="cover"
+      :bg-gradient="bgGradient"
+      eyebrow="Mix"
+      :title="`Mix : ${sourceTitle}`"
+      :subtitle="subtitle"
+      @play="playAll"
+    >
+      <template #actions>
+        <button class="hero-icon-btn save" aria-label="Sauvegarder" @click="save">
+          <Bookmark :size="16" :stroke-width="2.2" color="var(--bg)" />
+          <span>Sauvegarder</span>
         </button>
-        <button class="secondary-btn" @click="save">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
-          </svg>
-          {{ t('mix.save') }}
-        </button>
-        <button class="icon-btn round large danger" :title="t('mix.close_title')" @click="close">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-          </svg>
-        </button>
-      </div>
-      <TrackListHeader />
-      <ul class="track-list">
-        <TrackRow
-          v-for="(t, i) in tracks"
-          :key="t.id"
-          :track="t"
-          :index="i"
-          :queue="queueIds"
-        />
-      </ul>
+      </template>
+    </MobileHero>
+
+    <div class="track-list">
+      <MobileTrackCell
+        v-for="(t, i) in tracks"
+        :key="t.id"
+        :track="t"
+        :index="i"
+        variant="thumb"
+        :is-playing="player.currentTrack && player.currentTrack.id === t.id"
+        :is-liked="false"
+        :show-more="false"
+        @play="playTrack(t)"
+      />
     </div>
-  </section>
+  </div>
+  <div v-else class="empty-state">
+    <Sparkles class="icon" :size="48" :stroke-width="1.5" />
+    <div class="label">Aucun mix en cours</div>
+    <div class="hint">Lance un mix depuis le menu « … » d'un titre.</div>
+  </div>
 </template>
+
+<style scoped>
+.mix-view { min-height: 100%; padding-bottom: 16px; }
+.hero-icon-btn.save {
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 999px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 0;
+  width: auto;
+  height: auto;
+}
+</style>

@@ -1,6 +1,6 @@
 // Download jobs store. Handles SSE progress streams from /api/jobs/:id/progress.
 import { defineStore } from 'pinia';
-import { api } from '@/lib/api';
+import { api, apiUrlWithProfile } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { t } from '@/lib/i18n';
 import { useLibraryStore } from './library';
@@ -43,7 +43,7 @@ export const useJobsStore = defineStore('jobs', {
       });
     },
     _listen(job, onReady) {
-      const es = new EventSource(`/api/jobs/${job.id}/progress`);
+      const es = new EventSource(apiUrlWithProfile(`/api/jobs/${job.id}/progress`));
       es.onmessage = async (event) => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }

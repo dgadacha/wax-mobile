@@ -3,7 +3,7 @@
 // callback (see init()).
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
 import { isStreamId, fmtDuration } from '@/lib/format';
 import { useLibraryStore } from './library';
 import { useStreamsStore } from './streams';
@@ -21,8 +21,8 @@ function findTrack(id) {
 
 function trackPlayUrl(track) {
   if (!track) return null;
-  if (track.file) return track.file;
-  if (track.ytId) return `/api/stream/${track.ytId}`;
+  if (track.file) return apiUrl(track.file);
+  if (track.ytId) return apiUrl(`/api/stream/${track.ytId}`);
   return null;
 }
 
@@ -243,7 +243,7 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl2.volume = baseVol;
       this.audioEl2.play().catch(() => {});
 
-      this.audioEl.src = nextTrack.file;
+      this.audioEl.src = apiUrl(nextTrack.file);
       this.audioEl.volume = 0;
       this.audioEl.currentTime = 0;
       this.audioEl.play().catch(() => {});
@@ -456,7 +456,7 @@ export const usePlayerStore = defineStore('player', {
       if (!track) return;
       this.visible = true;
       if (!this.audioEl) return;
-      this.audioEl.src = track.file;
+      this.audioEl.src = apiUrl(track.file);
       const prefs = usePrefsStore();
       this.audioEl.volume = this.muted ? 0 : prefs.volume;
       this.audioEl.addEventListener('loadedmetadata', () => {

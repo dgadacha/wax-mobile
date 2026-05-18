@@ -1,6 +1,6 @@
 // Library: tracks the user has favorited or downloaded.
 import { defineStore } from 'pinia';
-import { api } from '@/lib/api';
+import { api, apiUrl, apiUrlWithProfile } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { confirmModal } from '@/lib/modal';
 import { t } from '@/lib/i18n';
@@ -347,7 +347,7 @@ export const useLibraryStore = defineStore('library', {
       }
     },
     _listenLibraryProgress(jobId, trackId) {
-      const es = new EventSource(`/api/jobs/${jobId}/progress`);
+      const es = new EventSource(apiUrlWithProfile(`/api/jobs/${jobId}/progress`));
       es.onmessage = (event) => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
@@ -392,7 +392,7 @@ export const useLibraryStore = defineStore('library', {
     // re-render storm to one flush per frame (~60 Hz max).
     _listenAlbumProgress() {
       if (this._albumEs) return;
-      const es = new EventSource('/api/album-progress');
+      const es = new EventSource(apiUrlWithProfile('/api/album-progress'));
       this._albumEs = es;
       // On (re)connect, sync the rescan state from the server so a
       // rescan that ran while we were disconnected (Vite HMR reload,
@@ -400,7 +400,7 @@ export const useLibraryStore = defineStore('library', {
       // at the seed value. SSE alone misses these transitions.
       es.onopen = async () => {
         try {
-          const res = await fetch('/api/library/rescan-albums');
+          const res = await fetch(apiUrl('/api/library/rescan-albums'));
           const data = await res.json();
           if (data && (data.total || 0) > 0) {
             this.albumRescan = {

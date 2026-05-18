@@ -1,36 +1,41 @@
 {
-  "name": "wax",
-  "version": "1.25.0",
+  "name": "wax-mobile",
+  "version": "0.2.0",
   "private": true,
-  "description": "Wax — desktop music app (YouTube → MP3 + streaming)",
-  "main": "electron/main.cjs",
+  "description": "Wax mobile — YouTube → MP3 player (iOS + Android via Capacitor)",
+  "type": "module",
   "scripts": {
-    "server": "node server.js",
-    "vite": "vite",
-    "electron": "electron .",
-    "dev:vite": "vite",
-    "dev:electron": "wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .",
-    "dev": "concurrently -k -n vite,electron -c \"magenta,cyan\" \"npm:dev:vite\" \"npm:dev:electron\"",
+    "server": "node server.cjs",
+    "dev": "vite",
     "build": "vite build",
-    "fetch:bin": "bash scripts/fetch-bin.sh",
-    "dist:mac": "npm run build && electron-builder --mac --config electron-builder.yml",
-    "dist:win": "npm run fetch:bin && npm run build && electron-builder --win --config electron-builder.yml",
-    "dist:linux": "npm run fetch:bin && npm run build && electron-builder --linux --config electron-builder.yml",
-    "postinstall": "electron-builder install-app-deps || true"
+    "preview": "vite preview --host",
+    "cap:sync": "cap sync",
+    "cap:open:ios": "cap open ios",
+    "cap:open:android": "cap open android",
+    "ios": "npm run build && cap sync ios && cap open ios",
+    "android": "npm run build && cap sync android && cap open android"
   },
   "dependencies": {
-    "@distube/ytdl-core": "^4.16.12",
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/filesystem": "^6.0.2",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/preferences": "^6.0.3",
+    "@capacitor/share": "^6.0.3",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2",
     "express": "^4.21.0",
+    "lucide-vue-next": "^1.0.0",
     "pinia": "^2.2.4",
+    "vant": "^4.9.14",
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@vant/auto-import-resolver": "^1.3.0",
     "@vitejs/plugin-vue": "^5.2.1",
-    "concurrently": "^9.1.0",
-    "cross-env": "^7.0.3",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
-    "vite": "^5.4.11",
-    "wait-on": "^8.0.1"
+    "unplugin-vue-components": "^0.27.4",
+    "vite": "^5.4.11"
   }
 }

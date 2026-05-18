@@ -7,8 +7,10 @@ library/covers/
 library/artists/
 library/albums/
 library/album-covers/
+library/users/
 library/library.json
 library/playlists.json
+library/profiles.json
 
 # Build outputs
 dist/
@@ -16,11 +18,14 @@ release/
 out/
 .vite/
 
-# Bundled binaries fetched on demand by scripts/fetch-bin.sh (too large for git)
-build/bin/
+# Capacitor native projects — regenerated per checkout via `npx cap add`
+ios/
+android/
 
-# Legacy snapshot of pre-Vue frontend (kept for reference, not bundled)
-legacy-public/
+# Env (VITE_API_BASE_URL etc.). `.env.example` is the only committed copy.
+.env
+.env.local
+.env.*.local
 
 # Local Claude Code settings (per-machine permission overrides)
 .claude/settings.local.json
