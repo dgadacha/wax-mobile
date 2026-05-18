@@ -18,8 +18,33 @@ const streams = useStreamsStore();
 const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
+const queueOpen = ref(false);
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
+
+// Resolve every queue id to a track (library or stream). The currently
+// playing one gets the accent treatment.
+const queueTracks = computed(() => {
+  return (player.queue || []).map((id, idx) => {
+    const tr = lib.findById(id) || streams.get(id);
+    return tr ? { ...tr, _qIdx: idx, _isCurrent: idx === player.index } : null;
+  }).filter(Boolean);
+});
+
+function jumpToQueue(idx) {
+  if (idx === player.index) {
+    player.togglePlay();
+    return;
+  }
+  player.index = idx;
+  player.loadAndPlay();
+}
+
+function removeFromQueue(idx) {
+  if (idx === player.index) return; // can't drop the current one
+  player.queue.splice(idx, 1);
+  if (idx < player.index) player.index -= 1;
+}
 const title = computed(() => player.currentTrack?.title || '');
 const sub = computed(() => player.currentTrack?.uploader || '');
 const seekPct = computed(() => {
@@ -162,10 +187,60 @@ onMounted(() => {
           <button class="np-extra" aria-label="Paroles" @click="showLyrics(player.currentTrack)">
             <MessageSquareText :size="22" :stroke-width="2" color="var(--text-muted)" />
           </button>
-          <button class="np-extra" aria-label="File d'attente">
+          <button class="np-extra" aria-label="File d'attente" @click="queueOpen = true">
             <ListMusic :size="22" :stroke-width="2" color="var(--text-muted)" />
           </button>
         </div>
+      </div>
+    </div>
+  </van-popup>
+
+  <!-- Queue sheet — slides up from the bottom of the fullscreen player.
+       Lists every queued track; tap to jump, tap the currently playing
+       one to toggle pause; long-press / X to remove. -->
+  <van-popup
+    v-model:show="queueOpen"
+    position="bottom"
+    round
+    teleport="body"
+    :style="{ maxHeight: '85vh' }"
+    safe-area-inset-bottom
+    class="queue-popup"
+  >
+    <div class="queue-screen">
+      <div class="queue-handle" />
+      <div class="queue-head">
+        <h2>File d'attente</h2>
+        <span class="muted">{{ queueTracks.length }} titre{{ queueTracks.length > 1 ? 's' : '' }}</span>
+      </div>
+      <div class="queue-list">
+        <div v-if="queueTracks.length === 0" class="empty-state small">
+          <div class="hint">Rien dans la file pour l'instant.</div>
+        </div>
+        <button
+          v-for="tr in queueTracks"
+          :key="tr._qIdx + '-' + tr.id"
+          type="button"
+          class="qrow"
+          :class="{ current: tr._isCurrent }"
+          @click="jumpToQueue(tr._qIdx)"
+        >
+          <div class="qrow-thumb">
+            <img v-if="tr.thumbnail" :src="apiUrl(tr.thumbnail)" alt="" loading="lazy" />
+          </div>
+          <div class="qrow-meta">
+            <div class="qrow-title text-ellipsis">{{ tr.title }}</div>
+            <div class="qrow-sub text-ellipsis">{{ tr.uploader }}</div>
+          </div>
+          <component
+            :is="tr._isCurrent ? Pause : Play"
+            v-if="tr._isCurrent"
+            :size="18"
+            :stroke-width="2.5"
+            color="var(--accent)"
+            :fill="player.playing ? 'var(--accent)' : 'transparent'"
+          />
+        </button>
       </div>
     </div>
   </van-popup>
@@ -339,4 +414,73 @@ onMounted(() => {
   cursor: pointer;
 }
 .np-extra:active { background: rgba(255, 255, 255, 0.08); }
+
+/* Queue sheet */
+.queue-popup { background: var(--bg-elev) !important; }
+.queue-screen {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+  padding: 0 12px;
+}
+.queue-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 999px;
+  margin: 10px auto 6px;
+}
+.queue-head {
+  padding: 8px 8px 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.queue-head h2 {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text);
+}
+.queue-head .muted { font-size: 12px; color: var(--text-muted); }
+
+.queue-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+}
+.qrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.qrow + .qrow { margin-top: 2px; }
+.qrow:active { background: var(--card-hover); }
+.qrow.current { background: var(--accent-soft); }
+.qrow-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--card-hover);
+  flex: 0 0 auto;
+}
+.qrow-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.qrow-meta { flex: 1 1 auto; min-width: 0; }
+.qrow-title { font-size: 14px; font-weight: 500; color: var(--text); }
+.qrow.current .qrow-title { color: var(--accent-bright); }
+.qrow-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.muted { color: var(--text-muted); }
+.empty-state.small { padding: 30px 16px; text-align: center; }
+.empty-state.small .hint { font-size: 13px; color: var(--text-muted); }
 </style>
