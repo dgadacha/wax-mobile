@@ -124,7 +124,7 @@ img { max-width: 100%; display: block; }
   -webkit-overflow-scrolling: touch;
   /* Reserve room at the bottom for the mini-player + tab bar so the last
    * card isn't hidden under the chrome. */
-  padding-bottom: calc(var(--mini-height) + var(--tab-height) + var(--safe-bottom) + 8px);
+  padding-bottom: calc(var(--mini-height) + var(--tab-height) + var(--safe-bottom) + 14px);
 }
 
 /* van-tabbar handles fixed positioning + safe-area-inset-bottom itself
@@ -137,7 +137,9 @@ img { max-width: 100%; display: block; }
 
 .app-shell .mini-player {
   position: fixed;
-  bottom: calc(var(--tab-height) + var(--safe-bottom));
+  /* +6px so the mini-player floats slightly above the tab bar instead of
+   * sticking to it — gives the floating-pill look. */
+  bottom: calc(var(--tab-height) + var(--safe-bottom) + 6px);
   left: 8px;
   right: 8px;
   z-index: 6;
