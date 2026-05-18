@@ -1,6 +1,6 @@
 {
   "name": "wax-mobile",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "description": "Wax mobile — YouTube → MP3 player (iOS + Android via Capacitor)",
   "type": "module",
@@ -9,11 +9,12 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --host",
-    "cap:sync": "cap sync",
+    "cap:setup": "node scripts/setup-native.mjs",
+    "cap:sync": "cap sync && npm run cap:setup",
     "cap:open:ios": "cap open ios",
     "cap:open:android": "cap open android",
-    "ios": "npm run build && cap sync ios && cap open ios",
-    "android": "npm run build && cap sync android && cap open android"
+    "ios": "npm run build && cap sync ios && npm run cap:setup && cap open ios",
+    "android": "npm run build && cap sync android && npm run cap:setup && cap open android"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

@@ -8,6 +8,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
 import { useStreamsStore } from '@/stores/streams';
 import { fmtDuration } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 import { showLyrics } from '@/composables/useLyrics';
 
 const player = usePlayerStore();
@@ -18,7 +19,7 @@ const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
 
-const cover = computed(() => player.currentTrack?.thumbnail || '');
+const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
 const title = computed(() => player.currentTrack?.title || '');
 const sub = computed(() => player.currentTrack?.uploader || '');
 const seekPct = computed(() => {

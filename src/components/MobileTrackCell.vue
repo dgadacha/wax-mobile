@@ -2,6 +2,7 @@
 import { computed } from 'vue';
 import { Heart, MoreHorizontal, Play, Check } from 'lucide-vue-next';
 import { fmtDuration } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 
 const props = defineProps({
   track: { type: Object, required: true },
@@ -50,7 +51,7 @@ const sub = computed(() => {
     </div>
 
     <div v-if="variant === 'thumb'" class="thumb">
-      <img v-if="track.thumbnail" :src="track.thumbnail" alt="" loading="lazy" />
+      <img v-if="track.thumbnail" :src="apiUrl(track.thumbnail)" alt="" loading="lazy" />
     </div>
 
     <div class="meta">

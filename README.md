@@ -56,11 +56,13 @@ Ouvre <http://localhost:5173> et active le mode responsive mobile dans les devto
 
 ### Builder pour iOS / Android
 
-Première fois — ajoute les plateformes natives :
+Première fois — ajoute les plateformes natives + applique les patches audio :
 
 ```bash
-npx cap add ios
-npx cap add android
+npm run build         # vite → dist/
+npx cap add ios       # nécessite Xcode
+npx cap add android   # nécessite Android Studio + JDK 17
+npm run cap:setup     # applique les patches background audio (idempotent)
 ```
 
 Ensuite, pour reconstruire et ouvrir Xcode / Android Studio :
@@ -70,11 +72,19 @@ Ensuite, pour reconstruire et ouvrir Xcode / Android Studio :
 echo "VITE_API_BASE_URL=https://wax-api.nc-maiz.org" > .env
 
 # iOS
-npm run ios
+npm run ios            # build + cap sync ios + cap:setup + cap open ios
 
 # Android
-npm run android
+npm run android        # build + cap sync android + cap:setup + cap open android
 ```
+
+`npm run cap:setup` exécute `scripts/setup-native.mjs` qui :
+
+- Patche `ios/App/App/Info.plist` → `UIBackgroundModes = [audio]`.
+- Patche `ios/App/App/AppDelegate.swift` → `AVAudioSession.setCategory(.playback)` + `beginReceivingRemoteControlEvents()`.
+- Patche `android/app/src/main/AndroidManifest.xml` → permissions `WAKE_LOCK`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`.
+
+Tous les patches sont idempotents (vérifient un sentinel avant d'agir). `npm run cap:sync` enchaîne `cap sync && cap:setup` pour les ré-appliquer après chaque sync (Capacitor peut régénérer certains fichiers natifs).
 
 ## Backend — déploiement k8s
 
@@ -117,8 +127,9 @@ Pré-1.0, en chantier actif. Le shell mobile + les vues principales sont portée
 - **Player** : mini bar persistante + plein écran avec cover, slider de seek, prev/next, like, lyrics.
 - **Réglages** : profil actif + sélecteur de couleur d'accent (8 swatches), Favoris/Playlists counts, danger zone (Tout effacer).
 - **Safe areas** iOS notch + Android cutout gérées (viewport-fit=cover + Vant safe-area-inset props + StatusBar overlay Capacitor).
+- **Background audio** iOS + Android prêt : Info.plist + AVAudioSession + remote control events côté iOS ; permissions WAKE_LOCK + FOREGROUND_SERVICE_MEDIA_PLAYBACK côté Android. Patches appliqués via `npm run cap:setup` (idempotent).
 
-Pas encore : drag-reorder dans les playlists, settings avancés (thème complet 22 variantes / langue / EQ / backup), background audio iOS, offline via Capacitor filesystem, image URLs préfixées `apiUrl()` (sweep avant build prod). Voir `CLAUDE.md` pour le détail.
+Pas encore : drag-reorder dans les playlists, settings avancés (thème complet 22 variantes / langue / EQ / backup), offline via Capacitor filesystem. Voir `CLAUDE.md` pour le détail.
 
 ## Licence
 

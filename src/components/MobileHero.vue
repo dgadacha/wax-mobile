@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { Play } from 'lucide-vue-next';
+import { apiUrl } from '@/lib/api';
 
 const props = defineProps({
   // Big square cover (album art, playlist gradient, artist photo).
@@ -24,6 +25,7 @@ const emit = defineEmits(['play', 'more']);
 const fallbackStyle = computed(() =>
   props.bgGradient ? { background: props.bgGradient } : null,
 );
+const coverSrc = computed(() => apiUrl(props.cover));
 </script>
 
 <template>
@@ -31,7 +33,7 @@ const fallbackStyle = computed(() =>
     <!-- Blurred backdrop: same image as the cover, scaled up + blurred, with a
          dark vignette fading to the page bg. Gives the immersive
          Spotify/Deezer feel without needing a separate banner asset. -->
-    <div class="mh-bg" :style="cover ? { backgroundImage: `url('${cover}')` } : fallbackStyle" />
+    <div class="mh-bg" :style="cover ? { backgroundImage: `url('${coverSrc}')` } : fallbackStyle" />
     <div class="mh-fade" />
 
     <div class="mh-body">
@@ -39,7 +41,7 @@ const fallbackStyle = computed(() =>
         <img
           v-if="cover"
           class="mh-cover"
-          :src="cover"
+          :src="coverSrc"
           alt=""
           loading="eager"
         />

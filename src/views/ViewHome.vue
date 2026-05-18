@@ -7,6 +7,7 @@ import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
 import { fmtDuration } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 
 const discover = useDiscoverStore();
 const streams = useStreamsStore();
@@ -68,7 +69,7 @@ const hello = computed(() => {
           @click="playOne(t)"
         >
           <div class="rp-thumb">
-            <img v-if="t.thumbnail" :src="t.thumbnail" alt="" loading="lazy" />
+            <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
           </div>
           <span class="text-ellipsis">{{ t.title }}</span>
         </button>
@@ -99,7 +100,7 @@ const hello = computed(() => {
           @click="playFromDiscover(t)"
         >
           <div class="dc-cover">
-            <img v-if="t.thumbnail" :src="t.thumbnail" alt="" loading="lazy" />
+            <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
           </div>
           <div class="dc-title text-ellipsis">{{ t.title }}</div>
           <div class="dc-sub text-ellipsis">{{ t.uploader }}</div>

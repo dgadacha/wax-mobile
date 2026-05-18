@@ -10,6 +10,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
 import { useMixStore } from '@/stores/mix';
 import { fmtDuration, parseTrackTitle, normalizeArtistKey, gradientFromString } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
@@ -249,7 +250,7 @@ function cardIcon(card) {
             :class="{ 'is-circle': c.kind === 'artist' }"
             :style="c.cover ? {} : { background: c.gradient }"
           >
-            <img v-if="c.cover" :src="c.cover" alt="" loading="lazy" />
+            <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
             <component v-else :is="cardIcon(c)" :size="26" :stroke-width="1.8" color="rgba(255,255,255,0.75)" />
           </div>
           <div class="lib-card-meta">

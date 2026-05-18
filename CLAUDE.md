@@ -47,7 +47,7 @@ Capacitor packages the built `dist/` into the native app and serves it from `cap
 - SSE: `new EventSource(apiUrlWithProfile('/api/...'))`
 - `audio.src = track.file` → `audio.src = apiUrl(track.file)`
 - `audio.src = '/api/stream/<id>'` → `audio.src = apiUrl('/api/stream/<id>')`
-- `<img :src="track.thumbnail">` — **TODO**, the legacy tracks carry `/api/cover/<id>` strings; for now `apiUrl()` happens to be a no-op in dev (`VITE_API_BASE_URL=''` → relative URLs → Vite proxy) but the production Capacitor build will need every image binding wrapped too. The artist photo in `ViewArtist.vue` is already wrapped; the rest of the views still bind raw strings.
+- `<img :src="track.thumbnail">` — wrapped at the mobile-shell call sites: `MobileHero`, `MobileTrackCell`, `MobilePlayer`, `ViewHome`, `ViewLibrary`. The legacy desktop components (`TrackRow`, `Player.vue`, `NowPlaying`, `BigPicture`, `Sidebar`, `QueueItem`, `DiscoverGrid`, `BulkAddBody`) still bind raw strings — they're no longer mounted in the mobile shell, only kept on disk for reference.
 
 In dev, leave `VITE_API_BASE_URL` empty (default in `.env.example`) and the Vite proxy handles forwarding. In Capacitor builds, set it to the deployed backend URL (e.g. `https://wax-api.nc-maiz.org`) before running `npm run build && cap sync`.
 
@@ -168,13 +168,32 @@ Same `lib.downloadTrack(trackId)` → POST `/api/library/:id/download` → SSE `
 - **i18n**: legacy `lib/i18n.js` is still on disk but the mobile views use raw French strings inline for now. To bring i18n back, call `t('...')` and add to both `en` / `fr` catalogs — same convention as desktop.
 - **Composition API + `<script setup>`** only.
 
+## Capacitor native + background audio
+
+`npx cap add ios` / `npx cap add android` have been run once and the `ios/` + `android/` folders are gitignored. On a fresh checkout the user runs them again locally. The post-`cap add` (or `cap sync`) workflow is:
+
+```bash
+npm run build         # vite → dist/
+npx cap add ios       # or `cap add android` (first time per platform)
+npm run cap:setup     # idempotent patches — see scripts/setup-native.mjs
+npm run ios           # build + sync + setup + open Xcode (composite)
+```
+
+`scripts/setup-native.mjs` is a Node script that applies — idempotently — the patches needed for background audio. Re-runs are safe (each patch checks for a sentinel string). Applied edits:
+
+- **iOS Info.plist** : adds `UIBackgroundModes = [audio]` so iOS keeps the WebView's `<audio>` alive when the device locks. Without it, audio stops within ~2 s of locking.
+- **iOS AppDelegate.swift** : imports `AVFoundation` + `MediaPlayer`, sets `AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)` and `setActive(true)` in `didFinishLaunchingWithOptions`, then calls `beginReceivingRemoteControlEvents()` so the lock-screen / Control Center transport reaches the page's MediaSession handlers.
+- **Android AndroidManifest.xml** : adds `WAKE_LOCK`, `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permissions. (Android Chromium honors `<audio>` + Media Session API in background by default, but the FOREGROUND_SERVICE_MEDIA_PLAYBACK permission is required on Android 14+ to declare the playback intent.)
+
+The page-side Media Session API setup already lives in `src/stores/player.js` (`setupMediaSession()` registers `play/pause/previoustrack/nexttrack/seekto` action handlers and `_updateMediaMetadata()` pushes `MediaMetadata{title, artist, album, artwork}` on every track change). iOS picks this up automatically once `beginReceivingRemoteControlEvents` is called.
+
+`npm run cap:sync` wraps `cap sync && npm run cap:setup` so the patches reapply automatically after each sync (Capacitor sometimes regenerates parts of the native projects).
+
 ## Active TODOs / known gaps
 
-- Capacitor native projects (`ios/`, `android/`) not generated yet — run `npx cap add ios` / `npx cap add android` on first setup, then add icons + splash artwork.
-- Background audio plugin not wired — iOS will pause when the WebView goes to background. Pick `@capacitor-community/native-audio` or a custom plugin with `AVAudioSession` / `MediaSessionService` integration.
+- Native projects (`ios/`, `android/`) not committed — `cap add` regenerates them per-checkout. Icons + splash artwork still need to be set in Xcode / Android Studio.
 - Offline storage: download flow still writes to `server.cjs`'s `library/audio/<id>.mp3` (server-side filesystem). For Capacitor, the client should download via `@capacitor/filesystem` so MP3s sit on the device storage, not the backend's PVC. Big architectural shift — design decision pending.
 - Prefs storage still uses `localStorage`. Could migrate to `@capacitor/preferences` for better iOS sandboxing, but localStorage works in the WebView so this is optional.
-- Image bindings (`<img :src="track.thumbnail">`) NOT prefixed with `apiUrl()`. They work in dev (Vite proxy) but will 404 in the Capacitor build. Sweep needed before first build: every `:src="x.thumbnail"`, `:src="x.coverUrl"`, `:src="x.albumCoverUrl"`. The artist photo (ViewArtist.vue) is already wrapped.
 - `SettingsBody.vue` (legacy desktop settings) NOT ported. The mobile `ViewSettings.vue` covers profile / accent / library counts / reset; theme picker (22 themes) / language / EQ / backup are still pending.
 - Drag-reorder on Playlist track list not ported (was HTML5 DnD on desktop; mobile needs `van-draggable` or a long-press handle).
 - Playlist create / rename still goes through the legacy `promptModal` (mounted via `ModalRoot.vue`) because Vant has no text-input dialog. Profile rename uses a native `window.prompt` for the same reason — consider building a `MobilePromptSheet`.
