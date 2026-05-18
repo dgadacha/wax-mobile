@@ -30,8 +30,13 @@ watch(
 </script>
 
 <template>
-  <div class="modal" v-show="modalState.visible">
-    <div class="modal-overlay" @click="closeModal"></div>
+  <!-- Teleport to body so the modal escapes .app-shell's stacking context
+       (which is position: fixed, creating one). Without this, the modal's
+       z-index can't compete with van-popup elements that already teleport
+       to body. -->
+  <Teleport to="body">
+    <div class="modal" v-show="modalState.visible">
+      <div class="modal-overlay" @click="closeModal"></div>
     <div class="modal-content" :class="{ wide: modalState.wide }">
       <h3>{{ modalState.title }}</h3>
       <div class="modal-body">
@@ -86,5 +91,6 @@ watch(
         </button>
       </div>
     </div>
-  </div>
+    </div>
+  </Teleport>
 </template>

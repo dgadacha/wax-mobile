@@ -233,7 +233,10 @@ img { max-width: 100%; display: block; }
 .modal {
   position: fixed;
   inset: 0;
-  z-index: 200;
+  /* Above Vant popups (van-popup defaults to z-index: 2000). The lyrics
+   * sheet is opened from inside the fullscreen Now Playing popup; without
+   * this bump it would render underneath. */
+  z-index: 2100;
   display: flex;
   align-items: flex-end;
   justify-content: center;
