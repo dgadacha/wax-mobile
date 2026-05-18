@@ -12,10 +12,16 @@
 // from the URL — use `apiUrlWithProfile()` for those.
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const ACTIVE_PROFILE_KEY = 'wax:active-profile';
+const AUTH_TOKEN_KEY = 'wax:auth-token';
 
 function activeProfileId() {
   try { return localStorage.getItem(ACTIVE_PROFILE_KEY) || 'default'; }
   catch { return 'default'; }
+}
+
+function authToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY) || ''; }
+  catch { return ''; }
 }
 
 export function apiUrl(path) {
@@ -26,10 +32,12 @@ export function apiUrl(path) {
 
 // Variant for EventSource / image src — appends `?profile=<id>` (or `&`)
 // so the server's middleware reads the right profile context.
+// SSE endpoints (EventSource) can't set custom headers — append token + profile
+// as query params so the server's auth middleware can validate them.
 export function apiUrlWithProfile(path) {
   const url = apiUrl(path);
   const sep = url.includes('?') ? '&' : '?';
-  return `${url}${sep}profile=${encodeURIComponent(activeProfileId())}`;
+  return `${url}${sep}profile=${encodeURIComponent(activeProfileId())}&_token=${encodeURIComponent(authToken())}`;
 }
 
 export async function api(path, opts = {}) {
@@ -38,6 +46,7 @@ export async function api(path, opts = {}) {
     headers: {
       'Content-Type': 'application/json',
       'X-Wax-Profile': activeProfileId(),
+      'Authorization': `Bearer ${authToken()}`,
       ...(opts.headers || {}),
     },
   });

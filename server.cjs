@@ -178,10 +178,73 @@ app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.header('Origin') || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Wax-Profile');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Wax-Profile, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
+});
+
+// ----------------------------------------------------------------
+// Auth — single-user password gate.
+// Credentials are read from env vars WAX_AUTH_EMAIL + WAX_AUTH_PASSWORD.
+// When both are set, every /api/* request must carry a valid session
+// token in the Authorization header (or ?_token= for SSE endpoints).
+// ----------------------------------------------------------------
+const AUTH_EMAIL = process.env.WAX_AUTH_EMAIL || '';
+const AUTH_PASSWORD = process.env.WAX_AUTH_PASSWORD || '';
+
+const authTokens = new Map(); // token -> { createdAt }
+const TOKEN_TTL_MS = 30 * 24 * 3600 * 1000; // 30 days
+
+function authEnabled() { return !!(AUTH_EMAIL && AUTH_PASSWORD); }
+
+function safeCompare(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, Buffer.alloc(bufA.length));
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function isValidToken(token) {
+  if (!authEnabled()) return true;
+  const entry = authTokens.get(token);
+  if (!entry) return false;
+  if (Date.now() - entry.createdAt > TOKEN_TTL_MS) { authTokens.delete(token); return false; }
+  return true;
+}
+
+// Login — exempt from the auth middleware below.
+app.post('/api/auth/login', (req, res) => {
+  if (!authEnabled()) return res.json({ token: 'disabled', ok: true });
+  const { email, password } = req.body || {};
+  if (!safeCompare(email, AUTH_EMAIL) || !safeCompare(password, AUTH_PASSWORD)) {
+    return res.status(401).json({ error: 'Identifiants incorrects' });
+  }
+  const token = crypto.randomBytes(32).toString('hex');
+  authTokens.set(token, { createdAt: Date.now() });
+  res.json({ token, ok: true });
+});
+
+// Auth middleware — protects all /api/* routes except the login endpoint above.
+app.use('/api', (req, res, next) => {
+  if (!authEnabled()) return next();
+  // Already handled by the route above — skip middleware check for login.
+  if (req.method === 'POST' && req.path === '/auth/login') return next();
+  const bearerHeader = req.header('Authorization') || '';
+  const headerToken = bearerHeader.startsWith('Bearer ') ? bearerHeader.slice(7) : '';
+  const queryToken = typeof req.query._token === 'string' ? req.query._token : '';
+  if (!isValidToken(headerToken || queryToken)) {
+    return res.status(401).json({ error: 'Non authentifié' });
+  }
+  next();
+});
+
+app.get('/api/auth/verify', (_req, res) => {
+  // Reaching here means the middleware passed — token is valid.
+  res.json({ ok: true });
 });
 
 // Per-request profile resolution. Header takes precedence (mobile app

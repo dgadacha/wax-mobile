@@ -37,6 +37,16 @@ spec:
               value: /usr/local/bin/yt-dlp
             - name: WAX_FFMPEG
               value: /usr/bin/ffmpeg
+            - name: WAX_AUTH_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: wax-auth
+                  key: email
+            - name: WAX_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wax-auth
+                  key: password
           volumeMounts:
             - name: data
               mountPath: /data

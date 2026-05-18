@@ -5,6 +5,7 @@ import { showToast as vantToast } from 'vant';
 import { House, Search, Library, Settings, ChevronLeft } from 'lucide-vue-next';
 import MobilePlayer from './components/MobilePlayer.vue';
 import ModalRoot from './components/ModalRoot.vue';
+import LoginGate from './components/LoginGate.vue';
 import ProfileGate from './components/ProfileGate.vue';
 
 import ViewHome from './views/ViewHome.vue';
@@ -23,6 +24,7 @@ import { usePlayerStore } from './stores/player';
 import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
 import { useProfileStore } from './stores/profile';
+import { useAuthStore } from './stores/auth';
 import { useActionSheetStore } from './stores/actionSheet';
 import { haptics } from './lib/haptics';
 import { closeModal, modalState } from './lib/modal';
@@ -34,6 +36,7 @@ const player = usePlayerStore();
 const prefs = usePrefsStore();
 const discover = useDiscoverStore();
 const profile = useProfileStore();
+const auth = useAuthStore();
 const actionSheet = useActionSheetStore();
 
 // Top-level tab routes. Detail views (playlist, album, artist, mix) are
@@ -88,36 +91,41 @@ watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
 }, { immediate: true });
 
-// Land on Home for new sessions; legacy view stores may have persisted
-// 'download' as the default.
-onMounted(async () => {
-  prefs.load();
+async function initAfterLogin() {
   profile.loadActiveFromStorage();
   if (view.name === 'download' || view.name == null) {
     view.switchTo('home');
   }
-  setTimeout(() => player.setupMediaSession(), 0);
 
-  // Fetch profiles first — the gate blocks the rest of the UI until a
-  // profile is active (the user picks or one is remembered + still valid).
   try { await profile.fetch(); }
   catch { vantToast({ message: 'Backend injoignable', type: 'fail' }); }
 
-  if (profile.needsPicker) {
-    // Don't bother fetching library/playlists yet — they'd go through the
-    // default profile but get replaced on the page reload after picking.
-    return;
-  }
+  if (profile.needsPicker) return;
 
-  try {
-    await library.fetch();
-  } catch (e) {
-    vantToast({ message: 'Backend injoignable', type: 'fail' });
-  }
+  try { await library.fetch(); }
+  catch { vantToast({ message: 'Backend injoignable', type: 'fail' }); }
+
   player.restorePlayerState();
   playlists.fetch();
   library._listenAlbumProgress();
   discover.refresh();
+}
+
+// Resume normal init as soon as the user successfully logs in.
+watch(() => auth.loggedIn, (v) => { if (v) initAfterLogin(); });
+
+// Land on Home for new sessions; legacy view stores may have persisted
+// 'download' as the default.
+onMounted(async () => {
+  prefs.load();
+  auth.loadToken();
+  setTimeout(() => player.setupMediaSession(), 0);
+
+  // Verify stored token first — LoginGate shows a spinner until done.
+  await auth.verify();
+  if (!auth.loggedIn) return; // LoginGate will take over
+
+  await initAfterLogin();
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalState.visible) closeModal();
@@ -174,6 +182,7 @@ onMounted(async () => {
     </van-tabbar>
 
     <ModalRoot />
+    <LoginGate />
     <ProfileGate />
 
     <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
