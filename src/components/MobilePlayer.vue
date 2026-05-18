@@ -126,10 +126,14 @@ onMounted(() => {
     class="np-popup"
   >
     <div class="np-screen">
+      <!-- Wrapper handles the notch via padding-top so it works even when
+           the popup teleports outside the document flow (env(safe-area-*)
+           on van-nav-bar's internal class is sometimes flaky in fullscreen
+           popups). Don't add safe-area-inset-top on the nav-bar — that
+           would double-pad. -->
       <van-nav-bar
         :title="'En cours de lecture'"
         :border="false"
-        safe-area-inset-top
         @click-left="fullscreen = false"
       >
         <template #left>
@@ -313,8 +317,10 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  /* No padding-top here — the nested <van-nav-bar safe-area-inset-top>
-   * already eats the notch height. Adding it would double up. */
+  /* Notch is owned here, not by the nested van-nav-bar — see template
+   * comment. Keeps the chevron/title sitting comfortably below the
+   * status bar on iPhone notched devices. */
+  padding-top: var(--safe-top);
 }
 
 .np-body {
