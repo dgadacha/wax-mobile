@@ -247,17 +247,18 @@ onMounted(() => {
 </template>
 
 <style>
-/* mini player */
+/* mini player — flush with the tab bar (Spotify mobile pattern). Square
+ * corners, full width; the bg sits one elevation step above the tab bar
+ * (--bg-elev → slightly lighter card mix) so the seam reads as two
+ * stacked surfaces. */
 .mini-player {
   height: var(--mini-height);
-  border-radius: 12px;
   background: var(--card);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.32);
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 10px;
-  border: 1px solid var(--border);
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
 }
 
 .mini-player .mp-thumb {
