@@ -114,43 +114,126 @@ npm run android        # build + cap sync + cap:setup + cap open android
 
 `npm run cap:sync` enchaîne `cap sync && cap:setup` pour ré-appliquer après chaque sync (Capacitor peut régénérer certains fichiers natifs).
 
-## Déploiement (k8s + Cloudflare Tunnel, façon kuro)
+## Auto-hébergement (self-host)
 
-L'image Docker bake le frontend (build Vite) dans `/app/dist` et `server.cjs` le sert au root + SPA fallback. Un seul conteneur, un seul URL, pas de CORS, pas de host statique séparé. Exactement le pattern kuro.
+Une seule image Docker contient le frontend (build Vite baked-in via le stage `web-builder`) et le backend (`server.cjs` + `yt-dlp` + `ffmpeg`). Un conteneur, un URL public, pas de CORS, pas de host statique séparé. Exactement le pattern [kuro](https://gitlab.com/kidnar/kuro).
+
+### Prérequis
+
+- Docker + accès à un registry (GitLab / GitHub Container Registry / Docker Hub — au choix)
+- Un cluster Kubernetes (k3s, k8s, …) avec `kubectl` configuré
+- Un moyen d'exposer publiquement : **Cloudflare Tunnel** (recommandé, gratuit) ou un Ingress avec cert-manager
+
+### 1. Build + push l'image
+
+Clone le repo et build pour ton propre registry. Remplace `<ton-registry>/<ton-namespace>` par le tien (ex. `registry.gitlab.com/<ton-user>` ou `ghcr.io/<ton-user>`).
 
 ```bash
-# Build (frontend + backend dans la même image)
-docker build -t registry.gitlab.com/kidnar/wax:latest .
-docker push registry.gitlab.com/kidnar/wax:latest
+git clone https://github.com/dgadacha/wax-mobile.git
+cd wax-mobile
 
-# Déploiement k8s
+# Login au registry (une fois)
+docker login <ton-registry>
+
+# Build (frontend + backend dans la même image, ~5 min sur cache vide)
+docker build -t <ton-registry>/<ton-namespace>/wax:latest .
+docker push <ton-registry>/<ton-namespace>/wax:latest
+```
+
+### 2. Ajuste les manifests k8s
+
+Édite [`k8s/deployment.yaml`](k8s/deployment.yaml) :
+
+- Ligne `image:` → remplace `registry.gitlab.com/kidnar/wax:latest` par ton image.
+- Ligne `imagePullSecrets: - name: gitlab-registry` → soit garde le nom, soit renomme. C'est juste un nom de secret k8s.
+
+Si ton image est sur GitHub Container Registry (ghcr.io), tu peux la rendre publique → pas besoin de pull secret du tout, supprime le bloc `imagePullSecrets`.
+
+### 3. Crée le pull secret (si registry privé)
+
+```bash
+kubectl create namespace wax
+
+# GitLab registry
+kubectl -n wax create secret docker-registry gitlab-registry \
+  --docker-server=registry.gitlab.com \
+  --docker-username=<ton-user-gitlab> \
+  --docker-password=<un-personal-access-token-avec-read_registry>
+
+# Ou GitHub Container Registry
+kubectl -n wax create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username=<ton-user-github> \
+  --docker-password=<ghp_xxx_avec-read-packages>
+```
+
+### 4. Apply les manifests
+
+```bash
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/pvc.yaml
 kubectl apply -f k8s/deployment.yaml
 kubectl apply -f k8s/service.yaml
-kubectl apply -f k8s/ingress.yaml   # LAN seulement (Traefik)
+kubectl apply -f k8s/ingress.yaml   # ingress Traefik LAN, optionnel
+
+# Vérifie
+kubectl -n wax get pods -w   # attend que le pod soit Running
+kubectl -n wax logs deploy/wax | head -20
+# Tu dois voir "[frontend] serving /app/dist at /" puis "Serveur lancé sur http://localhost:3000"
 ```
 
-Le `Deployment` utilise `strategy: Recreate` (lib JSON sur PVC RWO), `imagePullSecrets: gitlab-registry` (à créer une fois avec `kubectl create secret docker-registry gitlab-registry ...`), expose `:3000`.
+Le `Deployment` utilise `strategy: Recreate` (la lib JSON vit sur un PVC RWO de 10 GiB), expose `:3000`, et démarre comme user non-root `wax` (uid 999).
 
-Accès public via un Cloudflare Tunnel pointant vers le `Service` ClusterIP — pas de port entrant exposé. Le `Tunnel` mappe `wax.nc-maiz.org` → `wax.wax.svc.cluster.local:80`. Ton pote ouvre cette URL dans Safari iPhone et l'installe sur l'écran d'accueil.
+### 5. Expose publiquement
+
+#### Option A — Cloudflare Tunnel (recommandé)
+
+Dans ton dashboard Cloudflare Zero Trust :
+
+1. **Networks → Tunnels → ton tunnel existant** (ou nouveau si tu n'en as pas)
+2. **Public Hostnames → Add public hostname** :
+   - Subdomain : `wax`
+   - Domain : ton domaine (ex. `nc-maiz.org`)
+   - Service type : `HTTP`
+   - URL : `wax.wax.svc.cluster.local:80` (nom DNS interne k8s : `<service>.<namespace>.svc.cluster.local`)
+3. Save. Cloudflare gère le TLS et le tunnel sortant — aucun port à exposer côté cluster.
+
+Pas de port entrant ouvert sur ton cluster. Le tunnel sort vers Cloudflare edge.
+
+#### Option B — Ingress public
+
+Si tu préfères un ingress classique (cert-manager + Let's Encrypt), édite [`k8s/ingress.yaml`](k8s/ingress.yaml), mets ton domaine + une annotation `cert-manager.io/cluster-issuer: letsencrypt-prod`. Mais le tunnel Cloudflare est plus simple et plus safe.
+
+### 6. C'est tout
+
+L'URL publique répond → tes amis l'ouvrent dans Safari iPhone / Chrome Android → "Sur l'écran d'accueil" / "Installer l'application". Ils n'ont rien à installer chez eux.
+
+### Tester avant de déployer
+
+```bash
+# Run le conteneur localement, avec un volume monté pour la persistance
+docker run --rm -p 3000:3000 \
+  -v $(pwd)/library:/data \
+  <ton-registry>/<ton-namespace>/wax:latest
+
+# Ouvre http://localhost:3000 — l'app doit charger
+```
 
 ### Sans cluster k8s, vite fait
 
-Le `Dockerfile` est déployable tel quel sur :
+Si tu veux juste un déploiement express sans monter un cluster :
 
-- **Fly.io** (free tier généreux) : `flyctl launch` + `flyctl deploy`.
-- **Render** (free tier, app dort après inactivité).
-- **Cloudflare Tunnel quick** sur ton Mac : `node server.cjs &` + `cloudflared tunnel --url http://localhost:3000` te donne un URL `*.trycloudflare.com` temporaire — parfait pour tester avec un pote, sans dépendance externe.
+- **Fly.io** (free tier généreux) : `flyctl launch` (détecte le Dockerfile) + `flyctl deploy`. Volume persistent à mounter sur `/data`.
+- **Render** : connecte le repo, choisit "Docker", set la persistent disk sur `/data`. Free tier mais l'app dort après inactivité.
+- **Cloudflare Tunnel quick** sur ton Mac/serveur perso : `node server.cjs &` + `cloudflared tunnel --url http://localhost:3000` → URL `*.trycloudflare.com` temporaire, parfait pour tester sans cluster.
 
-### Frontend hébergé séparément (optionnel, fallback)
+### Frontend hébergé séparément (optionnel)
 
-Si tu préfères servir le frontend depuis un host statique séparé (GitHub Pages, Cloudflare Pages, etc.), le workflow `.github/workflows/deploy-pages.yml` push automatiquement `dist/` sur Pages à chaque push `main`. Configuration une seule fois :
+Le workflow `.github/workflows/deploy-pages.yml` peut publier `dist/` sur GitHub Pages à chaque push `main`. Utile comme **miroir static** si ton backend tombe — le shell PWA se charge quand même, juste sans données. Setup :
 
 1. **Settings → Pages → Source** = "GitHub Actions".
-2. **Settings → Secrets and variables → Actions → New repository secret** : `VITE_API_BASE_URL` = `https://wax.nc-maiz.org` (l'URL de ton backend).
-
-Le backend a un CORS permissif donc la PWA hébergée n'importe où peut taper dessus. Utile comme miroir si ton backend est temporairement HS — le shell se charge quand même.
+2. **Settings → Secrets and variables → Actions → New repository secret** : `VITE_API_BASE_URL` = l'URL de ton backend (`https://wax.nc-maiz.org`).
+3. Push sur `main`. CORS est permissif côté backend donc ça marche cross-origin.
 
 ## Variables d'environnement
 
