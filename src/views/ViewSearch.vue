@@ -9,6 +9,7 @@ import { useMixStore } from '@/stores/mix';
 import { useViewStore } from '@/stores/view';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { parseTrackTitle } from '@/lib/format';
+import { haptics } from '@/lib/haptics';
 import { showToast } from 'vant';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import { useActionSheetStore } from '@/stores/actionSheet';
@@ -36,10 +37,12 @@ function onClear() {
 function isLiked(r) { return lib.tracks.some((t) => t.ytId === r.id); }
 
 function playResult(r) {
+  haptics.light();
   streams.streamSearchResult(r, null, player);
 }
 
 function toggleLike(r) {
+  haptics.medium();
   if (isLiked(r)) {
     const existing = lib.tracks.find((t) => t.ytId === r.id);
     if (existing) lib.remove(existing.id);
@@ -204,34 +207,5 @@ function asTrack(r) {
 }
 .results { background: var(--bg); }
 .empty-state .icon { color: var(--text-muted); margin-bottom: 12px; }
-
-/* Shimmer skeleton rows while a search is in flight — replaces the
- * loading text. Matches MobileTrackCell layout so the swap feels seamless
- * when results arrive. */
 .shimmer-list { padding: 4px 0 16px; }
-.shimmer-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-}
-.sh {
-  background: linear-gradient(
-    90deg,
-    var(--card) 0%,
-    var(--card-hover) 50%,
-    var(--card) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.4s linear infinite;
-  border-radius: 6px;
-}
-.sh-thumb { width: 44px; height: 44px; flex: 0 0 auto; }
-.sh-meta { flex: 1 1 auto; min-width: 0; }
-.sh-title { height: 14px; width: 80%; }
-.sh-sub { height: 10px; width: 50%; margin-top: 6px; }
-@keyframes shimmer {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
 </style>

@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, Check } from 'lucide-vue-next';
 import { showConfirmDialog, showToast } from 'vant';
 import { useProfileStore } from '@/stores/profile';
 import { ACCENT_SWATCHES } from '@/stores/prefs';
+import { haptics } from '@/lib/haptics';
 
 const profile = useProfileStore();
 
@@ -29,6 +30,7 @@ function initial(name) {
 async function submitNew() {
   const name = newName.value.trim();
   if (!name) return;
+  haptics.success();
   await profile.create({ name, color: newColor.value });
   creating.value = false;
   newName.value = '';
@@ -108,7 +110,7 @@ async function deleteProfile(p) {
               v-for="p in profile.profiles"
               :key="p.id"
               class="gate-card"
-              @click="editMode ? null : profile.pick(p.id)"
+              @click="editMode ? null : (haptics.light(), profile.pick(p.id))"
             >
               <div class="gate-avatar" :style="{ background: p.color }">
                 {{ initial(p.name) }}

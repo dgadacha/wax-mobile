@@ -24,6 +24,7 @@ import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
 import { useProfileStore } from './stores/profile';
 import { useActionSheetStore } from './stores/actionSheet';
+import { haptics } from './lib/haptics';
 import { closeModal, modalState } from './lib/modal';
 
 const library = useLibraryStore();
@@ -55,7 +56,11 @@ const SUBVIEW_PARENT = {
 
 const activeTab = computed({
   get: () => SUBVIEW_PARENT[view.name] || view.name,
-  set: (id) => { if (view.name !== id) view.switchTo(id); },
+  set: (id) => {
+    if (view.name === id) return;
+    haptics.selection();
+    view.switchTo(id);
+  },
 });
 
 const isSubview = computed(() => !!SUBVIEW_PARENT[view.name]);

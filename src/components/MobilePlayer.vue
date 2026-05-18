@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import {
   Play, Pause, SkipBack, SkipForward, Heart, ChevronDown,
   ListMusic, MessageSquareText, Shuffle, Repeat,
@@ -7,13 +7,17 @@ import {
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
 import { useStreamsStore } from '@/stores/streams';
+import { usePrefsStore } from '@/stores/prefs';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
+import { haptics } from '@/lib/haptics';
 import { showLyrics } from '@/composables/useLyrics';
+import { useVisualizer, setEq } from '@/composables/useVisualizer';
 
 const player = usePlayerStore();
 const lib = useLibraryStore();
 const streams = useStreamsStore();
+const prefs = usePrefsStore();
 
 const audioRef = ref(null);
 const audio2Ref = ref(null);
@@ -32,6 +36,7 @@ const queueTracks = computed(() => {
 });
 
 function jumpToQueue(idx) {
+  haptics.light();
   if (idx === player.index) {
     player.togglePlay();
     return;
@@ -53,6 +58,7 @@ const seekPct = computed(() => {
 });
 
 function toggleLike() {
+  haptics.medium();
   const trackId = player.queue[player.index];
   if (!trackId) return;
   if (typeof trackId === 'string' && trackId.startsWith('stream-')) {
@@ -80,6 +86,17 @@ function onSeek(pct) {
 onMounted(() => {
   player.bindAudio(audioRef.value, audio2Ref.value);
 });
+
+// Audio chain + visualizer + EQ. useVisualizer attaches a
+// source → bass → mid → treble → analyser → destination graph
+// on first play; setEq lets us push prefs.eq values into the
+// BiquadFilter gain nodes live.
+useVisualizer();
+watch(
+  () => prefs.eq,
+  (eq) => setEq(eq.bass || 0, eq.mid || 0, eq.treble || 0),
+  { deep: true, immediate: true },
+);
 </script>
 
 <template>
@@ -113,6 +130,12 @@ onMounted(() => {
       >
         <SkipForward :size="20" :stroke-width="2.2" color="var(--text-muted)" fill="var(--text-muted)" />
       </button>
+    </div>
+    <!-- Spotify-style thin progress bar pinned at the bottom of the
+         mini-player. Lives on the row itself (not in the actions
+         column) so it spans the full width. -->
+    <div class="mp-progress" aria-hidden="true">
+      <div class="mp-progress-fill" :style="{ width: seekPct + '%' }" />
     </div>
   </div>
 
@@ -254,8 +277,10 @@ onMounted(() => {
 /* mini player — flush with the tab bar (Spotify mobile pattern). Square
  * corners, full width; the bg sits one elevation step above the tab bar
  * (--bg-elev → slightly lighter card mix) so the seam reads as two
- * stacked surfaces. */
+ * stacked surfaces. position: relative anchors the .mp-progress bar to
+ * the bottom edge. */
 .mini-player {
+  position: relative;
   height: var(--mini-height);
   background: var(--card);
   display: flex;
@@ -263,6 +288,20 @@ onMounted(() => {
   gap: 10px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
+}
+
+.mp-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--border);
+}
+.mp-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.25s linear;
 }
 
 .mini-player .mp-thumb {

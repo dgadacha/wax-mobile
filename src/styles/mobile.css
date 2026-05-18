@@ -222,6 +222,37 @@ img { max-width: 100%; display: block; }
   text-overflow: ellipsis;
 }
 
+/* ────────────────────────────────────────────────────────────────
+ * Shimmer skeleton primitives — used by ViewSearch (search results
+ * loading), MobileSkeleton (Home / Album / Library) and anywhere
+ * else we need a placeholder while data fetches.
+ * ──────────────────────────────────────────────────────────────── */
+.sh {
+  background: linear-gradient(
+    90deg,
+    var(--card) 0%,
+    var(--card-hover) 50%,
+    var(--card) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 6px;
+}
+.shimmer-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+}
+.sh-thumb { width: 44px; height: 44px; flex: 0 0 auto; }
+.sh-meta { flex: 1 1 auto; min-width: 0; }
+.sh-title { height: 14px; width: 80%; }
+.sh-sub { height: 10px; width: 50%; margin-top: 6px; }
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Legacy ModalRoot (lib/modal.js + components/ModalRoot.vue) styling
  * for mobile. The desktop palette is gone, so we re-style here.

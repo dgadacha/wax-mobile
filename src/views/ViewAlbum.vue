@@ -14,6 +14,7 @@ import { promptModal } from '@/lib/modal';
 import { showToast } from '@/lib/toast';
 import MobileHero from '@/components/MobileHero.vue';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
+import MobileSkeleton from '@/components/MobileSkeleton.vue';
 
 const view = useViewStore();
 const lib = useLibraryStore();
@@ -269,9 +270,7 @@ async function saveAsPlaylist() {
       </template>
     </MobileHero>
 
-    <div v-if="tracklistLoading && albumEntries.length === 0" class="loading">
-      <van-loading size="22" color="var(--accent)" />
-    </div>
+    <MobileSkeleton v-if="tracklistLoading && albumEntries.length === 0" variant="row" :count="8" />
 
     <div v-else class="track-list">
       <MobileTrackCell

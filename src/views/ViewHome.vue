@@ -1,6 +1,7 @@
 <script setup>
-import { onMounted, computed } from 'vue';
+import { onMounted, computed, ref } from 'vue';
 import { RotateCcw, Sparkles } from 'lucide-vue-next';
+import { haptics } from '@/lib/haptics';
 import { useDiscoverStore } from '@/stores/discover';
 import { useStreamsStore } from '@/stores/streams';
 import { useLibraryStore } from '@/stores/library';
@@ -8,6 +9,7 @@ import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
+import MobileSkeleton from '@/components/MobileSkeleton.vue';
 
 const discover = useDiscoverStore();
 const streams = useStreamsStore();
@@ -49,9 +51,25 @@ const hello = computed(() => {
   if (h < 18) return 'Bon après-midi';
   return 'Bonsoir';
 });
+
+const refreshing = ref(false);
+async function onRefresh() {
+  haptics.medium();
+  try { await discover.refresh(); }
+  finally { refreshing.value = false; }
+}
 </script>
 
 <template>
+  <van-pull-refresh
+    v-model="refreshing"
+    pulling-text="Tire pour rafraîchir"
+    loosing-text="Lâche pour rafraîchir"
+    loading-text="Mise à jour…"
+    success-text=""
+    head-height="60"
+    @refresh="onRefresh"
+  >
   <div class="home-view">
     <div class="home-greeting">
       <h1>{{ hello }}</h1>
@@ -82,9 +100,7 @@ const hello = computed(() => {
         <span v-if="discover.seedTrack" class="seed">d'après «&nbsp;{{ discover.seedTrack.title }}&nbsp;»</span>
       </div>
 
-      <div v-if="discover.loading" class="loading">
-        <van-loading size="22" color="var(--accent)" />
-      </div>
+      <MobileSkeleton v-if="discover.loading && discover.tracks.length === 0" variant="card" :count="6" />
 
       <div v-else-if="discover.tracks.length === 0" class="empty-state">
         <Sparkles class="icon" :size="48" :stroke-width="1.5" />
@@ -108,6 +124,7 @@ const hello = computed(() => {
       </div>
     </section>
   </div>
+  </van-pull-refresh>
 </template>
 
 <style scoped>
