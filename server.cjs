@@ -228,11 +228,16 @@ app.post('/api/auth/login', (req, res) => {
   res.json({ token, ok: true });
 });
 
-// Auth middleware — protects all /api/* routes except the login endpoint above.
+// Auth middleware — protects all /api/* routes except login and media proxies.
+// Media endpoints (/stream/, /cover/, /preview/, /artist-photo/) are proxied
+// public YouTube content: the browser's <audio> and <img> elements cannot send
+// custom headers, so exempting them is both necessary and safe.
+const PUBLIC_API_PREFIXES = ['/stream/', '/cover/', '/preview/', '/artist-photo/'];
+
 app.use('/api', (req, res, next) => {
   if (!authEnabled()) return next();
-  // Already handled by the route above — skip middleware check for login.
   if (req.method === 'POST' && req.path === '/auth/login') return next();
+  if (PUBLIC_API_PREFIXES.some((p) => req.path.startsWith(p))) return next();
   const bearerHeader = req.header('Authorization') || '';
   const headerToken = bearerHeader.startsWith('Bearer ') ? bearerHeader.slice(7) : '';
   const queryToken = typeof req.query._token === 'string' ? req.query._token : '';
