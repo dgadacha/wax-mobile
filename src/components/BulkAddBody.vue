@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { fmtDuration, onThumbError, onThumbLoad } from '@/lib/format';
+import { Check } from 'lucide-vue-next';
+import { fmtDuration } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 import { modalState } from '@/lib/modal';
 import { t } from '@/lib/i18n';
 
@@ -15,80 +17,189 @@ const visible = computed(() => {
   if (!filter.value) return props.available;
   const q = filter.value.toLowerCase();
   return props.available.filter(
-    (t) =>
-      t.title.toLowerCase().includes(q) ||
-      (t.uploader || '').toLowerCase().includes(q),
+    (tr) =>
+      tr.title.toLowerCase().includes(q) ||
+      (tr.uploader || '').toLowerCase().includes(q),
   );
 });
 
-const counter = computed(() =>
-  t('common.selected_of', { n: props.selection.size, total: props.available.length }),
-);
-
+// Forced reactivity bump — Set mutations don't trigger Vue dependency
+// tracking through getters, so we toggle this ref after every change.
 const _bumpKey = ref(0);
-
 function bump() {
-  // Trigger reactivity since Set mutations don't auto-track via getters here.
   _bumpKey.value++;
   modalState.confirmEnabled = props.selection.size > 0;
-  modalState.confirmLabel = props.selection.size === 0 ? t('common.add') : t('common.add_n', props.selection.size);
+  modalState.confirmLabel = props.selection.size === 0
+    ? t('common.add')
+    : t('common.add_n', props.selection.size);
 }
 
-function toggleTrack(t) {
-  if (props.selection.has(t.id)) props.selection.delete(t.id);
-  else props.selection.add(t.id);
+function toggleTrack(tr) {
+  if (props.selection.has(tr.id)) props.selection.delete(tr.id);
+  else props.selection.add(tr.id);
   bump();
 }
-
 function selectAllVisible() {
-  for (const t of visible.value) props.selection.add(t.id);
+  for (const tr of visible.value) props.selection.add(tr.id);
   bump();
 }
 function selectNoneVisible() {
-  for (const t of visible.value) props.selection.delete(t.id);
+  for (const tr of visible.value) props.selection.delete(tr.id);
   bump();
 }
 
-// Initialize button label
 bump();
 </script>
 
 <template>
   <div class="bulk-wrap">
-    <div class="bulk-header">
-      <input
-        type="text"
-        class="bulk-search"
-        :placeholder="t('modal.bulk_filter')"
+    <div class="bulk-toolbar">
+      <van-search
         v-model="filter"
+        :placeholder="t('modal.bulk_filter')"
+        shape="round"
+        clearable
       />
-      <button type="button" class="link-btn" @click="selectAllVisible">{{ t('common.all') }}</button>
-      <button type="button" class="link-btn" @click="selectNoneVisible">{{ t('common.none') }}</button>
-    </div>
-    <div class="bulk-header" style="border-bottom: none; padding-bottom: 0">
-      <span class="muted">{{ counter }}</span>
-      <span :hidden="true">{{ _bumpKey }}</span>
-    </div>
-    <ul class="bulk-track-list">
-      <p v-if="visible.length === 0" class="empty-state">{{ t('modal.bulk_no_results') }}</p>
-      <li
-        v-for="t in visible"
-        :key="t.id"
-        class="bulk-track-item"
-        @click="toggleTrack(t)"
-      >
-        <input
-          type="checkbox"
-          :checked="selection.has(t.id)"
-          @click.stop="toggleTrack(t)"
-        />
-        <img :src="t.thumbnail || ''" alt="" loading="lazy" @error="onThumbError" @load="onThumbLoad" />
-        <div class="bulk-track-meta">
-          <div class="bulk-track-title">{{ t.title }}</div>
-          <div class="bulk-track-sub">{{ t.uploader || '' }}</div>
+      <div class="bulk-meta">
+        <span class="muted">
+          {{ props.selection.size }} / {{ props.available.length }}
+          <span style="display:none">{{ _bumpKey }}</span>
+        </span>
+        <div class="bulk-quick">
+          <button type="button" class="link-btn" @click="selectAllVisible">{{ t('common.all') }}</button>
+          <button type="button" class="link-btn" @click="selectNoneVisible">{{ t('common.none') }}</button>
         </div>
-        <span class="bulk-track-duration">{{ fmtDuration(t.duration) }}</span>
-      </li>
-    </ul>
+      </div>
+    </div>
+
+    <div class="bulk-list">
+      <div v-if="visible.length === 0" class="empty-state small">
+        <div class="hint">{{ t('modal.bulk_no_results') }}</div>
+      </div>
+      <button
+        v-for="tr in visible"
+        :key="tr.id"
+        type="button"
+        class="bulk-row"
+        :class="{ selected: props.selection.has(tr.id) }"
+        @click="toggleTrack(tr)"
+      >
+        <div class="bulk-thumb">
+          <img v-if="tr.thumbnail" :src="apiUrl(tr.thumbnail)" alt="" loading="lazy" />
+        </div>
+        <div class="bulk-meta-col">
+          <div class="bulk-title text-ellipsis">{{ tr.title }}</div>
+          <div class="bulk-sub text-ellipsis">
+            <span>{{ tr.uploader || '' }}</span>
+            <span v-if="tr.duration"> · {{ fmtDuration(tr.duration) }}</span>
+          </div>
+        </div>
+        <div class="bulk-check" :class="{ on: props.selection.has(tr.id) }">
+          <Check v-if="props.selection.has(tr.id)" :size="14" :stroke-width="3" color="var(--bg)" />
+        </div>
+      </button>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.bulk-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 70vh;
+}
+
+.bulk-toolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  margin: 0 -20px;
+}
+.bulk-toolbar :deep(.van-search) {
+  background: transparent;
+  padding: 4px 16px;
+}
+.bulk-toolbar :deep(.van-search__content) { background: var(--bg); }
+.bulk-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 20px 10px;
+  font-size: 12px;
+}
+.muted { color: var(--text-muted); }
+.bulk-quick { display: flex; gap: 8px; }
+.link-btn {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.bulk-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin: 4px -20px 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.bulk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.bulk-row:active { background: var(--card-hover); }
+.bulk-row.selected { background: var(--accent-soft); }
+
+.bulk-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--card-hover);
+  flex: 0 0 auto;
+}
+.bulk-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.bulk-meta-col { flex: 1 1 auto; min-width: 0; }
+.bulk-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.bulk-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.bulk-check {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: grid;
+  place-items: center;
+  background: transparent;
+  transition: background 120ms, border-color 120ms;
+}
+.bulk-check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.empty-state.small { padding: 32px 16px; text-align: center; }
+.empty-state.small .hint { font-size: 13px; color: var(--text-muted); }
+</style>
