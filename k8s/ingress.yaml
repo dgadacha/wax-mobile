@@ -10,7 +10,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: wax.maiz.local
+    - host: wax.maiz.lan
       http:
         paths:
           - path: /
