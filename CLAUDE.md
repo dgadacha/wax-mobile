@@ -7,7 +7,7 @@ Ce fichier est pour **toi, Claude futur**. Lis-le en premier à chaque session s
 **Wax** est une app musicale web/mobile :
 - **Frontend** — Vue 3 + Vite + Pinia + **Vant** (UI kit mobile) + **Lucide** icons. Multi-profil style Netflix. **Login obligatoire** avant le choix du profil.
 - **Backend** — `server.cjs` (Express) qui appelle `yt-dlp` + `ffmpeg`. Stockage par profil (`library/users/<id>/`). Audio MP3 partagé entre profils.
-- **Déployé** sur Kubernetes (namespace `wax`, ingress `wax.maiz.local`) via GitLab CI, image Docker dans le registry GitLab (`registry.gitlab.com/kidnar/wax:latest`).
+- **Déployé** sur Kubernetes (namespace `wax`, ingress `wax.maiz.lan`) via GitLab CI, image Docker dans le registry GitLab (`registry.gitlab.com/kidnar/wax:latest`).
 
 L'utilisateur est dev senior, communique en **français**, tutoiement, style informel.
 
@@ -41,7 +41,7 @@ Runtime deps : `yt-dlp`, `ffmpeg`. Override avec `WAX_YT_DLP` / `WAX_FFMPEG`.
 - **CI** : `.gitlab-ci.yml` — stages `build` (docker build + push) et `deploy` (kubectl via l'agent `wax-agent`). Se déclenche sur push sur `main`.
 - **Agent K8s** : `wax-agent` (helm `gitlab/gitlab-agent`, namespace `wax`). Context kubectl dans la CI : `kidnar/wax:wax-agent`.
 - **Namespace** : `wax` sur le cluster k3s du serveur `192.168.1.3` (user `salon`).
-- **Ingress** : `wax.maiz.local` via Traefik.
+- **Ingress** : `wax.maiz.lan` via Traefik.
 - **Secrets K8s** :
   - `gitlab-registry` — deploy token pour puller l'image depuis le registry GitLab.
   - `wax-auth` — clés `email` + `password` pour l'auth app (injectées dans le pod via `WAX_AUTH_EMAIL` / `WAX_AUTH_PASSWORD`).
@@ -103,7 +103,7 @@ L'image contient **frontend + backend** dans un seul conteneur (kuro pattern) : 
 - `namespace.yaml` — namespace `wax`
 - `deployment.yaml` — `replicas: 1`, `strategy: Recreate` (PVC RWO ne supporte pas le rolling update). Env vars depuis secret `wax-auth`. Pull secret `gitlab-registry`.
 - `service.yaml` — ClusterIP :80 → :3000
-- `ingress.yaml` — Traefik, host `wax.maiz.local`
+- `ingress.yaml` — Traefik, host `wax.maiz.lan`
 - `pvc.yaml` — RWO 10 Gi sur `/data` (library JSON + MP3 + covers)
 
 ## File map (src/)
