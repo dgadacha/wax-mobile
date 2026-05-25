@@ -38,10 +38,29 @@ export const useAuthStore = defineStore('auth', {
       try {
         const r = await api('/api/auth/verify');
         this.authEnabled = !!r?.authEnabled;
-      } catch {
-        // 401 can only happen on auth-enabled servers with no/bad token.
-        this.authEnabled = true;
-        this._saveToken(null);
+      } catch (e) {
+        // Two ways verify can fail:
+        //   1) 401 on an auth-enabled server with a bad/missing token
+        //   2) Network failure (offline)
+        // We can't distinguish them from the thrown Error directly, so
+        // use navigator.onLine: when the browser says we're offline AND
+        // we have a token, assume the token is fine and let the UI
+        // proceed against cached data. The SW's NetworkFirst rule on
+        // /api/auth/verify also covers brief flaps — the cached 200
+        // response satisfies the try-branch even before this fallback
+        // kicks in. Only when we're truly offline with no cached
+        // verify hit do we land here.
+        if (typeof navigator !== 'undefined' && navigator.onLine === false && this.token) {
+          // Stay logged in optimistically — protected calls will 401
+          // later when the network returns and api.js will clear the
+          // token + fire wax:auth-expired, dropping us back to the
+          // login gate. Better than wiping it now and stranding the
+          // user in a "can't login because no network" loop.
+          this.authEnabled = true;
+        } else {
+          this.authEnabled = true;
+          this._saveToken(null);
+        }
       }
       this.checking = false;
     },

@@ -1,8 +1,8 @@
 <script setup>
-import { onMounted, computed, watch } from 'vue';
+import { onMounted, computed, watch, ref } from 'vue';
 import { showToast as vantToast } from 'vant';
 
-import { House, Search, Library, Settings, ChevronLeft } from 'lucide-vue-next';
+import { House, Search, Library, Settings, ChevronLeft, WifiOff } from 'lucide-vue-next';
 import MobilePlayer from './components/MobilePlayer.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import ProfileGate from './components/ProfileGate.vue';
@@ -91,6 +91,15 @@ watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
 }, { immediate: true });
 
+// Online/offline state. `navigator.onLine` is best-effort (the browser
+// only knows whether it has a route to a network, not whether the
+// internet works), but combined with the SW's NetworkFirst cache fall-
+// back it's accurate enough to drive the banner + skip useless
+// online-only fetches (discover, album backfill SSE).
+const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+function onOnline() { isOnline.value = true; }
+function onOffline() { isOnline.value = false; }
+
 // Land on Home for new sessions; legacy view stores may have persisted
 // 'download' as the default.
 //
@@ -121,12 +130,19 @@ async function bootstrapAfterAuth() {
   try {
     await library.fetch();
   } catch (e) {
-    vantToast({ message: 'Backend injoignable', type: 'fail' });
+    // Don't toast if we already know we're offline — the banner says it.
+    if (isOnline.value) vantToast({ message: 'Backend injoignable', type: 'fail' });
   }
   player.restorePlayerState();
   playlists.fetch();
-  library._listenAlbumProgress();
-  discover.refresh();
+  // Online-only side channels — open the album SSE + roll the
+  // discover seed only when we have a network. Both reconnect / can
+  // be re-triggered automatically when the user comes back online via
+  // the `online` event handler below.
+  if (isOnline.value) {
+    library._listenAlbumProgress();
+    discover.refresh();
+  }
 }
 
 onMounted(async () => {
@@ -139,6 +155,16 @@ onMounted(async () => {
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalState.visible) closeModal();
+  });
+
+  window.addEventListener('online', onOnline);
+  window.addEventListener('offline', onOffline);
+  // When the network comes back, light up the channels we skipped at
+  // boot. Idempotent: _listenAlbumProgress guards against double-open,
+  // discover.refresh is safe to call repeatedly.
+  window.addEventListener('online', () => {
+    try { library._listenAlbumProgress(); } catch {}
+    try { discover.refresh(); } catch {}
   });
 
   // Re-render the LoginGate if the server kicks us out (token expired,
@@ -182,6 +208,15 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
         <ChevronLeft :size="26" :stroke-width="2" color="var(--text)" />
       </template>
     </van-nav-bar>
+
+    <!-- Offline banner. Slides in between the nav-bar and view scroll
+         whenever `navigator.onLine` flips false. The SW's NetworkFirst
+         rules keep library/playlists/profiles/auth available from cache,
+         so the user can still navigate + play any downloaded MP3. -->
+    <div v-if="!isOnline" class="offline-banner" role="status">
+      <WifiOff :size="14" :stroke-width="2.2" />
+      <span>Mode hors ligne</span>
+    </div>
 
     <div class="view-scroll">
       <ViewHome     v-show="view.name === 'home'" />

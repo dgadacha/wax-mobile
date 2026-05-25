@@ -172,6 +172,23 @@ img { max-width: 100%; display: block; }
   background: var(--bg);
 }
 
+/* Offline indicator strip. Sits between the nav-bar and the scrollable
+ * view; in-flow so content slides down by its own height instead of
+ * being covered. Subtle amber so it reads as info rather than alarm. */
+.offline-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+  flex: 0 0 auto;
+}
+
 .app-shell .nav-bar {
   flex: 0 0 auto;
   padding-top: var(--safe-top);

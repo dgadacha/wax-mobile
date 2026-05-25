@@ -1,6 +1,6 @@
 <script setup>
-import { ref, computed } from 'vue';
-import { Loader } from 'lucide-vue-next';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { Loader, WifiOff } from 'lucide-vue-next';
 import { useAuthStore } from '@/stores/auth';
 
 const auth = useAuthStore();
@@ -9,6 +9,23 @@ const email = ref('');
 const password = ref('');
 const error = ref('');
 const loading = ref(false);
+// Mirror navigator.onLine reactively. When the user lands here with
+// no token AND no network, /api/auth/login can't possibly succeed —
+// show an "offline" placeholder instead of a form that's guaranteed
+// to fail. The boot path in auth.verify() keeps an existing token
+// optimistically when offline, so this case only matters on a fresh
+// install or after an explicit logout.
+const isOnline = ref(typeof navigator === 'undefined' ? true : navigator.onLine);
+function onOnline() { isOnline.value = true; }
+function onOffline() { isOnline.value = false; }
+onMounted(() => {
+  window.addEventListener('online', onOnline);
+  window.addEventListener('offline', onOffline);
+});
+onUnmounted(() => {
+  window.removeEventListener('online', onOnline);
+  window.removeEventListener('offline', onOffline);
+});
 
 const visible = computed(() => !auth.loggedIn);
 
@@ -33,6 +50,19 @@ async function submit() {
         <!-- Loading spinner while token is being verified -->
         <template v-if="auth.checking">
           <Loader class="spin" :size="32" color="rgba(255,255,255,0.4)" :stroke-width="1.5" />
+        </template>
+
+        <!-- Offline + no token: form can't possibly succeed. Tell the
+             user explicitly instead of letting them mash it. -->
+        <template v-else-if="!isOnline">
+          <div class="login-logo">
+            <WifiOff :size="48" color="rgba(255,255,255,0.6)" :stroke-width="1.5" />
+          </div>
+          <h1 class="login-title">Pas de connexion</h1>
+          <p class="login-offline-hint">
+            La connexion réseau est requise pour la première ouverture.
+            Reconnecte-toi et l'app reprendra automatiquement.
+          </p>
         </template>
 
         <template v-else>
@@ -148,6 +178,14 @@ async function submit() {
   color: #f87171;
   margin: 0;
   text-align: center;
+}
+
+.login-offline-hint {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.4;
+  text-align: center;
+  margin: 0;
 }
 
 .login-btn {

@@ -89,6 +89,48 @@ export default defineConfig(({ mode }) => {
               handler: 'NetworkOnly',
             },
             {
+              // Profile-scoped data endpoints — NetworkFirst so the UI
+              // is always fresh online but falls back to the last good
+              // copy when there's no network. cacheKeyWillBeUsed adds
+              // the X-Wax-Profile header to the cache key so Profile A
+              // never serves Profile B's library/playlists from cache.
+              // networkTimeoutSeconds gives up on flaky connections
+              // after 3 s and serves the cached copy — way better UX
+              // than hanging forever on a stalled fetch.
+              urlPattern: ({ url }) =>
+                url.pathname === '/api/library' ||
+                url.pathname === '/api/playlists',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'wax-data-profile',
+                networkTimeoutSeconds: 3,
+                plugins: [{
+                  cacheKeyWillBeUsed: async ({ request }) => {
+                    const profile = request.headers.get('X-Wax-Profile') || 'default';
+                    return `${request.url}?_p=${encodeURIComponent(profile)}`;
+                  },
+                }],
+                expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              },
+            },
+            {
+              // Global data endpoints (no per-profile content) — same
+              // NetworkFirst pattern without the profile cache-key
+              // dance. /api/auth/verify in particular is critical
+              // offline: the boot sequence calls it and a cached 200
+              // lets us short-circuit into the app instead of stranding
+              // the user on a LoginGate they can't submit.
+              urlPattern: ({ url }) =>
+                url.pathname === '/api/profiles' ||
+                url.pathname === '/api/auth/verify',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'wax-data-global',
+                networkTimeoutSeconds: 3,
+                expiration: { maxEntries: 10, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              },
+            },
+            {
               // Image covers from /api/cover/ — stale-while-revalidate
               // so the offline-cached copy shows instantly while a fresh
               // fetch updates the cache in the background.

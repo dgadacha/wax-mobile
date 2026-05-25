@@ -96,6 +96,28 @@ The whole app uses **Lucide** (`lucide-vue-next`) — a single consistent SVG ic
 
 Standard imports per file: `import { House, Search, Library, Settings, ChevronLeft, Heart, ... } from 'lucide-vue-next'`. Each icon is a component: `<Heart :size="20" :stroke-width="2" color="…" :fill="…" />`. Use `fill` to render filled variants (filled hearts for "liked", filled play arrows on the index column, etc.).
 
+## Offline mode (PWA)
+
+The service worker (`vite-plugin-pwa` / Workbox) makes the app **fully usable without network** within the limits of what's been cached. What works offline:
+
+- **App shell** — precache pulls in every `**/*.{js,css,html,svg,png,ico,woff2}` from `dist/` at build time. Cold-start the PWA offline → the UI boots normally.
+- **Auth verify** (`/api/auth/verify`) — `NetworkFirst` rule, 1-week cache. Boot probes the network with a 3 s timeout, falls back to the cached 200 when offline. As a belt-and-suspenders, `auth.verify()` also keeps the existing token optimistically when `navigator.onLine === false` — even on the first boot offline the user isn't stranded behind a login form.
+- **Library + playlists** (`/api/library`, `/api/playlists`) — `NetworkFirst` with `cacheKeyWillBeUsed` that splices the `X-Wax-Profile` header into the cache key, so Profile A never serves Profile B's data from cache. 3 s network timeout, 20-entry / 30-day cache.
+- **Profiles list** (`/api/profiles`) — `NetworkFirst`, global cache (no per-profile keying).
+- **Covers** (`/api/cover/`) — `StaleWhileRevalidate`, 500 entries, 30 days.
+- **Downloaded MP3s** (`/audio/*.mp3`) — `CacheFirst`, 500 entries, 1 year, `rangeRequests: true` so `<audio>` can seek inside cached files. Tracks with `t.file` filled play offline; tracks without it skip with the standard player error toast.
+
+What does **not** work offline (by design):
+- Search (`/api/search`) — hits YouTube via yt-dlp, can't be cached meaningfully.
+- Mix / Discover — same; the `online` event handler in `App.vue` re-fires `discover.refresh()` automatically when network returns.
+- Streaming (`/api/stream/`) — only "downloaded" tracks play offline. Streaming requires fresh CDN URLs from yt-dlp.
+- New downloads (`POST /api/library/:trackId/download`) — needs the network obviously. The library store catches the failure and toasts.
+
+UX hints:
+- **Banner**: `App.vue` mounts `<div class="offline-banner">Mode hors ligne</div>` between the nav-bar and view scroll whenever `navigator.onLine` flips false. Amber, in-flow so view content slides down by the banner's height.
+- **LoginGate offline state**: when offline AND no token (fresh install, post-logout), the gate swaps the form for a `<WifiOff>` icon + "Pas de connexion" message instead of letting the user mash a button that's guaranteed to 401.
+- **SSE channels skip at boot when offline**: `library._listenAlbumProgress()` + `discover.refresh()` are gated behind `isOnline.value` so we don't spam reconnect attempts. The `online` window event re-triggers both when connectivity returns.
+
 ## File map (where things live)
 
 ### Backend
