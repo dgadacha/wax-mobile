@@ -133,10 +133,11 @@ const sub = computed(() => {
 .mtc {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
   border-bottom: 1px solid var(--border);
   cursor: pointer;
+  transition: background var(--motion-short) var(--ease);
 }
 .mtc:active { background: var(--card-hover); }
 .mtc.is-muted { opacity: 0.55; }
@@ -153,7 +154,7 @@ const sub = computed(() => {
 .mtc .thumb {
   width: 44px;
   height: 44px;
-  border-radius: 6px;
+  border-radius: var(--r-1);
   overflow: hidden;
   background: var(--card-hover);
   flex: 0 0 auto;
