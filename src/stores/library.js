@@ -390,10 +390,12 @@ export const useLibraryStore = defineStore('library', {
       }
     },
     _listenLibraryProgress(jobId, trackId) {
-      const es = new EventSource(apiUrlWithProfile(`/api/jobs/${jobId}/progress`));
+      const url = apiUrlWithProfile(`/api/jobs/${jobId}/progress`);
+      const es = new EventSource(url);
       // released flag guards against double-release if the server
       // sends a terminal event AND the SSE then errors during close.
       let released = false;
+      let receivedAny = false; // true once we get at least one event
       const closeAndRelease = () => {
         if (released) return;
         released = true;
@@ -401,6 +403,7 @@ export const useLibraryStore = defineStore('library', {
         this._releaseDownloadSlot();
       };
       es.onmessage = (event) => {
+        receivedAny = true;
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
         if (data.type === 'progress') {
@@ -434,15 +437,33 @@ export const useLibraryStore = defineStore('library', {
         }
       };
       // SSE errors used to just close silently — leaving a ghost entry
-      // in libraryDownloads forever and never freeing the slot.
-      // Drop the row + free the slot so the queue keeps moving; the
-      // server-side download may still finish, the user will see it
-      // after the next library fetch.
+      // in libraryDownloads forever and never freeing the slot. Now:
+      //   - drop the row + free the slot so the queue keeps moving
+      //   - if we never received a single message, the connection itself
+      //     failed (404 on missing job, 401 from a stale token, CORS,
+      //     middlebox closing idle long-poll) — surface a toast so the
+      //     user knows the click didn't quietly succeed
+      //   - kick off a library refetch a beat later: the server-side
+      //     yt-dlp may still complete in the background and we want
+      //     `track.file` to pick up automatically without a manual reload
       es.onerror = () => {
+        if (released) return; // ignore the close-after-ready flap
         const m = new Map(this.libraryDownloads);
         m.delete(trackId);
         this.libraryDownloads = m;
+        // EventSource swallows the HTTP status — best we can do is log
+        // the URL so a quick devtools peek narrows it down.
+        console.warn('[download] SSE error', url, { receivedAny });
+        if (!receivedAny) {
+          showToast(
+            t('toast.dl_error', 'Connexion au téléchargement perdue'),
+            'error',
+          );
+        }
         closeAndRelease();
+        // Best-effort refetch in 8 s so any download that completed
+        // server-side surfaces in the UI even without progress events.
+        setTimeout(() => { this.fetch().catch(() => {}); }, 8000);
       };
     },
     // Subscribe once on app boot to the album-resolved stream. The

@@ -68,6 +68,20 @@ export default defineConfig(({ mode }) => {
           // plugin per-rule.)
           runtimeCaching: [
             {
+              // SSE endpoints — explicit NetworkOnly so Workbox doesn't
+              // buffer the text/event-stream response and break the
+              // chunked delivery. Without this rule the SW's default
+              // fetch handler can wrap the streaming Response in a way
+              // that the EventSource sees no events until the server
+              // closes the connection — exactly what makes "download
+              // does nothing" look like a server problem when it's the
+              // SW that's swallowing the stream.
+              urlPattern: ({ url }) =>
+                url.pathname.startsWith('/api/jobs/') ||
+                url.pathname === '/api/album-progress',
+              handler: 'NetworkOnly',
+            },
+            {
               // Image covers from /api/cover/ — stale-while-revalidate
               // so the offline-cached copy shows instantly while a fresh
               // fetch updates the cache in the background.

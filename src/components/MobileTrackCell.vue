@@ -72,13 +72,25 @@ const sub = computed(() => {
     </div>
 
     <div class="actions" @click.stop>
-      <!-- Offline / download status. Three states:
-           - In flight (downloadProgress != null) → circular progress ring
-             around a Download icon, accent color.
+      <!-- Offline / download status. Four states:
+           - Queued or just-started (downloadProgress === 0) → indeterminate
+             spinner. yt-dlp can take 5-10s to emit its first progress
+             line, and the queue can hold a track at 0% even longer; a
+             dead ring at 0% looks indistinguishable from "nothing
+             happening", so spin instead.
+           - In flight with real progress (0 < downloadProgress < 100) →
+             circular progress ring around a Download icon, accent color.
            - Downloaded (track.file) → solid Download chip, accent.
            - Otherwise → nothing rendered. -->
       <div
-        v-if="downloadProgress != null"
+        v-if="downloadProgress != null && downloadProgress <= 0"
+        class="mtc-dl mtc-dl-spin"
+        aria-label="Téléchargement en attente"
+      >
+        <van-loading size="18" color="var(--accent)" />
+      </div>
+      <div
+        v-else-if="downloadProgress != null"
         class="mtc-dl"
         aria-label="Téléchargement en cours"
       >
