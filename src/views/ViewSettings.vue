@@ -159,22 +159,32 @@ async function clearAudioCache() {
   finally { clearing.value = false; }
 }
 
-// Manual trigger for warmOfflineCache. Useful when the user wants to
-// guarantee every downloaded track is playable offline RIGHT NOW
-// (post-login on a fresh install, after a long offline period, etc.)
-// instead of waiting on the background passes.
+// Manual trigger for warmOfflineCache. Live progress shown in the
+// cell value so the user can see something is actually happening
+// (vs. a silent "Préparation…" → no visible change which doesn't
+// distinguish "succeeded with cache already full" from "everything
+// failed silently").
 const warming = ref(false);
+const warmingProgress = ref(''); // e.g. "12/92"
+const warmingSummary = ref(''); // last summary like "92 prêts · 0 erreurs"
 async function repairOfflineCache() {
   if (warming.value) return;
   warming.value = true;
+  warmingProgress.value = '';
+  warmingSummary.value = '';
   haptics.light();
   try {
-    await lib.warmOfflineCache();
-    await refreshStorage();
-    showToast({
-      message: `Cache à jour — ${audioCacheCount.value} titre${audioCacheCount.value > 1 ? 's' : ''}`,
-      position: 'bottom',
+    const result = await lib.warmOfflineCache((done, total) => {
+      warmingProgress.value = total > 0 ? `${done}/${total}` : '';
     });
+    await refreshStorage();
+    // Detailed summary — important to surface failures so the user
+    // knows when the server has lost a file.
+    const parts = [`${result.cacheEntries} en cache`];
+    if (result.fetched > 0) parts.push(`+${result.fetched} pré-téléchargés`);
+    if (result.failed > 0) parts.push(`${result.failed} échec${result.failed > 1 ? 's' : ''}`);
+    warmingSummary.value = parts.join(' · ');
+    showToast({ message: warmingSummary.value, position: 'bottom' });
   } catch (e) {
     showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), type: 'fail', position: 'bottom' });
   } finally {
@@ -182,7 +192,38 @@ async function repairOfflineCache() {
   }
 }
 
-onMounted(refreshStorage);
+// Diagnostic: list every cache + their entry count. Useful for
+// proving "the cache is empty" vs. "the cache is full but Settings
+// is reading the wrong name". Tap the cell to refresh.
+const cacheDiagnostic = ref('');
+async function refreshCacheDiagnostic() {
+  if (typeof caches === 'undefined') {
+    cacheDiagnostic.value = 'Cache API non supportée';
+    return;
+  }
+  try {
+    const names = await caches.keys();
+    if (names.length === 0) {
+      cacheDiagnostic.value = '(aucune)';
+      return;
+    }
+    const parts = [];
+    for (const n of names) {
+      try {
+        const c = await caches.open(n);
+        const keys = await c.keys();
+        parts.push(`${n}: ${keys.length}`);
+      } catch {
+        parts.push(`${n}: ?`);
+      }
+    }
+    cacheDiagnostic.value = parts.join(' · ');
+  } catch (e) {
+    cacheDiagnostic.value = 'Erreur: ' + (e.message || 'inconnue');
+  }
+}
+
+onMounted(() => { refreshStorage(); refreshCacheDiagnostic(); });
 
 // ── Danger zone ───────────────────────────────────────────────────
 async function onReset() {
@@ -380,9 +421,15 @@ async function onLogout() {
       />
       <van-cell
         title="Réparer le cache hors-ligne"
-        :value="warming ? 'Préparation…' : 'Pré-télécharger les manquants'"
+        :value="warming ? `Préparation ${warmingProgress}` : (warmingSummary || 'Pré-télécharger les manquants')"
         is-link
         @click="repairOfflineCache"
+      />
+      <van-cell
+        title="Diagnostic des caches"
+        :value="cacheDiagnostic || '…'"
+        is-link
+        @click="refreshCacheDiagnostic"
       />
       <van-cell
         title="Vider le cache audio"
@@ -423,7 +470,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.10.4" />
+      <van-cell title="Version" value="0.10.5" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 

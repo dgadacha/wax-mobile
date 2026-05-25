@@ -281,64 +281,106 @@ export const useLibraryStore = defineStore('library', {
       }
     },
     // Walk every downloaded track and make sure the SW audio cache
-    // actually has the MP3. The download-completion handler fires a
-    // fire-and-forget `fetch(track.file, {cache:'reload'})` to seed
-    // the cache, but that can miss in three ways:
-    //   - the track was downloaded before the seed-fetch ever existed
-    //     (older versions of the client),
-    //   - a transient network blip ate the seed fetch silently,
-    //   - iOS evicted the cache under storage pressure.
-    // From the user's POV the bug looks like "track shows offline-ready
-    // but tapping it auto-skips" — the audio element fetches, SW
-    // CacheFirst misses, falls back to network, fails offline, audio
-    // fires `error`, player.next() skips. This warmer closes the gap
-    // by checking the cache directly and refilling missing entries.
-    async warmOfflineCache() {
-      if (typeof caches === 'undefined') return; // no SW support
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return; // pointless offline
+    // actually has the MP3. Three failure modes the user can fall
+    // into otherwise:
+    //   - track was downloaded before the seed-fetch existed in older
+    //     client builds
+    //   - the post-download seed `fetch()` failed silently
+    //   - iOS evicted the cache under storage pressure
+    // Plus the big one: iOS Safari does NOT route <audio> fetches
+    // through the Service Worker, so even when the cache IS populated
+    // by the SW the audio element bypasses it and goes straight to
+    // network. We solve that in player.resolvePlayUrl by reading the
+    // cache via the Caches API and serving a blob: URL.
+    //
+    // Crucially, this function writes to the cache DIRECTLY via
+    // `cache.put()` instead of relying on the SW's CacheFirst rule
+    // to intercept the fetch. That's belt-and-suspenders against SW
+    // interception flakiness (Workbox version quirks, iOS edge cases,
+    // SW not yet activated, etc.) and makes the warmer self-contained.
+    //
+    // Returns `{ total, hits, fetched, failed, cacheEntries }` so
+    // callers can show real feedback to the user instead of fake
+    // "Préparation…" then no visible change.
+    async warmOfflineCache(onProgress) {
+      const result = { total: 0, hits: 0, fetched: 0, failed: 0, cacheEntries: 0 };
+      if (typeof caches === 'undefined') return result;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return result;
 
       let cache;
       try { cache = await caches.open('wax-audio'); }
-      catch { return; } // no cache yet, nothing to warm against
+      catch (e) {
+        console.warn('[warmer] caches.open failed', e);
+        return result;
+      }
 
       const downloaded = this.tracks.filter((tr) => tr.file);
+      result.total = downloaded.length;
+
+      // Check which ones are already in cache. Don't re-fetch hits.
       const missing = [];
       for (const tr of downloaded) {
         try {
           const hit = await cache.match(tr.file, { ignoreSearch: true });
-          if (!hit) missing.push(tr);
+          if (hit) result.hits++;
+          else missing.push(tr);
         } catch {}
       }
-      if (missing.length === 0) return;
 
-      // Same pool size as downloads — stays under the browser's
-      // HTTP/1.1 6-per-origin cap and matches the server-side yt-dlp
-      // semaphore so we don't queue work the server can't process.
-      // Cache: 'reload' so we go to network (and re-cache) instead of
-      // potentially hitting a partial/corrupted browser HTTP cache.
-      const POOL = 4;
+      console.log(`[warmer] ${result.hits}/${result.total} already cached, ${missing.length} to fetch`);
+
+      if (missing.length === 0) {
+        result.cacheEntries = (await cache.keys().catch(() => [])).length;
+        return result;
+      }
+
+      const POOL = 6; // static MP3 fetches multiplex fine over HTTP/2
       let idx = 0;
-      const total = missing.length;
-      const store = this; // for the worker closures
+      const store = this;
+      let lastReport = 0;
+      function report() {
+        const done = result.hits + result.fetched + result.failed;
+        // Throttle progress callbacks to once per ~250 ms so we don't
+        // re-render the cell 50 times in a second.
+        const now = Date.now();
+        if (onProgress && (now - lastReport >= 250 || done === result.total)) {
+          lastReport = now;
+          onProgress(done, result.total);
+        }
+      }
+      report();
+
       async function worker() {
-        while (idx < total) {
+        while (idx < missing.length) {
           const i = idx++;
           const tr = missing[i];
           try {
-            const res = await fetch(apiUrl(tr.file), { cache: 'reload' });
+            const url = apiUrl(tr.file);
+            const res = await fetch(url, { cache: 'reload' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          } catch {
+            // Write to the cache explicitly. Bypasses any SW
+            // interception issues — works even if the SW isn't
+            // active or the runtime route doesn't match.
+            await cache.put(url, res.clone());
+            result.fetched++;
+          } catch (e) {
+            console.warn('[warmer] failed for', tr.title, e?.message || e);
+            result.failed++;
             // Server may have lost the file (PVC wipe, server-side
-            // delete, etc.). Drop t.file locally so the UI reflects
-            // reality — track stays in library, just not "offline".
+            // delete). Drop t.file locally so the UI reflects reality.
             try {
               const live = store.findById(tr.id);
               if (live && live.file) live.file = null;
             } catch {}
           }
+          report();
         }
       }
       await Promise.all(Array.from({ length: POOL }, () => worker()));
+
+      result.cacheEntries = (await cache.keys().catch(() => [])).length;
+      console.log('[warmer] done', result);
+      return result;
     },
     async reorder(draggedId, targetId, above) {
       const ids = this.tracks.map((tr) => tr.id).filter((id) => id !== draggedId);
