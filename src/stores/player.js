@@ -435,22 +435,18 @@ export const usePlayerStore = defineStore('player', {
       ms.setActionHandler('pause', () => this.audioEl?.pause());
       ms.setActionHandler('previoustrack', () => this.prev());
       ms.setActionHandler('nexttrack', () => this.next());
-      // iOS Safari has an undocumented quirk: as soon as ANY seek
-      // handler (including seekto, which powers the scrubber) is
-      // registered, the Now Playing widget collapses prev/next into
-      // the ±10s buttons even when seekbackward/seekforward are
-      // explicitly null. Confirmed against iOS 17/18 with this
-      // exact code. The only way to keep ⏮/⏭ on the lock screen is
-      // to NOT register any seek handler at all.
-      //
-      // The trade-off is the lock-screen scrubber: the progress bar
-      // still renders but dragging won't seek (iOS no longer routes
-      // the gesture to the page). In-app scrubbing via our own
-      // MobilePlayer UI keeps working — that's still the primary
-      // surface for fine-grained control.
+      // iOS Safari is stubborn — even with seek* handlers explicitly
+      // null AND no seekto registered, the Now Playing widget on
+      // lock screen still renders ±10s buttons instead of ⏮/⏭ for
+      // some audio-session configurations we can't override from
+      // the web layer. Wire them to prev/next as a fallback so the
+      // BEHAVIOR is right even if the icon isn't: tapping the "−10s"
+      // arrow goes to previous track, "+10s" goes to next. Less
+      // pretty but the user can finally change tracks from the lock
+      // screen, AirPods double-tap, CarPlay, etc.
+      ms.setActionHandler('seekbackward', () => this.prev());
+      ms.setActionHandler('seekforward', () => this.next());
       try { ms.setActionHandler('seekto', null); } catch {}
-      try { ms.setActionHandler('seekbackward', null); } catch {}
-      try { ms.setActionHandler('seekforward', null); } catch {}
     },
     _updateMediaMetadata(track) {
       if (!('mediaSession' in navigator)) return;
