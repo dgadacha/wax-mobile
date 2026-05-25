@@ -436,34 +436,54 @@ export const useLibraryStore = defineStore('library', {
           this.ytdlpStatus = { active: data.ytdlpActive, queued: data.ytdlpQueued ?? 0 };
         }
       };
-      // SSE errors used to just close silently — leaving a ghost entry
-      // in libraryDownloads forever and never freeing the slot. Now:
-      //   - drop the row + free the slot so the queue keeps moving
-      //   - if we never received a single message, the connection itself
-      //     failed (404 on missing job, 401 from a stale token, CORS,
-      //     middlebox closing idle long-poll) — surface a toast so the
-      //     user knows the click didn't quietly succeed
-      //   - kick off a library refetch a beat later: the server-side
-      //     yt-dlp may still complete in the background and we want
-      //     `track.file` to pick up automatically without a manual reload
+      // SSE error handling has two flavours:
+      //   - CONNECTING (readyState 0): network blip — EventSource will
+      //     auto-reconnect on its own. The server's /api/jobs/:id/progress
+      //     handler replays job.status on reconnect (ready/error if done,
+      //     fresh progress otherwise), so we just keep the row visible
+      //     and let the reconnect close the loop. No cleanup needed.
+      //   - CLOSED (readyState 2): HTTP error (401 stale token, 404 job
+      //     gone after a server restart) — no auto-reconnect is coming.
+      //     Clean up + poll the library to see if a download finished
+      //     server-side despite us losing the stream.
       es.onerror = () => {
         if (released) return; // ignore the close-after-ready flap
+
+        if (es.readyState !== EventSource.CLOSED) {
+          // CONNECTING — auto-reconnect will fire. Just log and keep
+          // the row + slot so the UI doesn't lie about state.
+          console.warn('[download] SSE blip, auto-reconnecting', url);
+          return;
+        }
+
         const m = new Map(this.libraryDownloads);
         m.delete(trackId);
         this.libraryDownloads = m;
-        // EventSource swallows the HTTP status — best we can do is log
-        // the URL so a quick devtools peek narrows it down.
-        console.warn('[download] SSE error', url, { receivedAny });
+        console.warn('[download] SSE permanently closed', url, { receivedAny });
         if (!receivedAny) {
+          // Initial connect failed outright — almost always auth or a
+          // 404 from a server restart. Tell the user immediately.
           showToast(
             t('toast.dl_error', 'Connexion au téléchargement perdue'),
             'error',
           );
         }
         closeAndRelease();
-        // Best-effort refetch in 8 s so any download that completed
-        // server-side surfaces in the UI even without progress events.
-        setTimeout(() => { this.fetch().catch(() => {}); }, 8000);
+        // Wait a beat for the server-side download to potentially
+        // finish (yt-dlp may still be running in the background even
+        // after our SSE died), refetch the library, and surface a
+        // toast if the track STILL didn't materialize so the user
+        // doesn't think "ça télécharge rien".
+        setTimeout(async () => {
+          try { await this.fetch(); } catch {}
+          const tr = this.findById(trackId);
+          if (!tr || !tr.file) {
+            showToast(
+              t('toast.dl_error', 'Le téléchargement n\'a pas abouti'),
+              'error',
+            );
+          }
+        }, 12000);
       };
     },
     // Subscribe once on app boot to the album-resolved stream. The

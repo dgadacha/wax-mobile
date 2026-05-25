@@ -48,6 +48,13 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
+          // Force the new SW to take over immediately on update without
+          // waiting for every tab to close. Critical on iOS PWA where
+          // "next visit replaces the SW" can take 2-3 visits in practice
+          // — users see stale code (e.g. old SSE handling that buffers
+          // text/event-stream and breaks downloads) for far too long.
+          clientsClaim: true,
+          skipWaiting: true,
           // Cache the app shell (HTML/CSS/JS/icons). Backend calls
           // (/api/*, /audio/*) are NEVER cached — they're per-profile,
           // per-request, and audio streams expire.

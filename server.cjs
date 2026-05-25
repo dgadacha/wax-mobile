@@ -1191,13 +1191,21 @@ function broadcast(job, payload) {
   }
 }
 
-function startJob(job) {
+// profileId MUST be passed in. Earlier revisions read `req.profileId`
+// inside the function body, which is `undefined` because startJob runs
+// from a setImmediate callback outside the request scope — the
+// ReferenceError silently aborted the yt-dlp close handler so the MP3
+// landed on disk but library.json was never updated and no `ready`
+// event ever fired. From the client's POV: "download disappears and
+// nothing ends up offline". Both callers (/api/jobs and
+// /api/library/:trackId/download) now forward req.profileId.
+function startJob(job, profileId) {
   const expectedFile = path.join(AUDIO_DIR, `${job.trackId}.mp3`);
   const infoJsonFile = path.join(AUDIO_DIR, `${job.trackId}.info.json`);
   const outputTemplate = path.join(AUDIO_DIR, `${job.trackId}.%(ext)s`);
 
   if (!job.updateExisting) {
-    const lib = getLibrary(req.profileId);
+    const lib = getLibrary(profileId);
     if (lib.some(t => t.url === job.url && t.file)) {
       const existing = lib.find(t => t.url === job.url && t.file);
       job.status = 'ready';
@@ -1267,13 +1275,13 @@ function startJob(job) {
     try { info = JSON.parse(fs.readFileSync(infoJsonFile, 'utf8')); } catch {}
 
     let track;
-    const currentLib = getLibrary(req.profileId);
+    const currentLib = getLibrary(profileId);
     if (job.updateExisting) {
       track = currentLib.find(t => t.id === job.trackId);
       if (track) {
         track.file = `/audio/${job.trackId}.mp3`;
         if (!track.duration && info.duration) track.duration = info.duration;
-        saveLibrary(req.profileId, currentLib);
+        saveLibrary(profileId, currentLib);
       }
     } else {
       const safeTitle = String(info.title || 'Sans titre').replace(/[\/\\:*?"<>|]/g, '').slice(0, 200);
@@ -1293,7 +1301,7 @@ function startJob(job) {
         addedAt: Date.now(),
       };
       currentLib.unshift(track);
-      saveLibrary(req.profileId, currentLib);
+      saveLibrary(profileId, currentLib);
     }
 
     try { fs.unlinkSync(infoJsonFile); } catch {}
@@ -1334,7 +1342,7 @@ app.post('/api/jobs', (req, res) => {
   };
   jobs.set(id, job);
 
-  setImmediate(() => startJob(job));
+  setImmediate(() => startJob(job, req.profileId));
   res.json({ id, trackId });
 });
 
@@ -1649,7 +1657,7 @@ app.post('/api/library/:trackId/download', (req, res) => {
     updateExisting: true,
   };
   jobs.set(id, job);
-  setImmediate(() => startJob(job));
+  setImmediate(() => startJob(job, req.profileId));
   res.json({ id, trackId: track.id });
 });
 
