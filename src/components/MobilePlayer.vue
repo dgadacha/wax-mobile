@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import {
   Play, Pause, SkipBack, SkipForward, Heart, ChevronDown,
-  ListMusic, MessageSquareText, Shuffle, Repeat,
+  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1,
 } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -82,6 +82,21 @@ function toggleLike() {
 function onSeek(pct) {
   player.seekToPct(pct);
 }
+
+// Transport handlers with haptic feedback so the buttons feel alive on
+// device. Direct player.* in the template would still work, but going
+// through these wrappers lets us add the haptic in one place.
+function onTogglePlay() { haptics.light(); player.togglePlay(); }
+function onPrev()       { haptics.light(); player.prev(); }
+function onNext()       { haptics.light(); player.next(); }
+function onShuffle()    { haptics.selection(); player.toggleShuffle(); }
+function onRepeat()     { haptics.selection(); player.cycleRepeat(); }
+
+const repeatLabel = computed(() => {
+  if (player.repeat === 'one') return 'Répéter le titre';
+  if (player.repeat === 'all') return 'Répéter la file';
+  return 'Pas de répétition';
+});
 
 onMounted(() => {
   player.bindAudio(audioRef.value, audio2Ref.value);
@@ -189,20 +204,39 @@ watch(
           </div>
         </div>
         <div class="np-controls">
-          <button class="np-ctrl ghost" aria-label="Aléatoire">
-            <Shuffle :size="22" :stroke-width="2" color="var(--text-muted)" />
+          <button
+            class="np-ctrl ghost"
+            :class="{ active: player.shuffle }"
+            :aria-label="player.shuffle ? 'Aléatoire actif' : 'Aléatoire'"
+            @click="onShuffle"
+          >
+            <Shuffle
+              :size="22"
+              :stroke-width="2"
+              :color="player.shuffle ? 'var(--accent)' : 'var(--text-muted)'"
+            />
           </button>
-          <button class="np-ctrl" aria-label="Précédent" @click="player.prev()">
+          <button class="np-ctrl" aria-label="Précédent" @click="onPrev">
             <SkipBack :size="30" :stroke-width="2" color="var(--text)" fill="var(--text)" />
           </button>
-          <button class="np-play" @click="player.togglePlay()">
+          <button class="np-play" @click="onTogglePlay">
             <component :is="player.playing ? Pause : Play" :size="28" :stroke-width="2.5" color="var(--bg)" fill="var(--bg)" />
           </button>
-          <button class="np-ctrl" aria-label="Suivant" @click="player.next()">
+          <button class="np-ctrl" aria-label="Suivant" @click="onNext">
             <SkipForward :size="30" :stroke-width="2" color="var(--text)" fill="var(--text)" />
           </button>
-          <button class="np-ctrl ghost" aria-label="Répétition">
-            <Repeat :size="22" :stroke-width="2" color="var(--text-muted)" />
+          <button
+            class="np-ctrl ghost"
+            :class="{ active: player.repeat !== 'off' }"
+            :aria-label="repeatLabel"
+            @click="onRepeat"
+          >
+            <component
+              :is="player.repeat === 'one' ? Repeat1 : Repeat"
+              :size="22"
+              :stroke-width="2"
+              :color="player.repeat !== 'off' ? 'var(--accent)' : 'var(--text-muted)'"
+            />
           </button>
         </div>
         <div class="np-extras">
@@ -431,7 +465,20 @@ watch(
   border-radius: 50%;
 }
 .np-ctrl:active { background: rgba(255, 255, 255, 0.08); }
-.np-ctrl.ghost { width: 40px; height: 40px; }
+.np-ctrl.ghost { width: 40px; height: 40px; position: relative; }
+/* Active dot under shuffle / repeat — Apple Music pattern so the toggled
+ * state is glanceable even past the icon color shift. */
+.np-ctrl.ghost.active::after {
+  content: '';
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .np-controls .np-play {
   width: 64px;
   height: 64px;
