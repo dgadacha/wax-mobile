@@ -159,6 +159,29 @@ async function clearAudioCache() {
   finally { clearing.value = false; }
 }
 
+// Manual trigger for warmOfflineCache. Useful when the user wants to
+// guarantee every downloaded track is playable offline RIGHT NOW
+// (post-login on a fresh install, after a long offline period, etc.)
+// instead of waiting on the background passes.
+const warming = ref(false);
+async function repairOfflineCache() {
+  if (warming.value) return;
+  warming.value = true;
+  haptics.light();
+  try {
+    await lib.warmOfflineCache();
+    await refreshStorage();
+    showToast({
+      message: `Cache à jour — ${audioCacheCount.value} titre${audioCacheCount.value > 1 ? 's' : ''}`,
+      position: 'bottom',
+    });
+  } catch (e) {
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), type: 'fail', position: 'bottom' });
+  } finally {
+    warming.value = false;
+  }
+}
+
 onMounted(refreshStorage);
 
 // ── Danger zone ───────────────────────────────────────────────────
@@ -356,6 +379,12 @@ async function onLogout() {
         :value="fmtBytes(storageUsage) + (storageQuota ? ' / ' + fmtBytes(storageQuota) : '')"
       />
       <van-cell
+        title="Réparer le cache hors-ligne"
+        :value="warming ? 'Préparation…' : 'Pré-télécharger les manquants'"
+        is-link
+        @click="repairOfflineCache"
+      />
+      <van-cell
         title="Vider le cache audio"
         :value="clearing ? 'En cours…' : ''"
         is-link
@@ -394,7 +423,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.10.3" />
+      <van-cell title="Version" value="0.10.4" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 

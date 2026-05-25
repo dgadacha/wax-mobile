@@ -26,6 +26,42 @@ function trackPlayUrl(track) {
   return null;
 }
 
+// iOS Safari does NOT route <audio> fetches through the Service Worker
+// (WebKit bug 237305 + family). So even if warmOfflineCache populated
+// the wax-audio Cache Storage entry, the audio element bypasses it
+// and goes straight to network — fail offline.
+//
+// Workaround: pre-fetch the MP3 via the Caches API (which DOES work
+// from the page, including on iOS), turn the cached Response into a
+// Blob, mint a blob: URL, and feed THAT to audio.src. The audio
+// element plays from memory, never touches the network. Seeking,
+// metadata, crossfade — all work as normal because blob URLs are
+// fully addressable.
+//
+// Returns the original direct URL when we have no cache (online play,
+// stream tracks, etc.). Caller is responsible for revoking any
+// previous blob URL via revokeBlobIfAny() to avoid memory leaks.
+async function resolvePlayUrl(track) {
+  if (!track) return null;
+  if (!track.file) {
+    // Stream track — no cache to consult, return the direct URL.
+    return track.ytId ? apiUrl(`/api/stream/${track.ytId}`) : null;
+  }
+  if (typeof caches === 'undefined') return apiUrl(track.file);
+  try {
+    const cache = await caches.open('wax-audio');
+    const hit = await cache.match(track.file, { ignoreSearch: true });
+    if (hit) {
+      const blob = await hit.blob();
+      return URL.createObjectURL(blob);
+    }
+  } catch (e) {
+    // Cache API can throw on quota / privacy mode — fall back to URL.
+    console.warn('[player] resolvePlayUrl cache lookup failed', e);
+  }
+  return apiUrl(track.file);
+}
+
 export const usePlayerStore = defineStore('player', {
   state: () => ({
     queue: [],
@@ -46,6 +82,7 @@ export const usePlayerStore = defineStore('player', {
     playCountedFor: null,
     saveStateTimer: null,
     stallTimer: null, // armed by 'waiting'/'stalled', cleared on progress or pause
+    _lastBlobUrl: null, // last URL.createObjectURL — revoked on next loadAndPlay / stop
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -125,7 +162,7 @@ export const usePlayerStore = defineStore('player', {
       this.index = idx >= 0 ? idx : 0;
       this.loadAndPlay();
     },
-    loadAndPlay() {
+    async loadAndPlay() {
       const trackId = this.queue[this.index];
       const track = findTrack(trackId);
       if (!track || !this.audioEl) return;
@@ -138,7 +175,18 @@ export const usePlayerStore = defineStore('player', {
       }
       this.visible = true;
       this.loading = true;
-      this.audioEl.src = trackPlayUrl(track);
+      // Revoke the previous blob URL (if any) before minting a new one.
+      // Blob URLs keep the underlying memory alive until revoked.
+      if (this._lastBlobUrl) {
+        try { URL.revokeObjectURL(this._lastBlobUrl); } catch {}
+        this._lastBlobUrl = null;
+      }
+      const playUrl = await resolvePlayUrl(track);
+      if (playUrl && playUrl.startsWith('blob:')) this._lastBlobUrl = playUrl;
+      // Bail out if the track changed under us during the await (the
+      // user spammed next/prev). The newer call will own playback.
+      if (this.queue[this.index] !== trackId) return;
+      this.audioEl.src = playUrl;
       const prefs = usePrefsStore();
       // Stream prefetch
       if (!track.file && track.ytId) {
@@ -187,6 +235,10 @@ export const usePlayerStore = defineStore('player', {
       if (this.audioEl) {
         this.audioEl.pause();
         this.audioEl.src = '';
+      }
+      if (this._lastBlobUrl) {
+        try { URL.revokeObjectURL(this._lastBlobUrl); } catch {}
+        this._lastBlobUrl = null;
       }
       this._clearStallWatchdog();
       this.playing = false;
