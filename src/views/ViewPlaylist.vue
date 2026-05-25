@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { showConfirmDialog } from 'vant';
+import { showConfirmDialog, showToast } from 'vant';
 import { Plus, MoreHorizontal, ListMusic } from 'lucide-vue-next';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
@@ -51,7 +51,9 @@ const subtitle = computed(() => {
   if (n === 0) return 'Playlist vide';
   const base = `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
   if (inFlightCount.value > 0) {
-    return `${base}  ·  Téléchargement ${downloadedCount.value}/${n}`;
+    // Show both axes so "0/50" doesn't read as "nothing's happening"
+    // during the long wait between click and the first finished MP3.
+    return `${base}  ·  ${downloadedCount.value}/${n} hors-ligne · ${inFlightCount.value} en file`;
   }
   if (downloadedCount.value === n) return `${base}  ·  Tout hors-ligne`;
   if (downloadedCount.value > 0) return `${base}  ·  ${downloadedCount.value}/${n} hors-ligne`;
@@ -130,7 +132,17 @@ async function downloadAll() {
   const todo = playlist.value.trackIds
     .map((id) => lib.findById(id))
     .filter((tr) => tr && !tr.file && !lib.libraryDownloads.has(tr.id));
-  if (todo.length === 0) return;
+  if (todo.length === 0) {
+    showToast({ message: 'Déjà tout hors-ligne', position: 'bottom' });
+    return;
+  }
+  // Confirm to the user that the request landed — the pool throttles
+  // to 4 simultaneous SSE connections so the first ready event can take
+  // ~30 s, plenty of time to make the page look broken otherwise.
+  showToast({
+    message: `${todo.length} titre${todo.length > 1 ? 's' : ''} en file de téléchargement`,
+    position: 'bottom',
+  });
   for (const tr of todo) lib.downloadTrack(tr.id);
 }
 

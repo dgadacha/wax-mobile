@@ -16,6 +16,15 @@ export const useLibraryStore = defineStore('library', {
     search: '',                 // current filter
     libraryDownloads: new Map(), // trackId -> { progress, phase }
     ytdlpStatus: { active: 0, queued: 0 },
+    // Client-side download pool. Each download opens a long-lived
+    // EventSource for progress; browsers cap HTTP/1.1 to ~6 connections
+    // per origin, so firing 50 at once would saturate the cap and 44
+    // would stall PENDING (server processes them anyway, but the client
+    // never sees `ready` events). The pool throttles new SSE openings
+    // to MAX_PARALLEL_DOWNLOADS — surplus calls queue on _dlWaiters
+    // and resolve when a slot frees up.
+    _dlActive: 0,
+    _dlWaiters: [], // pending Promise resolvers waiting for a slot
     // Album rescan progress driven by the server's SSE rescan events.
     // Settings UI watches this for the progress bar.
     albumRescan: { running: false, done: 0, total: 0 },
@@ -329,11 +338,44 @@ export const useLibraryStore = defineStore('library', {
       }
       return orphans.length;
     },
+    // Reserve a slot in the download pool. Resolves immediately if a
+    // slot is free, otherwise queues the resolver on _dlWaiters and
+    // resolves it when an in-flight download finishes.
+    _acquireDownloadSlot() {
+      // 4 stays below the browser's 6-connections-per-origin cap with
+      // headroom for the album-progress SSE + ad-hoc fetches. The
+      // server-side yt-dlp semaphore is 3 so one slot is always
+      // queue-warming — no idle waste.
+      const MAX = 4;
+      return new Promise((resolve) => {
+        if (this._dlActive < MAX) {
+          this._dlActive++;
+          resolve();
+        } else {
+          this._dlWaiters.push(resolve);
+        }
+      });
+    },
+    _releaseDownloadSlot() {
+      if (this._dlWaiters.length > 0) {
+        // Hand the slot directly to the next waiter — _dlActive stays
+        // at MAX, no transient gap that could let a race grab the slot.
+        const next = this._dlWaiters.shift();
+        next();
+      } else {
+        this._dlActive = Math.max(0, this._dlActive - 1);
+      }
+    },
     async downloadTrack(trackId) {
       if (this.libraryDownloads.has(trackId)) return;
+      // Mark as queued IMMEDIATELY so the UI shows intent (progress
+      // ring at 0% on every row in a bulk "Tout télécharger") instead
+      // of looking inert while the pool drains the waiter queue.
       const m = new Map(this.libraryDownloads);
-      m.set(trackId, { progress: 0, phase: 'starting' });
+      m.set(trackId, { progress: 0, phase: 'queued' });
       this.libraryDownloads = m;
+
+      await this._acquireDownloadSlot();
       try {
         const { id: jobId } = await api(`/api/library/${trackId}/download`, {
           method: 'POST',
@@ -344,10 +386,20 @@ export const useLibraryStore = defineStore('library', {
         m2.delete(trackId);
         this.libraryDownloads = m2;
         showToast(t('common.error_prefix', e.message), 'error');
+        this._releaseDownloadSlot();
       }
     },
     _listenLibraryProgress(jobId, trackId) {
       const es = new EventSource(apiUrlWithProfile(`/api/jobs/${jobId}/progress`));
+      // released flag guards against double-release if the server
+      // sends a terminal event AND the SSE then errors during close.
+      let released = false;
+      const closeAndRelease = () => {
+        if (released) return;
+        released = true;
+        es.close();
+        this._releaseDownloadSlot();
+      };
       es.onmessage = (event) => {
         let data;
         try { data = JSON.parse(event.data); } catch { return; }
@@ -359,7 +411,6 @@ export const useLibraryStore = defineStore('library', {
           const m = new Map(this.libraryDownloads);
           m.delete(trackId);
           this.libraryDownloads = m;
-          es.close();
           // Mark the local track as offline-ready instead of full re-fetch.
           const track = this.findById(trackId);
           if (track) track.file = `/audio/${trackId}.mp3`;
@@ -370,18 +421,29 @@ export const useLibraryStore = defineStore('library', {
           // up the response and stores it.
           // Fire-and-forget; failures are silent.
           fetch(apiUrl(`/audio/${trackId}.mp3`), { cache: 'reload' }).catch(() => {});
+          closeAndRelease();
         } else if (data.type === 'error') {
           const m = new Map(this.libraryDownloads);
           m.delete(trackId);
           this.libraryDownloads = m;
-          es.close();
           showToast(t('toast.dl_error', data.error), 'error');
+          closeAndRelease();
         }
         if (typeof data.ytdlpActive === 'number') {
           this.ytdlpStatus = { active: data.ytdlpActive, queued: data.ytdlpQueued ?? 0 };
         }
       };
-      es.onerror = () => es.close();
+      // SSE errors used to just close silently — leaving a ghost entry
+      // in libraryDownloads forever and never freeing the slot.
+      // Drop the row + free the slot so the queue keeps moving; the
+      // server-side download may still finish, the user will see it
+      // after the next library fetch.
+      es.onerror = () => {
+        const m = new Map(this.libraryDownloads);
+        m.delete(trackId);
+        this.libraryDownloads = m;
+        closeAndRelease();
+      };
     },
     // Subscribe once on app boot to the album-resolved stream. The
     // server auto-backfills missing metadata at startup + on every track

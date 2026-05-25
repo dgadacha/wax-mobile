@@ -172,8 +172,10 @@ The `view` store still drives "current page + back stack", same as desktop. `SUB
 3. Tap a result → `streams.streamSearchResult(r, null, player)` registers a virtual `stream-<ytId>` track, sets `player.queue = [streamId]`, and the player loads `apiUrl('/api/stream/:ytId')`.
 4. Audio element is in `MobilePlayer.vue`, bound to the `player` store via `player.bindAudio(audioRef, audio2Ref)` on mount.
 
-### Library track → offline (unchanged from desktop)
-Same `lib.downloadTrack(trackId)` → POST `/api/library/:id/download` → SSE `/api/jobs/:jobId/progress` → local mutation on `lib.findById(trackId).file`. The UI affordance to trigger it is NOT yet wired into the mobile Library view (`ViewLibrary.vue` has no download button) — pending port.
+### Library track → offline
+Same `lib.downloadTrack(trackId)` → POST `/api/library/:id/download` → SSE `/api/jobs/:jobId/progress` → local mutation on `lib.findById(trackId).file`. Available from the action sheet on every track row + "Tout télécharger" in playlist headers.
+
+**Client-side download pool** (mobile-specific): `lib.downloadTrack` no longer fires the POST + opens the SSE immediately. Instead it marks the row `{progress: 0, phase: 'queued'}` for instant UI feedback, then `await`s `_acquireDownloadSlot()` — a 4-wide semaphore. Browsers cap HTTP/1.1 to ~6 connections per origin, so firing 50 SSEs at once (50-track Mix → "Tout télécharger") would saturate the cap and 44 would stall PENDING with no progress events ever. The pool sits at 4 to leave headroom for the album-progress SSE + ad-hoc fetches; the server's yt-dlp semaphore is 3 so one slot is always queue-warming. Each `_listenLibraryProgress` calls `_releaseDownloadSlot` on `ready` / `error` / SSE-`onerror` (single-fire via a `released` flag) to keep the queue moving. The old `es.onerror = () => es.close()` left ghost entries forever — now the row drops + slot releases on any failure.
 
 ## Conventions / style (mobile-specific)
 
