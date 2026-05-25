@@ -62,6 +62,21 @@ Every backend request carries `X-Wax-Profile: <id>`; the server routes to `libra
 - **Switching profiles** triggers a full `location.reload()` — every Pinia store re-fetches against the new `X-Wax-Profile`. Lazier in-place rehydration could replace this later but reload is bulletproof.
 - **Album backfill across profiles**: `autoBackfillOnStartup` iterates `listProfileIds()` so every user's library gets the Deezer pass on server start. `scheduleAlbumBackfill(profileId, track, onComplete)` now takes an explicit profileId since it's also called from no-req contexts.
 
+## Auth gate (optional, env-toggled)
+
+Single-user login gate that fronts the entire app. Off by default (dev), on in production when the server is publicly reachable (Cloudflare Tunnel, k8s ingress, etc.). Sits *in front of* the profile gate — the user enters credentials once per device, then `<ProfileGate>` asks who's listening.
+
+- **Toggle**: server-side via `WAX_AUTH_EMAIL` + `WAX_AUTH_PASSWORD` env vars. Both empty → middleware is a no-op and every `/api/*` route stays public, identical to pre-gate behaviour.
+- **Token**: stateless HMAC-signed `<base64url(payload)>.<hex(hmac)>` where payload = `{email, exp}`, TTL 30 days. HMAC secret persisted in `library/.auth-secret` (auto-generated on first boot, mode 0600) so tokens survive server restarts. Delete that file to kill every existing session at once.
+- **Middleware** (`server.cjs`): runs after the profile middleware, exempts `/api/auth/*` (login + verify) and the media proxies `/api/stream/`, `/api/cover/`, `/api/preview/`, `/api/artist-photo/` — `<audio>` and `<img>` can't send `Authorization` headers, and the static `/audio/*` files are also free (served by `express.static` before the gate). Reads token from `Authorization: Bearer …` header OR `?_token=` query param (latter is for SSE EventSource which also can't set headers).
+- **Routes**:
+  - `POST /api/auth/login {email, password}` — constant-time `timingSafeEqual` on sha256 hashes of both fields, returns `{token}` on success, `401 {error: 'Identifiants incorrects'}` otherwise. Returns `503 {error: 'Auth disabled'}` when env vars aren't set.
+  - `GET /api/auth/verify` — answers `{ok: true, authEnabled: bool}` either way. The `authEnabled` flag tells the client whether the empty-token case is "no gate" or "show form".
+- **Client store** (`src/stores/auth.js`): `{token, authEnabled, checking}` state. `loggedIn` getter is `!authEnabled || !!token` so a no-auth server has every user "logged in" by definition. `verify()` probes `/api/auth/verify` on mount, sets `authEnabled` from the response, clears token on 401. `login()` POSTs creds, saves token in `localStorage['wax:auth-token']`. `logout()` just clears local state (no server-side revocation since the HMAC is stateless — wait for the 30-day expiry, or delete `.auth-secret`).
+- **`api.js`** sends `Authorization: Bearer <token>` on every request when a token is present, and appends `&_token=` to `apiUrlWithProfile()` for SSE endpoints. A 401 anywhere wipes the token + dispatches `wax:auth-expired` so the gate re-renders.
+- **`<LoginGate />`** (`src/components/LoginGate.vue`): full-screen overlay (`z-index: 200`, opaque gradient bg), shown via `v-if="!auth.loggedIn"`. Email + password form, spinner while `auth.checking`. Once login succeeds the gate fades out and `App.vue`'s `watch(() => auth.loggedIn)` triggers `bootstrapAfterAuth()` (profile.fetch → library.fetch → playlists.fetch → discover.refresh).
+- **Logout** lives in Settings → Profil (only renders when `auth.authEnabled`). Calls `auth.logout()` then `location.reload()` so every store boots from a clean slate.
+
 ## Accent color picker
 
 `src/stores/prefs.js` exports `ACCENT_SWATCHES` (8 named hex values: violet, sky, emerald, amber, rose, crimson, lime, pearl) and `applyAccent(hex)` which converts to HSL and writes `--accent`, `--accent-bright`, `--accent-dark`, `--accent-soft`, `--accent-glow` on `documentElement`. The chosen swatch persists in `prefs.accentColor` (localStorage `ytmp3:prefs`) and re-applies on `prefs.load()`. The Settings screen renders the swatches as a grid of round dots — the active one shows a Lucide `Check` overlay. Profile avatar colors are independent (stored on the profile record).

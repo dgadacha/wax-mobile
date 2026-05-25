@@ -7,6 +7,7 @@ import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
 import { useProfileStore } from '@/stores/profile';
 import { useActionSheetStore } from '@/stores/actionSheet';
+import { useAuthStore } from '@/stores/auth';
 import { THEMES } from '@/lib/themes';
 import { SUPPORTED_LOCALES } from '@/lib/i18n';
 import { haptics } from '@/lib/haptics';
@@ -17,6 +18,7 @@ const playlists = usePlaylistsStore();
 const prefs = usePrefsStore();
 const profile = useProfileStore();
 const sheet = useActionSheetStore();
+const auth = useAuthStore();
 
 // ── Theme picker ──────────────────────────────────────────────────
 const darkThemes = computed(() => THEMES.filter((t) => t.kind === 'dark'));
@@ -180,6 +182,22 @@ function changeProfile() {
   haptics.light();
   profile.openPicker();
 }
+
+async function onLogout() {
+  try {
+    await showConfirmDialog({
+      title: 'Déconnexion',
+      message: 'Te déconnecter ? Tu auras besoin de tes identifiants à la prochaine ouverture.',
+      confirmButtonText: 'Déconnexion',
+      cancelButtonText: 'Annuler',
+    });
+    haptics.warning();
+    auth.logout();
+    // Reload so the bootstrap state is wiped and the gate re-renders
+    // from a clean slate.
+    location.reload();
+  } catch { /* cancelled */ }
+}
 </script>
 
 <template>
@@ -200,6 +218,16 @@ function changeProfile() {
           </div>
         </template>
       </van-cell>
+      <!-- Logout cell only renders when the server's auth gate is active.
+           Without it, signing out would be a no-op (the next call would
+           still go through). -->
+      <van-cell
+        v-if="auth.authEnabled"
+        title="Déconnexion"
+        value=""
+        is-link
+        @click="onLogout"
+      />
     </van-cell-group>
 
     <van-cell-group inset title="Apparence">
@@ -366,7 +394,7 @@ function changeProfile() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.8.4" />
+      <van-cell title="Version" value="0.9.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 

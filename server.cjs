@@ -171,6 +171,58 @@ if (!fs.existsSync(PROFILES_FILE)) {
   ], null, 2));
 }
 
+// ─── Single-user auth gate ──────────────────────────────────────────
+//
+// Enabled iff both WAX_AUTH_EMAIL and WAX_AUTH_PASSWORD are set in the
+// environment. When disabled (the dev default), this section is a no-op
+// and every /api/* route stays public — same behaviour as before.
+//
+// Token format: `<base64url(payload)>.<hex(hmac)>` where payload =
+// `{email, exp}`. Stateless: the server doesn't keep a session table, it
+// just verifies the HMAC on every request. The HMAC secret is persisted
+// in `library/.auth-secret` so tokens survive server restarts; if the
+// file doesn't exist we generate one. Delete the file to invalidate
+// every existing token at once (logout-everywhere kill-switch).
+const AUTH_EMAIL = (process.env.WAX_AUTH_EMAIL || '').toLowerCase().trim();
+const AUTH_PASSWORD = process.env.WAX_AUTH_PASSWORD || '';
+const AUTH_ENABLED = !!(AUTH_EMAIL && AUTH_PASSWORD);
+
+let AUTH_SECRET = '';
+if (AUTH_ENABLED) {
+  const secretFile = path.join(LIBRARY_DIR, '.auth-secret');
+  try { AUTH_SECRET = fs.readFileSync(secretFile, 'utf8').trim(); } catch {}
+  if (!AUTH_SECRET) {
+    AUTH_SECRET = crypto.randomBytes(32).toString('hex');
+    try { fs.writeFileSync(secretFile, AUTH_SECRET, { mode: 0o600 }); } catch {}
+  }
+  console.log('[auth] enabled for', AUTH_EMAIL);
+}
+
+const TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+function signToken(email) {
+  const payload = Buffer.from(JSON.stringify({
+    email,
+    exp: Date.now() + TOKEN_TTL_MS,
+  })).toString('base64url');
+  const sig = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+function verifyToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const [payload, sig] = token.split('.');
+  if (!payload || !sig) return null;
+  const expected = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+  if (sig.length !== expected.length) return null;
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'))) return null;
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (!data.exp || data.exp < Date.now()) return null;
+    return data;
+  } catch { return null; }
+}
+
 app.use(express.json({ limit: '1mb' }));
 
 // Permissive CORS — Capacitor apps run under the capacitor:// / https://localhost
@@ -178,7 +230,7 @@ app.use(express.json({ limit: '1mb' }));
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.header('Origin') || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Wax-Profile');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Wax-Profile, Authorization');
   res.setHeader('Access-Control-Expose-Headers', 'Content-Length');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
@@ -193,6 +245,61 @@ app.use((req, _res, next) => {
   req.profileId = sanitizeProfileId(headerId || queryId || 'default');
   ensureProfileDir(req.profileId);
   next();
+});
+
+// Auth middleware — gates every /api/* call when AUTH_ENABLED. Exempts:
+//   - /api/auth/*  (the login + verify endpoints themselves)
+//   - media proxies (/api/stream, /api/cover, /api/preview, /api/artist-photo,
+//     /audio/*) — <audio> and <img> can't send Authorization headers
+// Token from `Authorization: Bearer …` header OR `?_token=` query for SSE
+// EventSource which also can't set headers.
+const AUTH_EXEMPT_PREFIXES = [
+  '/api/auth/',
+  '/api/stream/',
+  '/api/cover/',
+  '/api/preview/',
+  '/api/artist-photo/',
+];
+app.use((req, res, next) => {
+  if (!AUTH_ENABLED) return next();
+  if (!req.path.startsWith('/api/')) return next();
+  if (AUTH_EXEMPT_PREFIXES.some((p) => req.path.startsWith(p))) return next();
+
+  let token = '';
+  const auth = req.header('Authorization') || '';
+  if (auth.startsWith('Bearer ')) token = auth.slice(7);
+  else if (typeof req.query._token === 'string') token = req.query._token;
+
+  if (verifyToken(token)) return next();
+  res.status(401).json({ error: 'Unauthorized' });
+});
+
+// Auth routes — login + verify. Defined after the gate but exempt above.
+app.post('/api/auth/login', (req, res) => {
+  if (!AUTH_ENABLED) return res.status(503).json({ error: 'Auth disabled' });
+  const { email, password } = req.body || {};
+  if (typeof email !== 'string' || typeof password !== 'string') {
+    return res.status(400).json({ error: 'email + password required' });
+  }
+  // Hash both sides so timing-safe compare runs on equal-length buffers
+  // regardless of input length.
+  const emailOk = crypto.timingSafeEqual(
+    crypto.createHash('sha256').update(email.toLowerCase().trim()).digest(),
+    crypto.createHash('sha256').update(AUTH_EMAIL).digest(),
+  );
+  const passOk = crypto.timingSafeEqual(
+    crypto.createHash('sha256').update(password).digest(),
+    crypto.createHash('sha256').update(AUTH_PASSWORD).digest(),
+  );
+  if (!emailOk || !passOk) return res.status(401).json({ error: 'Identifiants incorrects' });
+  res.json({ token: signToken(AUTH_EMAIL) });
+});
+app.get('/api/auth/verify', (req, res) => {
+  // If AUTH_ENABLED, the middleware above already validated. If disabled,
+  // we still answer ok so the client falls through the gate. The
+  // `authEnabled` flag lets the client decide whether the empty-token
+  // case is "no gate at all" or "show me the login form".
+  res.json({ ok: true, authEnabled: AUTH_ENABLED });
 });
 
 app.use(express.static(PUBLIC_DIR));

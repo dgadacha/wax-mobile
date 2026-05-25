@@ -3,13 +3,25 @@ import { api } from '@/lib/api';
 
 const TOKEN_KEY = 'wax:auth-token';
 
+// Single-user auth. The server decides whether the gate is active via the
+// WAX_AUTH_EMAIL + WAX_AUTH_PASSWORD env vars; the client just plays
+// along. /api/auth/verify always returns 200 — its `authEnabled` field
+// tells us whether the server requires a token. So:
+//   - server auth disabled → authEnabled=false, loggedIn=true regardless
+//     (LoginGate stays hidden, full app runs unauthenticated as before)
+//   - server auth enabled + no/invalid token → 401 on verify, token
+//     cleared, loggedIn=false (LoginGate shows the form)
+//   - server auth enabled + valid token → verify succeeds, loggedIn=true
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: null,
-    checking: true, // true while we verify the stored token on startup
+    authEnabled: false, // assume open until verify() proves otherwise
+    checking: true,     // true while we probe /api/auth/verify on startup
   }),
   getters: {
-    loggedIn: (s) => !!s.token,
+    // If the server doesn't require auth, every user is effectively
+    // logged in. Otherwise we need a token.
+    loggedIn: (s) => !s.authEnabled || !!s.token,
   },
   actions: {
     loadToken() {
@@ -23,10 +35,12 @@ export const useAuthStore = defineStore('auth', {
       } catch {}
     },
     async verify() {
-      if (!this.token) { this.checking = false; return; }
       try {
-        await api('/api/auth/verify');
+        const r = await api('/api/auth/verify');
+        this.authEnabled = !!r?.authEnabled;
       } catch {
+        // 401 can only happen on auth-enabled servers with no/bad token.
+        this.authEnabled = true;
         this._saveToken(null);
       }
       this.checking = false;
@@ -37,6 +51,7 @@ export const useAuthStore = defineStore('auth', {
         body: JSON.stringify({ email, password }),
       });
       this._saveToken(token);
+      this.authEnabled = true;
     },
     logout() {
       this._saveToken(null);

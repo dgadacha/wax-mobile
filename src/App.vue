@@ -6,6 +6,7 @@ import { House, Search, Library, Settings, ChevronLeft } from 'lucide-vue-next';
 import MobilePlayer from './components/MobilePlayer.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import ProfileGate from './components/ProfileGate.vue';
+import LoginGate from './components/LoginGate.vue';
 
 import ViewHome from './views/ViewHome.vue';
 import ViewSearch from './views/ViewSearch.vue';
@@ -24,6 +25,7 @@ import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
 import { useProfileStore } from './stores/profile';
 import { useActionSheetStore } from './stores/actionSheet';
+import { useAuthStore } from './stores/auth';
 import { haptics } from './lib/haptics';
 import { closeModal, modalState } from './lib/modal';
 
@@ -35,6 +37,7 @@ const prefs = usePrefsStore();
 const discover = useDiscoverStore();
 const profile = useProfileStore();
 const actionSheet = useActionSheetStore();
+const auth = useAuthStore();
 
 // Top-level tab routes. Detail views (playlist, album, artist, mix) are
 // pushed on top of these and the active tab is whatever spawned them.
@@ -90,13 +93,19 @@ watch(() => player.playing, (playing) => {
 
 // Land on Home for new sessions; legacy view stores may have persisted
 // 'download' as the default.
-onMounted(async () => {
-  prefs.load();
-  profile.loadActiveFromStorage();
-  if (view.name === 'download' || view.name == null) {
-    view.switchTo('home');
-  }
-  setTimeout(() => player.setupMediaSession(), 0);
+//
+// Bootstrap is two-phased so the login gate (if enabled server-side) gets
+// a clean fall-through path: synchronous local setup runs immediately,
+// then we verify the stored auth token. If the token is valid (or auth
+// is disabled — verify() answers ok), we run `bootstrapAfterAuth()` which
+// pulls profile, library, playlists, etc. If not, LoginGate stays visible
+// and the watch below triggers the post-auth bootstrap once the user
+// submits valid credentials.
+let bootstrapped = false;
+
+async function bootstrapAfterAuth() {
+  if (bootstrapped) return;
+  bootstrapped = true;
 
   // Fetch profiles first — the gate blocks the rest of the UI until a
   // profile is active (the user picks or one is remembered + still valid).
@@ -118,10 +127,40 @@ onMounted(async () => {
   playlists.fetch();
   library._listenAlbumProgress();
   discover.refresh();
+}
+
+onMounted(async () => {
+  prefs.load();
+  profile.loadActiveFromStorage();
+  if (view.name === 'download' || view.name == null) {
+    view.switchTo('home');
+  }
+  setTimeout(() => player.setupMediaSession(), 0);
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalState.visible) closeModal();
   });
+
+  // Re-render the LoginGate if the server kicks us out (token expired,
+  // password rotated, secret file deleted). api.js dispatches this on 401.
+  window.addEventListener('wax:auth-expired', () => {
+    bootstrapped = false;
+    auth.logout();
+  });
+
+  // Load any persisted token, then probe the server. /api/auth/verify
+  // answers 200 either way and tells us whether the gate is active. If
+  // it's not, loggedIn flips to true regardless of token presence and
+  // bootstrap runs immediately.
+  auth.loadToken();
+  await auth.verify();
+  if (auth.loggedIn) await bootstrapAfterAuth();
+});
+
+// Once the user logs in via LoginGate, kick off the bootstrap. Triggers
+// only on the false→true transition so re-mounts don't double-bootstrap.
+watch(() => auth.loggedIn, async (isLogged, was) => {
+  if (isLogged && !was) await bootstrapAfterAuth();
 });
 </script>
 
@@ -175,6 +214,7 @@ onMounted(async () => {
 
     <ModalRoot />
     <ProfileGate />
+    <LoginGate />
 
     <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
          here instead of per-view avoids the "two views stack two sheets in
