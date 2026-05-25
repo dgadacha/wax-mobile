@@ -37,6 +37,22 @@ spec:
               value: /usr/local/bin/yt-dlp
             - name: WAX_FFMPEG
               value: /usr/bin/ffmpeg
+            # Single-user login gate. Both vars sourced from the wax-auth
+            # secret (create with:
+            #   kubectl -n wax create secret generic wax-auth \
+            #     --from-literal=email='you@example.com' \
+            #     --from-literal=password='your-strong-password'
+            # ). Leaving either empty disables the gate server-side.
+            - name: WAX_AUTH_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: wax-auth
+                  key: email
+            - name: WAX_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: wax-auth
+                  key: password
           volumeMounts:
             - name: data
               mountPath: /data
