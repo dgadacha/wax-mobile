@@ -435,26 +435,20 @@ export const usePlayerStore = defineStore('player', {
       ms.setActionHandler('pause', () => this.audioEl?.pause());
       ms.setActionHandler('previoustrack', () => this.prev());
       ms.setActionHandler('nexttrack', () => this.next());
-      // `seekto` powers the lock-screen scrubber — keep it. We
-      // explicitly DO NOT register seekbackward/seekforward: iOS's
-      // Now Playing widget prefers the ±10 s arrows over
-      // previoustrack/nexttrack when both are wired, and a music
-      // player should expose prev/next as the primary affordance.
-      // Scrubbing via the progress bar (powered by seekto) covers
-      // the "I want to skip 10 s" case fine.
-      try {
-        ms.setActionHandler('seekto', (e) => {
-          if (!this.audioEl) return;
-          if (e.fastSeek && 'fastSeek' in this.audioEl) this.audioEl.fastSeek(e.seekTime);
-          else this.audioEl.currentTime = e.seekTime;
-        });
-      } catch {}
-      // Belt-and-suspenders: an older client build may have already
-      // registered seekbackward/seekforward, and the OS keeps those
-      // handlers around until the page explicitly nukes them. Just
-      // not registering new ones isn't enough — we have to pass
-      // `null` to actively unregister, otherwise the lock screen
-      // keeps showing the ±10 s arrows after an update.
+      // iOS Safari has an undocumented quirk: as soon as ANY seek
+      // handler (including seekto, which powers the scrubber) is
+      // registered, the Now Playing widget collapses prev/next into
+      // the ±10s buttons even when seekbackward/seekforward are
+      // explicitly null. Confirmed against iOS 17/18 with this
+      // exact code. The only way to keep ⏮/⏭ on the lock screen is
+      // to NOT register any seek handler at all.
+      //
+      // The trade-off is the lock-screen scrubber: the progress bar
+      // still renders but dragging won't seek (iOS no longer routes
+      // the gesture to the page). In-app scrubbing via our own
+      // MobilePlayer UI keeps working — that's still the primary
+      // surface for fine-grained control.
+      try { ms.setActionHandler('seekto', null); } catch {}
       try { ms.setActionHandler('seekbackward', null); } catch {}
       try { ms.setActionHandler('seekforward', null); } catch {}
     },
