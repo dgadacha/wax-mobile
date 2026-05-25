@@ -72,6 +72,19 @@ export const useAuthStore = defineStore('auth', {
       this._saveToken(token);
       this.authEnabled = true;
     },
+    // Server-driven session reset. Called when api.js sees a real 401:
+    // the server is enforcing auth, our token is dead. Forcing
+    // authEnabled=true is important — if the SW had cached an old
+    // {authEnabled:false} from before auth was turned on, our local
+    // state would keep believing "no gate needed" and the LoginGate
+    // would never appear despite every API call 401-ing.
+    expire() {
+      this.authEnabled = true;
+      this._saveToken(null);
+    },
+    // User-initiated logout. Leaves authEnabled alone — on a no-auth
+    // server, clicking logout shouldn't suddenly plaster a LoginGate
+    // the user can't move past.
     logout() {
       this._saveToken(null);
     },

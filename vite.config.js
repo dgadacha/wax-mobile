@@ -83,9 +83,21 @@ export default defineConfig(({ mode }) => {
               // closes the connection — exactly what makes "download
               // does nothing" look like a server problem when it's the
               // SW that's swallowing the stream.
+              //
+              // Also covers /api/auth/* — login MUST always reach the
+              // network (caching credentials would be a footgun), and
+              // verify must reflect the live token state. A stale
+              // cached {authEnabled:false} from a pre-auth deploy
+              // would otherwise convince the client there's no gate
+              // even when the server now enforces one, hiding the
+              // LoginGate while every other call 401s in the
+              // background. auth.js handles offline tolerance via the
+              // optimistic-keep-token fallback when navigator.onLine
+              // is false, so we don't lose offline support.
               urlPattern: ({ url }) =>
                 url.pathname.startsWith('/api/jobs/') ||
-                url.pathname === '/api/album-progress',
+                url.pathname === '/api/album-progress' ||
+                url.pathname.startsWith('/api/auth/'),
               handler: 'NetworkOnly',
             },
             {
@@ -116,13 +128,11 @@ export default defineConfig(({ mode }) => {
             {
               // Global data endpoints (no per-profile content) — same
               // NetworkFirst pattern without the profile cache-key
-              // dance. /api/auth/verify in particular is critical
-              // offline: the boot sequence calls it and a cached 200
-              // lets us short-circuit into the app instead of stranding
-              // the user on a LoginGate they can't submit.
+              // dance. /api/auth/* moved up to NetworkOnly above
+              // because caching the auth state is more trouble than
+              // it's worth.
               urlPattern: ({ url }) =>
-                url.pathname === '/api/profiles' ||
-                url.pathname === '/api/auth/verify',
+                url.pathname === '/api/profiles',
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'wax-data-global',

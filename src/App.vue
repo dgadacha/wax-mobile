@@ -168,10 +168,13 @@ onMounted(async () => {
   });
 
   // Re-render the LoginGate if the server kicks us out (token expired,
-  // password rotated, secret file deleted). api.js dispatches this on 401.
+  // password rotated, secret file deleted). api.js dispatches this on 401
+  // from any protected route. expire() (not logout) forces authEnabled
+  // back to true so a stale SW-cached {authEnabled:false} can't keep the
+  // gate hidden while every other call 401s in the background.
   window.addEventListener('wax:auth-expired', () => {
     bootstrapped = false;
-    auth.logout();
+    auth.expire();
   });
 
   // Load any persisted token, then probe the server. /api/auth/verify

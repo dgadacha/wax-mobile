@@ -248,13 +248,18 @@ app.use((req, _res, next) => {
 });
 
 // Auth middleware — gates every /api/* call when AUTH_ENABLED. Exempts:
-//   - /api/auth/*  (the login + verify endpoints themselves)
-//   - media proxies (/api/stream, /api/cover, /api/preview, /api/artist-photo,
-//     /audio/*) — <audio> and <img> can't send Authorization headers
+//   - /api/auth/login (the only entry point that ISN'T supposed to
+//     carry a token — duh). /api/auth/verify is intentionally gated
+//     so the client can use a 401 from verify as the signal to drop
+//     a stale token + show the login form; if verify were exempt it'd
+//     answer 200 even on a bad token and the gate would never re-show.
+//   - media proxies (/api/stream, /api/cover, /api/preview,
+//     /api/artist-photo, /audio/*) — <audio> and <img> can't set
+//     Authorization headers.
 // Token from `Authorization: Bearer …` header OR `?_token=` query for SSE
 // EventSource which also can't set headers.
 const AUTH_EXEMPT_PREFIXES = [
-  '/api/auth/',
+  '/api/auth/login',
   '/api/stream/',
   '/api/cover/',
   '/api/preview/',
