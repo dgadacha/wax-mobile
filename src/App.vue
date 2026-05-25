@@ -142,6 +142,11 @@ async function bootstrapAfterAuth() {
   if (isOnline.value) {
     library._listenAlbumProgress();
     discover.refresh();
+    // Refill any holes in the SW audio cache for tracks the library
+    // says are offline-ready. Runs in the background — silent unless
+    // a track is gone from the server (in which case warmOfflineCache
+    // drops t.file locally so the UI matches reality).
+    library.warmOfflineCache().catch(() => {});
   }
 }
 
@@ -165,6 +170,7 @@ onMounted(async () => {
   window.addEventListener('online', () => {
     try { library._listenAlbumProgress(); } catch {}
     try { discover.refresh(); } catch {}
+    try { library.warmOfflineCache(); } catch {}
   });
 
   // Re-render the LoginGate if the server kicks us out (token expired,

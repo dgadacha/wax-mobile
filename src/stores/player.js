@@ -94,7 +94,20 @@ export const usePlayerStore = defineStore('player', {
         this._clearStallWatchdog();
         this.loading = false;
         const track = findTrack(this.queue[this.index]);
-        showToast(track ? t('toast.play_error_named', track.title) : t('toast.play_error'), 'error');
+        // Offline + the track *was supposed* to be cached = SW cache
+        // hole. Tell the user explicitly instead of the generic "can't
+        // play" so they understand this was a "should have worked
+        // offline" failure (and that warmOfflineCache will fix it
+        // next time they're online).
+        const offlineMiss = typeof navigator !== 'undefined'
+          && navigator.onLine === false
+          && track?.file;
+        showToast(
+          offlineMiss
+            ? `Pas en cache hors-ligne — ${track.title}`
+            : (track ? t('toast.play_error_named', track.title) : t('toast.play_error')),
+          'error',
+        );
         setTimeout(() => { if (this.queue.length > 1) this.next(); }, 3000);
       });
       el.addEventListener('timeupdate', () => {

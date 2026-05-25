@@ -280,6 +280,66 @@ export const useLibraryStore = defineStore('library', {
         showToast(t('toast.fav_error'), 'error');
       }
     },
+    // Walk every downloaded track and make sure the SW audio cache
+    // actually has the MP3. The download-completion handler fires a
+    // fire-and-forget `fetch(track.file, {cache:'reload'})` to seed
+    // the cache, but that can miss in three ways:
+    //   - the track was downloaded before the seed-fetch ever existed
+    //     (older versions of the client),
+    //   - a transient network blip ate the seed fetch silently,
+    //   - iOS evicted the cache under storage pressure.
+    // From the user's POV the bug looks like "track shows offline-ready
+    // but tapping it auto-skips" — the audio element fetches, SW
+    // CacheFirst misses, falls back to network, fails offline, audio
+    // fires `error`, player.next() skips. This warmer closes the gap
+    // by checking the cache directly and refilling missing entries.
+    async warmOfflineCache() {
+      if (typeof caches === 'undefined') return; // no SW support
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return; // pointless offline
+
+      let cache;
+      try { cache = await caches.open('wax-audio'); }
+      catch { return; } // no cache yet, nothing to warm against
+
+      const downloaded = this.tracks.filter((tr) => tr.file);
+      const missing = [];
+      for (const tr of downloaded) {
+        try {
+          const hit = await cache.match(tr.file, { ignoreSearch: true });
+          if (!hit) missing.push(tr);
+        } catch {}
+      }
+      if (missing.length === 0) return;
+
+      // Same pool size as downloads — stays under the browser's
+      // HTTP/1.1 6-per-origin cap and matches the server-side yt-dlp
+      // semaphore so we don't queue work the server can't process.
+      // Cache: 'reload' so we go to network (and re-cache) instead of
+      // potentially hitting a partial/corrupted browser HTTP cache.
+      const POOL = 4;
+      let idx = 0;
+      const total = missing.length;
+      const store = this; // for the worker closures
+      async function worker() {
+        while (idx < total) {
+          const i = idx++;
+          const tr = missing[i];
+          try {
+            const res = await fetch(apiUrl(tr.file), { cache: 'reload' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          } catch {
+            // Server may have lost the file (PVC wipe, server-side
+            // delete, etc.). Drop t.file locally so the UI reflects
+            // reality — track stays in library, just not "offline".
+            try {
+              const live = store.findById(tr.id);
+              if (live && live.file) live.file = null;
+            } catch {}
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: POOL }, () => worker()));
+    },
     async reorder(draggedId, targetId, above) {
       const ids = this.tracks.map((tr) => tr.id).filter((id) => id !== draggedId);
       const targetIdx = ids.indexOf(targetId);
