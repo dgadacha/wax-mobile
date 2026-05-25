@@ -17,6 +17,8 @@ dist/
 release/
 out/
 .vite/
+# vite-plugin-pwa dev output (regenerated each `vite dev`)
+dev-dist/
 
 # Capacitor native projects — regenerated per checkout via `npx cap add`
 ios/
