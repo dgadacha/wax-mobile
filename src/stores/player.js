@@ -449,6 +449,14 @@ export const usePlayerStore = defineStore('player', {
           else this.audioEl.currentTime = e.seekTime;
         });
       } catch {}
+      // Belt-and-suspenders: an older client build may have already
+      // registered seekbackward/seekforward, and the OS keeps those
+      // handlers around until the page explicitly nukes them. Just
+      // not registering new ones isn't enough — we have to pass
+      // `null` to actively unregister, otherwise the lock screen
+      // keeps showing the ±10 s arrows after an update.
+      try { ms.setActionHandler('seekbackward', null); } catch {}
+      try { ms.setActionHandler('seekforward', null); } catch {}
     },
     _updateMediaMetadata(track) {
       if (!('mediaSession' in navigator)) return;

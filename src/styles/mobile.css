@@ -203,6 +203,20 @@ img { max-width: 100%; display: block; }
   /* Reserve room at the bottom for the mini-player + tab bar so the last
    * card isn't hidden under the chrome. */
   padding-bottom: calc(var(--mini-height) + var(--tab-height) + var(--safe-bottom) + 8px);
+  /* iOS WebKit cache-busting: promote .view-scroll to its own
+   * compositor layer so the GPU doesn't reuse a stale snapshot of the
+   * previously-hidden v-show'd tab when the user switches tabs.
+   * Without this, switching tabs sometimes lands on a blank black
+   * frame until the user toggles away and back. */
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+}
+/* Same trick on each direct view child — the per-tab compositor layer
+ * is what actually gets the v-show toggle, so it needs to live on its
+ * own GPU surface to repaint reliably. */
+.app-shell .view-scroll > * {
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
 }
 
 /* van-tabbar handles fixed positioning + safe-area-inset-bottom itself

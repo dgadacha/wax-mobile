@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, computed, watch, ref } from 'vue';
+import { onMounted, computed, watch, ref, nextTick } from 'vue';
 import { showToast as vantToast } from 'vant';
 
 import { House, Search, Library, Settings, ChevronLeft, WifiOff } from 'lucide-vue-next';
@@ -90,6 +90,18 @@ const showNavTitle = computed(() => isSubview.value);
 watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
 }, { immediate: true });
+
+// iOS WebKit cache-busting: every time view.name flips (tab switch,
+// sub-view drill-in, back), force a layout read on .view-scroll so
+// the compositor invalidates its cached layer and actually repaints
+// the newly-visible v-show'd content. Without this, the user can
+// land on a fully blank tab until they switch away and back.
+watch(() => view.name, () => {
+  nextTick(() => {
+    const el = document.querySelector('.app-shell .view-scroll');
+    if (el) void el.offsetHeight; // reading offsetHeight forces sync layout
+  });
+});
 
 // Online/offline state. `navigator.onLine` is best-effort (the browser
 // only knows whether it has a route to a network, not whether the
