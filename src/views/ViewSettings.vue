@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive, RefreshCw, Trash2 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -139,6 +139,23 @@ async function refreshStorage() {
       audioCacheCount.value = keys.length;
     }
   } catch {}
+}
+
+// Storage bar percentage 0–100. Capped at 100 (quotas can shift).
+const storagePct = computed(() => {
+  if (!storageQuota.value || !storageUsage.value) return 0;
+  return Math.min(100, Math.round((storageUsage.value / storageQuota.value) * 1000) / 10);
+});
+
+// Tap the storage card → refresh numbers + log cache diagnostic to
+// console for power-user debugging. The dump used to live as a
+// dedicated cell but it was visually loud; consigning it to console
+// keeps the surface clean.
+async function onTapStorageCard() {
+  haptics.light();
+  await refreshStorage();
+  await refreshCacheDiagnostic();
+  console.log('[settings] cache diagnostic:', cacheDiagnostic.value);
 }
 
 async function clearAudioCache() {
@@ -407,36 +424,51 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="Hors-ligne">
+      <!-- Storage summary card: drive icon + count + size + progress
+           bar. Replaces the old triple Cell stack (Cache audio /
+           Espace utilisé / Diagnostic) which wrapped ugly on long
+           values. Tap the bar to refresh the underlying numbers. -->
+      <div class="storage-card" @click="onTapStorageCard">
+        <div class="storage-card-row">
+          <div class="storage-card-icon">
+            <HardDrive :size="20" :stroke-width="1.8" color="var(--accent)" />
+          </div>
+          <div class="storage-card-meta">
+            <div class="storage-card-title">{{ audioCacheCount }} titre{{ audioCacheCount > 1 ? 's' : '' }} hors-ligne</div>
+            <div class="storage-card-sub">{{ fmtBytes(storageUsage) }}<span v-if="storageQuota"> sur {{ fmtBytes(storageQuota) }}</span></div>
+          </div>
+        </div>
+        <div v-if="storageQuota" class="storage-bar">
+          <div class="storage-bar-fill" :style="{ width: storagePct + '%' }" />
+        </div>
+      </div>
+
       <van-cell
-        title="Cache audio"
-        :value="audioCacheCount + ' titre' + (audioCacheCount > 1 ? 's' : '')"
-      >
-        <template #icon>
-          <HardDrive :size="18" :stroke-width="2" color="var(--text-muted)" class="cell-icon" />
-        </template>
-      </van-cell>
-      <van-cell
-        title="Espace utilisé"
-        :value="fmtBytes(storageUsage) + (storageQuota ? ' / ' + fmtBytes(storageQuota) : '')"
-      />
-      <van-cell
-        title="Réparer le cache hors-ligne"
-        :value="warming ? `Préparation ${warmingProgress}` : (warmingSummary || 'Pré-télécharger les manquants')"
+        :title="warming ? 'Vérification en cours' : 'Vérifier le cache'"
+        :value="warming ? warmingProgress : (warmingSummary || 'Re-télécharger les manquants')"
         is-link
         @click="repairOfflineCache"
-      />
+      >
+        <template #icon>
+          <RefreshCw
+            :size="18"
+            :stroke-width="2"
+            :color="warming ? 'var(--accent)' : 'var(--text-muted)'"
+            class="cell-icon"
+            :class="{ 'spin-anim': warming }"
+          />
+        </template>
+      </van-cell>
+
       <van-cell
-        title="Diagnostic des caches"
-        :value="cacheDiagnostic || '…'"
-        is-link
-        @click="refreshCacheDiagnostic"
-      />
-      <van-cell
-        title="Vider le cache audio"
-        :value="clearing ? 'En cours…' : ''"
+        :title="clearing ? 'Suppression…' : 'Vider le cache audio'"
         is-link
         @click="clearAudioCache"
-      />
+      >
+        <template #icon>
+          <Trash2 :size="18" :stroke-width="2" color="var(--danger)" class="cell-icon" />
+        </template>
+      </van-cell>
     </van-cell-group>
 
     <van-cell-group inset title="Sauvegarde">
@@ -470,7 +502,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.10.5" />
+      <van-cell title="Version" value="0.10.6" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -504,6 +536,56 @@ async function onLogout() {
 .settings-view :deep(.van-cell__title) { color: var(--text); }
 .settings-view :deep(.van-cell__value) { color: var(--text-muted); }
 .cell-icon { margin-right: 10px; }
+.spin-anim { animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Storage summary card — lives inside a van-cell-group so it picks
+ * up the group's rounded corners. Padded enough to breathe; the
+ * progress bar at the bottom gives an instant read of "how full". */
+.storage-card {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.storage-card-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.storage-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-2);
+  background: var(--accent-soft, rgba(124, 92, 255, 0.12));
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.storage-card-meta { min-width: 0; flex: 1 1 auto; }
+.storage-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.storage-card-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.storage-bar {
+  margin-top: var(--sp-3);
+  height: 6px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+.storage-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width var(--motion-mid) var(--ease);
+}
 
 /* Theme picker */
 .theme-section { padding: 4px 16px 14px; }
