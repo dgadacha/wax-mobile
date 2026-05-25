@@ -116,6 +116,14 @@ export const usePlayerStore = defineStore('player', {
       el.addEventListener('playing', () => {
         this.loading = false;
         this._clearStallWatchdog();
+        // iOS Safari (17/18) only honors the registered MediaSession
+        // handler set if you set them AFTER the audio is actively
+        // playing. Setting them at app boot / before the first
+        // `playing` event makes iOS fall back to its default lock-
+        // screen controls (the ±10 s seek arrows). Re-asserting them
+        // here on every `playing` event is the documented WebKit
+        // workaround — costs nothing and finally lets ⏮/⏭ show up.
+        this._registerMediaSessionHandlers();
       });
       // 'waiting' fires when the buffer underruns. The corresponding
       // 'playing' event fires once buffering recovers — but on a stale
@@ -428,25 +436,37 @@ export const usePlayerStore = defineStore('player', {
     // ============================================================
     // MediaSession integration
     // ============================================================
+    // Kept for App.vue's `player.setupMediaSession()` call on boot,
+    // but the real work happens in _registerMediaSessionHandlers
+    // fired by the 'playing' event listener. Setting handlers at
+    // boot doesn't stick on iOS — the OS reads the handler set when
+    // the audio session activates, which is on the first `playing`
+    // event after a play() call.
     setupMediaSession() {
+      // intentionally a no-op; see comment above + the listener in init()
+    },
+    _registerMediaSessionHandlers() {
       if (!('mediaSession' in navigator)) return;
       const ms = navigator.mediaSession;
-      ms.setActionHandler('play', () => this.audioEl?.play());
-      ms.setActionHandler('pause', () => this.audioEl?.pause());
-      ms.setActionHandler('previoustrack', () => this.prev());
-      ms.setActionHandler('nexttrack', () => this.next());
-      // iOS Safari is stubborn — even with seek* handlers explicitly
-      // null AND no seekto registered, the Now Playing widget on
-      // lock screen still renders ±10s buttons instead of ⏮/⏭ for
-      // some audio-session configurations we can't override from
-      // the web layer. Wire them to prev/next as a fallback so the
-      // BEHAVIOR is right even if the icon isn't: tapping the "−10s"
-      // arrow goes to previous track, "+10s" goes to next. Less
-      // pretty but the user can finally change tracks from the lock
-      // screen, AirPods double-tap, CarPlay, etc.
-      ms.setActionHandler('seekbackward', () => this.prev());
-      ms.setActionHandler('seekforward', () => this.next());
-      try { ms.setActionHandler('seekto', null); } catch {}
+      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
+      try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
+      try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
+      try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
+      // Re-arm seekto so the in-app + Chrome/Android lock-screen
+      // scrubber still works. On iOS, having seekto registered AT
+      // PLAYING TIME (as opposed to at boot) does NOT force the
+      // ±10s buttons — that quirk only happens when handlers are
+      // set before the audio session is active.
+      try {
+        ms.setActionHandler('seekto', (e) => {
+          if (!this.audioEl) return;
+          if (e.fastSeek && 'fastSeek' in this.audioEl) this.audioEl.fastSeek(e.seekTime);
+          else this.audioEl.currentTime = e.seekTime;
+        });
+      } catch {}
+      // Hard-null these so any older registration is wiped.
+      try { ms.setActionHandler('seekbackward', null); } catch {}
+      try { ms.setActionHandler('seekforward', null); } catch {}
     },
     _updateMediaMetadata(track) {
       if (!('mediaSession' in navigator)) return;
