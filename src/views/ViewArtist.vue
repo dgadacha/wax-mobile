@@ -136,7 +136,7 @@ onMounted(() => loadRecs(artistName.value));
           :is-liked="isFav(t)"
           :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
           @play="playLib(t)"
-          @like="lib.toggleFav(t.id)"
+          @like="lib.toggleFav(t)"
         />
       </div>
     </section>

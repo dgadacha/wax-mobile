@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import { Bookmark, Sparkles } from 'lucide-vue-next';
+import { useLibraryStore } from '@/stores/library';
 import { useMixStore } from '@/stores/mix';
 import { useViewStore } from '@/stores/view';
 import { useStreamsStore } from '@/stores/streams';
@@ -13,6 +14,15 @@ const mix = useMixStore();
 const view = useViewStore();
 const streams = useStreamsStore();
 const player = usePlayerStore();
+const lib = useLibraryStore();
+
+// Mix tracks are stream-* objects (isStream:true). `lib.toggleFav(t)`
+// detects isStream and does the optimistic-add-favorite flow.
+// `isLiked` cross-checks against the library by ytId since the stream
+// id doesn't exist in lib.tracks.
+function isLiked(t) {
+  return !!t.ytId && lib.tracks.some((lt) => lt.ytId === t.ytId && lt.liked !== false);
+}
 
 const tracks = computed(() => {
   if (!mix.current) return [];
@@ -74,9 +84,10 @@ function save() {
         :index="i"
         variant="thumb"
         :is-playing="player.currentTrack && player.currentTrack.id === t.id"
-        :is-liked="false"
+        :is-liked="isLiked(t)"
         :show-more="false"
         @play="playTrack(t)"
+        @like="lib.toggleFav(t)"
       />
     </div>
   </div>

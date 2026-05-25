@@ -186,7 +186,7 @@ async function deleteThis() {
         :is-liked="isLiked(t)"
         :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
         @play="playTrack(t)"
-        @like="lib.toggleFav(t.id)"
+        @like="lib.toggleFav(t)"
         @more="onTrackMore(t)"
       />
     </div>

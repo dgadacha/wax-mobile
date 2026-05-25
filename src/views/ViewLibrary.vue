@@ -313,7 +313,7 @@ function cardIcon(card) {
           :is-liked="lib.isFavorite(t)"
           :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
           @play="playFavoritesFrom(t)"
-          @like="lib.toggleFav(t.id)"
+          @like="lib.toggleFav(t)"
           @more="onMore(t)"
         />
       </div>
