@@ -67,7 +67,7 @@ if (!self.define) {
     });
   };
 }
-define(['./workbox-f7a01684'], (function (workbox) { 'use strict';
+define(['./workbox-356998fb'], (function (workbox) { 'use strict';
 
   self.skipWaiting();
   workbox.clientsClaim();
@@ -80,19 +80,32 @@ define(['./workbox-f7a01684'], (function (workbox) { 'use strict';
     "url": "registerSW.js",
     "revision": "3ca0b8505b4bec776b69afdba2768812"
   }, {
-    "url": "/index.html",
-    "revision": "0.g5cf3ggq5oo"
+    "url": "index.html",
+    "revision": "0.0757q0l1nh8"
   }], {});
   workbox.cleanupOutdatedCaches();
-  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("/index.html"), {
+  workbox.registerRoute(new workbox.NavigationRoute(workbox.createHandlerBoundToURL("index.html"), {
     allowlist: [/^\/$/],
-    denylist: [/^\/api\//, /^\/audio\//, /^\/preview-files\//]
+    denylist: [/\/api\//, /\/audio\//, /\/preview-files\//]
   }));
   workbox.registerRoute(/\/api\/cover\//, new workbox.StaleWhileRevalidate({
     "cacheName": "wax-covers",
     plugins: [new workbox.ExpirationPlugin({
       maxEntries: 500,
       maxAgeSeconds: 2592000
+    })]
+  }), 'GET');
+  workbox.registerRoute(/\/audio\/[^/]+\.mp3$/, new workbox.CacheFirst({
+    "cacheName": "wax-audio",
+    "matchOptions": {
+      "ignoreSearch": true
+    },
+    plugins: [new workbox.RangeRequestsPlugin(), new workbox.CacheableResponsePlugin({
+      statuses: [0, 200, 206]
+    }), new workbox.ExpirationPlugin({
+      maxEntries: 500,
+      maxAgeSeconds: 31536000,
+      purgeOnQuotaError: true
     })]
   }), 'GET');
 

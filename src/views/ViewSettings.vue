@@ -1,7 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -102,6 +102,62 @@ async function onImportFile(e) {
     if (fileInput.value) fileInput.value.value = '';
   }
 }
+
+// ── Offline storage ───────────────────────────────────────────────
+const storageUsage = ref(null);   // bytes
+const storageQuota = ref(null);   // bytes
+const audioCacheCount = ref(0);
+const clearing = ref(false);
+
+function fmtBytes(b) {
+  if (b == null) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
+  if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
+  return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+}
+
+async function refreshStorage() {
+  // navigator.storage.estimate() returns the total used by ALL origins
+  // for this app (cache + indexedDB + localStorage). Good enough as a
+  // proxy for "how much downloaded music is taking up".
+  try {
+    if (navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      storageUsage.value = est.usage;
+      storageQuota.value = est.quota;
+    }
+  } catch {}
+  // Count entries in the wax-audio cache directly — gives us the exact
+  // number of cached tracks (more meaningful than the global usage).
+  try {
+    if ('caches' in window) {
+      const cache = await caches.open('wax-audio');
+      const keys = await cache.keys();
+      audioCacheCount.value = keys.length;
+    }
+  } catch {}
+}
+
+async function clearAudioCache() {
+  try {
+    await showConfirmDialog({
+      title: 'Vider le cache audio',
+      message: `Supprimer les ${audioCacheCount.value} titre${audioCacheCount.value > 1 ? 's' : ''} en cache sur ce téléphone ? Les MP3 restent côté serveur — un nouvel appui sur Lire les re-téléchargera.`,
+      confirmButtonText: 'Vider',
+      cancelButtonText: 'Annuler',
+      confirmButtonColor: 'var(--danger)',
+    });
+    clearing.value = true;
+    haptics.warning();
+    await caches.delete('wax-audio');
+    await refreshStorage();
+    showToast({ message: 'Cache audio vidé', position: 'bottom' });
+  } catch { /* cancelled or no cache API */ }
+  finally { clearing.value = false; }
+}
+
+onMounted(refreshStorage);
 
 // ── Danger zone ───────────────────────────────────────────────────
 async function onReset() {
@@ -258,6 +314,27 @@ function changeProfile() {
       <van-cell title="Playlists" :value="playlists.items.length + ''" />
     </van-cell-group>
 
+    <van-cell-group inset title="Hors-ligne">
+      <van-cell
+        title="Cache audio"
+        :value="audioCacheCount + ' titre' + (audioCacheCount > 1 ? 's' : '')"
+      >
+        <template #icon>
+          <HardDrive :size="18" :stroke-width="2" color="var(--text-muted)" class="cell-icon" />
+        </template>
+      </van-cell>
+      <van-cell
+        title="Espace utilisé"
+        :value="fmtBytes(storageUsage) + (storageQuota ? ' / ' + fmtBytes(storageQuota) : '')"
+      />
+      <van-cell
+        title="Vider le cache audio"
+        :value="clearing ? 'En cours…' : ''"
+        is-link
+        @click="clearAudioCache"
+      />
+    </van-cell-group>
+
     <van-cell-group inset title="Sauvegarde">
       <van-cell
         title="Exporter"
@@ -289,7 +366,7 @@ function changeProfile() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.7.3" />
+      <van-cell title="Version" value="0.8.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 

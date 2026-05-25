@@ -61,17 +61,45 @@ export default defineConfig(({ mode }) => {
           // path on subpath deployments.
           navigateFallback: 'index.html',
           navigateFallbackDenylist: [/\/api\//, /\/audio\//, /\/preview-files\//],
+          // /audio/* uses range requests for seeking; the matching
+          // runtimeCaching rule below requires this Workbox flag to
+          // route Range responses through the cache properly.
+          // (`runtimeCaching[].options.rangeRequests` enables the
+          // plugin per-rule.)
           runtimeCaching: [
             {
-              // App-shell first: image covers from /api/cover/ benefit
-              // from a "stale-while-revalidate" so the offline-cached
-              // copy shows instantly while a fresh fetch updates the
-              // cache for next time.
+              // Image covers from /api/cover/ — stale-while-revalidate
+              // so the offline-cached copy shows instantly while a fresh
+              // fetch updates the cache in the background.
               urlPattern: /\/api\/cover\//,
               handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'wax-covers',
                 expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              },
+            },
+            {
+              // Downloaded MP3s from /audio/*.mp3. CacheFirst so once a
+              // track is downloaded + played once, it plays offline
+              // forever (no network round-trip). RangeRequests plugin
+              // is critical: <audio> elements use HTTP Range to seek
+              // and stream — without it, range requests bypass the
+              // cache and seeking on offline tracks fails.
+              urlPattern: /\/audio\/[^/]+\.mp3$/,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'wax-audio',
+                rangeRequests: true,
+                cacheableResponse: { statuses: [0, 200, 206] },
+                expiration: {
+                  maxEntries: 500,
+                  // 1 year — the SW is the user's local download manager;
+                  // tracks evict only when the user hits 500+ or the
+                  // browser reclaims storage under pressure.
+                  maxAgeSeconds: 60 * 60 * 24 * 365,
+                  purgeOnQuotaError: true,
+                },
+                matchOptions: { ignoreSearch: true },
               },
             },
           ],

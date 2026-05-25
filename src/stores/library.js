@@ -364,6 +364,12 @@ export const useLibraryStore = defineStore('library', {
           const track = this.findById(trackId);
           if (track) track.file = `/audio/${trackId}.mp3`;
           showToast(t('toast.available_offline'), 'success');
+          // Seed the Service Worker cache with the freshly-downloaded
+          // MP3 so it's available without network even before the user
+          // plays it once. The SW's CacheFirst rule on /audio/* picks
+          // up the response and stores it.
+          // Fire-and-forget; failures are silent.
+          fetch(apiUrl(`/audio/${trackId}.mp3`), { cache: 'reload' }).catch(() => {});
         } else if (data.type === 'error') {
           const m = new Map(this.libraryDownloads);
           m.delete(trackId);
