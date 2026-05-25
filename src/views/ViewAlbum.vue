@@ -284,6 +284,7 @@ async function saveAsPlaylist() {
         :loading="pendingPlay.has(i)"
         :muted="!e.libTrack"
         :show-more="false"
+        :download-progress="e.libTrack ? (lib.libraryDownloads.get(e.libTrack.id)?.progress ?? null) : null"
         @play="playEntry(e, i)"
         @like="heartEntry(e, i)"
       />

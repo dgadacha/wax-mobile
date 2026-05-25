@@ -30,11 +30,32 @@ const totalDuration = computed(() => tracks.value.reduce((s, t) => s + (t.durati
 
 const coverUrl = computed(() => tracks.value[0]?.thumbnail || '');
 const bgGradient = computed(() => playlist.value ? gradientFromString(playlist.value.name) : '');
+
+// "Tout télécharger" doesn't have its own batch state — we derive it
+// from libraryDownloads on the playlist tracks. While at least one is
+// in flight, surface "Téléchargement X/Y" in the hero subtitle.
+const inFlightCount = computed(() => {
+  if (!playlist.value) return 0;
+  let n = 0;
+  for (const id of playlist.value.trackIds) {
+    if (lib.libraryDownloads.has(id)) n++;
+  }
+  return n;
+});
+const downloadedCount = computed(() =>
+  tracks.value.filter((t) => !!t.file).length,
+);
 const subtitle = computed(() => {
   if (!playlist.value) return '';
   const n = tracks.value.length;
   if (n === 0) return 'Playlist vide';
-  return `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
+  const base = `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
+  if (inFlightCount.value > 0) {
+    return `${base}  ·  Téléchargement ${downloadedCount.value}/${n}`;
+  }
+  if (downloadedCount.value === n) return `${base}  ·  Tout hors-ligne`;
+  if (downloadedCount.value > 0) return `${base}  ·  ${downloadedCount.value}/${n} hors-ligne`;
+  return base;
 });
 
 function playAll() {
@@ -163,6 +184,7 @@ async function deleteThis() {
         variant="index"
         :is-playing="player.currentTrack && player.currentTrack.id === t.id"
         :is-liked="isLiked(t)"
+        :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
         @play="playTrack(t)"
         @like="lib.toggleFav(t.id)"
         @more="onTrackMore(t)"

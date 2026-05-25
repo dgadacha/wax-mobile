@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { Heart, MoreHorizontal, Play, Check } from 'lucide-vue-next';
+import { Heart, MoreHorizontal, Play, Check, Download as DownloadIcon } from 'lucide-vue-next';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 
@@ -21,6 +21,18 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   // Visual desaturation for unmatched album rows.
   muted: { type: Boolean, default: false },
+  // 0..100 when a download is in flight for this track; null otherwise.
+  // Drives the circular progress ring shown in place of the offline
+  // indicator while the MP3 is being fetched server-side.
+  downloadProgress: { type: Number, default: null },
+});
+
+// SVG ring geometry: r=8 → circumference = 2πr ≈ 50.27. Stroke-dashoffset
+// goes from full circumference (0%) to 0 (100%).
+const RING_CIRC = 50.27;
+const ringDashoffset = computed(() => {
+  const p = Math.max(0, Math.min(100, props.downloadProgress || 0));
+  return RING_CIRC * (1 - p / 100);
 });
 
 const emit = defineEmits(['play', 'like', 'more']);
@@ -56,13 +68,42 @@ const sub = computed(() => {
 
     <div class="meta">
       <div class="title">{{ track.title }}</div>
-      <div class="sub">
-        {{ sub }}
-        <Check v-if="track.file" :size="11" :stroke-width="3" color="var(--success)" class="off-dot" />
-      </div>
+      <div class="sub">{{ sub }}</div>
     </div>
 
     <div class="actions" @click.stop>
+      <!-- Offline / download status. Three states:
+           - In flight (downloadProgress != null) → circular progress ring
+             around a Download icon, accent color.
+           - Downloaded (track.file) → solid Download chip, accent.
+           - Otherwise → nothing rendered. -->
+      <div
+        v-if="downloadProgress != null"
+        class="mtc-dl"
+        aria-label="Téléchargement en cours"
+      >
+        <svg viewBox="0 0 20 20" width="22" height="22">
+          <circle cx="10" cy="10" r="8" fill="none" stroke="var(--border)" stroke-width="2" />
+          <circle
+            cx="10" cy="10" r="8" fill="none"
+            stroke="var(--accent)" stroke-width="2"
+            :stroke-dasharray="RING_CIRC"
+            :stroke-dashoffset="ringDashoffset"
+            stroke-linecap="round"
+            transform="rotate(-90 10 10)"
+          />
+        </svg>
+        <DownloadIcon class="mtc-dl-icon" :size="10" :stroke-width="2.5" color="var(--accent)" />
+      </div>
+      <div
+        v-else-if="track.file"
+        class="mtc-dl done"
+        title="Disponible hors-ligne"
+        aria-label="Disponible hors-ligne"
+      >
+        <DownloadIcon :size="12" :stroke-width="2.5" color="var(--bg)" />
+      </div>
+
       <button
         v-if="showLike"
         class="mtc-btn"
@@ -143,7 +184,31 @@ const sub = computed(() => {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
+}
+
+/* Offline/download chip on the right of each row. The "done" variant is
+ * a small accent-filled pill with a Download icon — clearly distinct
+ * from the per-row ellipsis + heart so users immediately see which
+ * tracks they have on the device. The in-flight variant overlays a
+ * Download icon on top of a circular progress ring. */
+.mtc-dl {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+}
+.mtc-dl-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+.mtc-dl.done {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .mtc-btn {
   width: 32px;

@@ -134,6 +134,7 @@ onMounted(() => loadRecs(artistName.value));
           variant="index"
           :is-playing="player.currentTrack && player.currentTrack.id === t.id"
           :is-liked="isFav(t)"
+          :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
           @play="playLib(t)"
           @like="lib.toggleFav(t.id)"
         />
