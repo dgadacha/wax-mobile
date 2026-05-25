@@ -435,21 +435,18 @@ export const usePlayerStore = defineStore('player', {
       ms.setActionHandler('pause', () => this.audioEl?.pause());
       ms.setActionHandler('previoustrack', () => this.prev());
       ms.setActionHandler('nexttrack', () => this.next());
+      // `seekto` powers the lock-screen scrubber — keep it. We
+      // explicitly DO NOT register seekbackward/seekforward: iOS's
+      // Now Playing widget prefers the ±10 s arrows over
+      // previoustrack/nexttrack when both are wired, and a music
+      // player should expose prev/next as the primary affordance.
+      // Scrubbing via the progress bar (powered by seekto) covers
+      // the "I want to skip 10 s" case fine.
       try {
         ms.setActionHandler('seekto', (e) => {
           if (!this.audioEl) return;
           if (e.fastSeek && 'fastSeek' in this.audioEl) this.audioEl.fastSeek(e.seekTime);
           else this.audioEl.currentTime = e.seekTime;
-        });
-      } catch {}
-      try {
-        ms.setActionHandler('seekbackward', (e) => {
-          if (!this.audioEl) return;
-          this.audioEl.currentTime = Math.max(0, this.audioEl.currentTime - (e.seekOffset || 10));
-        });
-        ms.setActionHandler('seekforward', (e) => {
-          if (!this.audioEl) return;
-          this.audioEl.currentTime = Math.min(this.audioEl.duration || 0, this.audioEl.currentTime + (e.seekOffset || 10));
         });
       } catch {}
     },
