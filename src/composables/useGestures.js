@@ -27,7 +27,16 @@ const LONG_PRESS_DRIFT = 10;
  *   onSwipeRight?: () => void,
  *   onSwipeUp?: () => void,
  *   onSwipeDown?: () => void,
- *   onLongPress?: (e: TouchEvent) => void,
+ *   // Fires once the 450ms timer hits — use this for IMMEDIATE
+ *   // feedback (haptic, visual hint). Does NOT fire if the user
+ *   // moves their finger before the timer.
+ *   onLongPressArmed?: () => void,
+ *   // Fires on touchend after a long-press was armed — use this
+ *   // for the actual ACTION (open a sheet, show a menu). Firing
+ *   // here instead of in the timer means the action sheet's
+ *   // overlay isn't under the finger when touch ends, so iOS
+ *   // doesn't synthesize a "tap on overlay" → close cycle.
+ *   onLongPress?: () => void,
  *   // Live progress callbacks for finger-tracking animations.
  *   // `dx`/`dy` are signed deltas from the start of the touch.
  *   // `axis` is set to 'x' or 'y' once the gesture commits to a
@@ -46,7 +55,7 @@ export function useGestures(elRef, handlers = {}) {
   let lastDx = 0;
   let lastDy = 0;
   let longPressTimer = null;
-  let longPressFired = false;
+  let longPressArmed = false; // timer fired but touch still down
 
   function clearLongPress() {
     if (longPressTimer) {
@@ -64,13 +73,13 @@ export function useGestures(elRef, handlers = {}) {
     axis = null;
     lastDx = 0;
     lastDy = 0;
-    longPressFired = false;
-    if (handlers.onLongPress) {
+    longPressArmed = false;
+    if (handlers.onLongPress || handlers.onLongPressArmed) {
       clearLongPress();
       longPressTimer = setTimeout(() => {
         longPressTimer = null;
-        longPressFired = true;
-        handlers.onLongPress(e);
+        longPressArmed = true;
+        if (handlers.onLongPressArmed) handlers.onLongPressArmed();
       }, LONG_PRESS_MS);
     }
   }
@@ -106,10 +115,15 @@ export function useGestures(elRef, handlers = {}) {
 
   function onTouchEnd(e) {
     clearLongPress();
-    if (longPressFired) {
-      // Suppress the synthetic click that follows a long-press so
-      // the row's normal tap handler doesn't also fire.
+    if (longPressArmed) {
+      // The long-press timer already fired (with optional armed
+      // feedback). Fire the actual action NOW so any sheet/menu
+      // appears after the touch has fully ended — avoids the iOS
+      // tap-through where the menu's overlay catches the synthetic
+      // click and closes immediately. Also preventDefault so the
+      // synthetic click doesn't hit the underlying row.
       e.preventDefault();
+      if (handlers.onLongPress) handlers.onLongPress();
       emitEnd(false, null);
       return;
     }
@@ -142,6 +156,7 @@ export function useGestures(elRef, handlers = {}) {
 
   function onTouchCancel() {
     clearLongPress();
+    longPressArmed = false;
     emitEnd(false, null);
   }
 

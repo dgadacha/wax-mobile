@@ -46,12 +46,13 @@ const bodyDy = ref(0);
 const bodyAnimating = ref(false);
 
 const coverStyle = computed(() => ({
+  // Translate the WHOLE stage — current cover + the two side
+  // covers move together so the prev/next slides into view as the
+  // user drags. No opacity dimming: the user is here to preview
+  // what's coming, fading the strip would defeat the purpose.
   transform: `translate3d(${coverDx.value}px, 0, 0)`,
-  // Fade out as the cover slides — caps at 0.4 opacity to keep
-  // the artwork legible even at peak swipe.
-  opacity: 1 - Math.min(0.6, Math.abs(coverDx.value) / 220),
   transition: coverAnimating.value
-    ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 220ms cubic-bezier(0.4, 0, 0.2, 1)'
+    ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1)'
     : 'none',
 }));
 const bodyStyle = computed(() => ({
@@ -102,6 +103,20 @@ useGestures(npBodyRef, {
 });
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
+
+// Side covers for the iPod-coverflow swipe preview. Pulled from the
+// queue at index ± 1 so the user sees what they're about to jump to
+// as they drag horizontally. Empty when the queue boundary is hit
+// (no prev on the first track, no next on the last); the side slot
+// just renders a transparent placeholder in that case.
+function _coverFor(qIdx) {
+  if (qIdx < 0 || qIdx >= player.queue.length) return '';
+  const id = player.queue[qIdx];
+  const tr = lib.findById(id) || streams.get(id);
+  return tr ? apiUrl(tr.thumbnail || '') : '';
+}
+const prevCover = computed(() => _coverFor(player.index - 1));
+const nextCover = computed(() => _coverFor(player.index + 1));
 
 // Resolve every queue id to a track (library or stream). The currently
 // playing one gets the accent treatment.
@@ -268,8 +283,21 @@ watch(
         </template>
       </van-nav-bar>
       <div ref="npBodyRef" class="np-body" :style="bodyStyle">
-        <div ref="npCoverRef" class="np-cover" :style="coverStyle">
-          <img v-if="cover" :src="cover" alt="" />
+        <!-- Cover stage — the three slots (prev / current / next)
+             move together as the user drags horizontally, so they
+             see exactly what's coming. Side covers are absolutely
+             positioned just off-screen at -100% / +100% so they
+             only become visible when dx pulls them in. -->
+        <div ref="npCoverRef" class="np-cover-stage" :style="coverStyle">
+          <div class="np-cover np-cover-side np-cover-prev">
+            <img v-if="prevCover" :src="prevCover" alt="" />
+          </div>
+          <div class="np-cover">
+            <img v-if="cover" :src="cover" alt="" />
+          </div>
+          <div class="np-cover np-cover-side np-cover-next">
+            <img v-if="nextCover" :src="nextCover" alt="" />
+          </div>
         </div>
         <div class="np-meta">
           <div class="np-title">{{ title }}</div>
@@ -526,6 +554,19 @@ watch(
   gap: 24px;
 }
 
+/* Cover stage holds the current cover + an off-screen prev (at
+ * -100%) + an off-screen next (at +100%). The whole stage gets
+ * translated by coverDx on swipe, so the side covers slide into
+ * view as the user drags. */
+.np-cover-stage {
+  position: relative;
+  width: min(80vw, 360px);
+  aspect-ratio: 1 / 1;
+  /* Don't clip — the side covers need to peek out as the user
+   * drags. The .np-body that wraps us has overflow:hidden from
+   * .np-screen so they never escape the viewport. */
+  overflow: visible;
+}
 .np-cover {
   width: min(80vw, 360px);
   aspect-ratio: 1 / 1;
@@ -535,6 +576,18 @@ watch(
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 .np-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+/* Side covers — positioned absolutely just off the edge of the
+ * stage. A 16 px gap matches Apple Music's coverflow rhythm so
+ * the swipe doesn't look like a continuous strip. */
+.np-cover-side {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+.np-cover-prev { left: calc(-100% - 16px); }
+.np-cover-next { left: calc(100% + 16px); }
 
 .np-meta {
   text-align: center;

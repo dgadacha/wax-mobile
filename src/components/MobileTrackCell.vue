@@ -47,28 +47,19 @@ const sub = computed(() => {
   return bits.join(' · ');
 });
 
-// Long-press on the row → emit `more`, same as tapping the
-// MoreHorizontal button. Standard mobile pattern (Apple Music,
-// Spotify both do this). The `suppressTapAfterLongPress` flag
-// blocks the synthetic click that follows a long-press so the
-// row's @click="emit('play')" doesn't also fire.
+// Long-press on the row → emit `more` (open action sheet). Two-stage:
+//   1. onLongPressArmed fires at the 450 ms mark while the finger is
+//      still down → haptic tick so the user knows "menu is coming".
+//   2. onLongPress fires on touchend → ACTUALLY emit('more'). Firing
+//      the open AFTER touch has ended is what stops iOS from
+//      synthesizing a tap on the action-sheet's overlay (which would
+//      close it immediately, the bug the user just reported).
 const cellRef = ref(null);
-const suppressTap = ref(false);
 useGestures(cellRef, {
-  onLongPress: () => {
-    haptics.medium();
-    suppressTap.value = true;
-    emit('more');
-    // Re-arm after the synthetic click event has bubbled and been
-    // ignored. 350 ms covers the longest tap-delay tail iOS can
-    // produce here.
-    setTimeout(() => { suppressTap.value = false; }, 350);
-  },
+  onLongPressArmed: () => haptics.medium(),
+  onLongPress: () => emit('more'),
 });
-function onCellClick() {
-  if (suppressTap.value) return;
-  emit('play');
-}
+function onCellClick() { emit('play'); }
 </script>
 
 <template>
