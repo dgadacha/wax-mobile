@@ -397,15 +397,14 @@ img { max-width: 100%; display: block; }
    * this bump it would render underneath. */
   z-index: 2100;
   display: flex;
-  /* Center vertically — the previous `flex-end` made the modal stick
-   * to the bottom, which on iOS got shoved off-screen by the mini-
-   * player + tab-bar + Safari's bottom toolbar. Centering keeps it in
-   * the visible viewport regardless of iOS chrome height. The
-   * .modal-content keeps its slide-up animation so it still feels
-   * like a sheet rising into view. */
-  align-items: center;
+  /* Anchor near the top instead of centering. With the iOS on-screen
+   * keyboard up, a centered modal slides ABOVE the keyboard but its
+   * action buttons (at the bottom of the modal-content) get covered.
+   * Top-anchoring with breathing room under the status bar keeps the
+   * input AND the buttons visible regardless of keyboard state. */
+  align-items: flex-start;
   justify-content: center;
-  padding: var(--sp-4);
+  padding: calc(var(--safe-top) + var(--sp-8)) var(--sp-4) var(--sp-4);
   pointer-events: none;
 }
 .modal-overlay {

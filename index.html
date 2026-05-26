@@ -6,7 +6,11 @@
        non-zero values on iOS (notch) and Android display cutouts. The
        Capacitor WKWebView honours this; on the web the meta has no effect
        but doesn't break anything. -->
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <!-- interactive-widget=resizes-content (iOS 16.4+ / Chromium): when
+       the on-screen keyboard appears, shrink the layout viewport so
+       fixed-positioned content (modals, headers) stays above the
+       keyboard instead of getting covered. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content" />
   <!-- PWA / iOS home-screen install -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="mobile-web-app-capable" content="yes" />
