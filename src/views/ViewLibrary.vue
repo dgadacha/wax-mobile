@@ -1,9 +1,9 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import { showConfirmDialog } from 'vant';
 import {
   ListMusic, Disc3, User, Heart, Plus, ChevronRight, LayoutGrid,
-  Download as DownloadIcon,
+  Download as DownloadIcon, ArrowDownAZ,
 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -38,6 +38,70 @@ const FILTERS = [
 const filter = ref('playlists');
 const search = ref('');
 const refreshing = ref(false);
+
+// Sort options for the favorites/offline track list. Defaults to
+// "Récemment ajoutés" (descending addedAt) which is what Spotify and
+// Apple Music both default to. Persisted in localStorage so the user
+// keeps their preference across sessions.
+const SORT_KEY = 'wax:lib-sort';
+const SORTS = [
+  { id: 'recent',     label: 'Récemment ajoutés' },
+  { id: 'alpha',      label: 'Titre A → Z' },
+  { id: 'artist',     label: 'Artiste A → Z' },
+  { id: 'duration',   label: 'Durée' },
+  { id: 'played',     label: 'Le plus joué' },
+  { id: 'lastplayed', label: 'Récemment joués' },
+];
+const sortMode = ref('recent');
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(SORT_KEY);
+    if (saved && SORTS.some((s) => s.id === saved)) sortMode.value = saved;
+  } catch {}
+});
+watch(sortMode, (v) => {
+  try { localStorage.setItem(SORT_KEY, v); } catch {}
+});
+const sortLabel = computed(() => SORTS.find((s) => s.id === sortMode.value)?.label || '');
+
+async function pickSort() {
+  haptics.light();
+  try {
+    const { index } = await sheet.open(
+      SORTS.map((s) => ({ name: s.label, _id: s.id })),
+    );
+    sortMode.value = SORTS[index].id;
+  } catch {}
+}
+
+// Compare helper — `parseTrackTitle` already strips noise like
+// "(Official Video)" so we sort on the cleaned-up artist/song names.
+function sortTracks(tracks) {
+  const arr = [...tracks];
+  switch (sortMode.value) {
+    case 'alpha':
+      return arr.sort((a, b) => {
+        const A = parseTrackTitle(a).song || a.title || '';
+        const B = parseTrackTitle(b).song || b.title || '';
+        return A.localeCompare(B, undefined, { sensitivity: 'base' });
+      });
+    case 'artist':
+      return arr.sort((a, b) => {
+        const A = (parseTrackTitle(a).artist || a.uploader || '').toLowerCase();
+        const B = (parseTrackTitle(b).artist || b.uploader || '').toLowerCase();
+        return A.localeCompare(B, undefined, { sensitivity: 'base' });
+      });
+    case 'duration':
+      return arr.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    case 'played':
+      return arr.sort((a, b) => (b.playCount || 0) - (a.playCount || 0));
+    case 'lastplayed':
+      return arr.sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0));
+    case 'recent':
+    default:
+      return arr.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+  }
+}
 async function onRefresh() {
   haptics.medium();
   try { await Promise.all([lib.fetch(), playlists.fetch()]); }
@@ -127,8 +191,8 @@ const artistItems = computed(() => {
 // the Hors-ligne virtual card) = every library track with track.file
 // set, including ones not flagged liked.
 const trackItems = computed(() => {
-  if (filter.value === 'offline') return offlineTracks.value;
-  return lib.favorites;
+  const base = filter.value === 'offline' ? offlineTracks.value : lib.favorites;
+  return sortTracks(base);
 });
 
 const filteredCards = computed(() => {
@@ -283,6 +347,16 @@ function cardIcon(card) {
       </div>
     </div>
 
+    <!-- Sort selector — only meaningful for track lists, so we hide it
+         on the card grids (playlists / albums / artists already have
+         their own natural ordering). -->
+    <div v-if="showingTracks && filteredTracks.length > 0" class="lib-sort-row">
+      <button class="lib-sort-btn" @click="pickSort">
+        <ArrowDownAZ :size="16" :stroke-width="2" color="var(--text-muted)" />
+        <span>{{ sortLabel }}</span>
+      </button>
+    </div>
+
     <!-- Tracks (favoris OR offline mode via the virtual card) -->
     <template v-if="showingTracks">
       <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
@@ -377,6 +451,26 @@ function cardIcon(card) {
   padding: 8px 12px 4px;
 }
 .lib-toolbar :deep(.van-search__content) { background: var(--card); }
+
+.lib-sort-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--sp-4) var(--sp-2);
+}
+.lib-sort-btn {
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--r-1);
+}
+.lib-sort-btn:active { background: var(--card-hover); }
 
 .lib-chips {
   display: flex;

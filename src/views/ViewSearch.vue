@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from 'vue';
-import { Search as SearchIcon, Sparkles } from 'lucide-vue-next';
+import { computed, ref, onMounted, watch } from 'vue';
+import { Search as SearchIcon, Sparkles, Clock, X } from 'lucide-vue-next';
 import { useSearchStore, makeSearchHandler } from '@/stores/search';
 import { useLibraryStore } from '@/stores/library';
 import { useStreamsStore } from '@/stores/streams';
@@ -131,6 +131,58 @@ async function onMore(r) {
 const results = computed(() => search.results || []);
 const hasResults = computed(() => !!(search.results && search.results.length));
 
+// ── Search history ──────────────────────────────────────────────
+// Persist the last 10 non-URL queries. Shown as tappable chips when
+// the input is empty, so the user can quickly re-fire a previous
+// search without re-typing. URLs are excluded (re-pasting them is
+// fast anyway, and they'd clutter the list with long strings).
+const HISTORY_KEY = 'wax:search-history';
+const HISTORY_MAX = 10;
+const history = ref([]);
+onMounted(() => {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) history.value = parsed.filter((s) => typeof s === 'string');
+    }
+  } catch {}
+});
+function pushToHistory(q) {
+  const trimmed = (q || '').trim();
+  if (!trimmed || trimmed.length < 2) return;
+  // Skip URLs (paste workflow doesn't benefit from history).
+  if (/^https?:\/\//i.test(trimmed)) return;
+  const next = [trimmed, ...history.value.filter((h) => h.toLowerCase() !== trimmed.toLowerCase())]
+    .slice(0, HISTORY_MAX);
+  history.value = next;
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
+}
+function removeFromHistory(q) {
+  history.value = history.value.filter((h) => h !== q);
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value)); } catch {}
+}
+function clearHistory() {
+  history.value = [];
+  try { localStorage.removeItem(HISTORY_KEY); } catch {}
+}
+function rerunSearch(q) {
+  haptics.light();
+  search.inputValue = q;
+  onUrlChange();
+}
+// When a search completes successfully (status flips to a non-loading
+// state with results), persist the query. We watch `search.status`
+// + `hasResults` to capture only "the search actually worked".
+watch(
+  () => [search.status, hasResults.value],
+  ([status, ok]) => {
+    if (status && status !== 'searching' && status !== 'error' && ok) {
+      pushToHistory(search.inputValue);
+    }
+  },
+);
+
 // Adapt YouTube search results to the shape MobileTrackCell expects.
 function asTrack(r) {
   return {
@@ -183,10 +235,36 @@ function asTrack(r) {
       />
     </div>
 
-    <div v-else-if="!search.inputValue && !search.status" class="empty-state">
-      <SearchIcon class="icon" :size="48" :stroke-width="1.5" />
-      <div class="label">Recherche un titre, un artiste,</div>
-      <div class="hint">ou colle une URL YouTube</div>
+    <div v-else-if="!search.inputValue && !search.status" class="search-empty">
+      <div v-if="history.length > 0" class="search-history">
+        <div class="search-history-head">
+          <span class="search-history-title">Recherches récentes</span>
+          <button class="search-history-clear" @click="clearHistory">Effacer</button>
+        </div>
+        <div class="search-history-list">
+          <div
+            v-for="q in history"
+            :key="q"
+            class="search-history-row"
+            @click="rerunSearch(q)"
+          >
+            <Clock :size="16" :stroke-width="2" color="var(--text-muted)" />
+            <span class="search-history-q">{{ q }}</span>
+            <button
+              class="search-history-x"
+              :aria-label="`Retirer ${q}`"
+              @click.stop="removeFromHistory(q)"
+            >
+              <X :size="16" :stroke-width="2" color="var(--text-muted)" />
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-else class="empty-state">
+        <SearchIcon class="icon" :size="48" :stroke-width="1.5" />
+        <div class="label">Recherche un titre, un artiste,</div>
+        <div class="hint">ou colle une URL YouTube</div>
+      </div>
     </div>
 
   </div>
@@ -208,4 +286,56 @@ function asTrack(r) {
 .results { background: var(--bg); }
 .empty-state .icon { color: var(--text-muted); margin-bottom: 12px; }
 .shimmer-list { padding: 4px 0 16px; }
+
+/* Search history — Spotify-style "Recherches récentes" list with a
+ * tappable row per query + per-row dismiss + bulk clear. */
+.search-history {
+  padding: var(--sp-2) 0;
+}
+.search-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-2) var(--sp-4) var(--sp-3);
+}
+.search-history-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.search-history-clear {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-1);
+}
+.search-history-clear:active { background: var(--card-hover); }
+.search-history-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  cursor: pointer;
+  transition: background var(--motion-short) var(--ease);
+}
+.search-history-row:active { background: var(--card-hover); }
+.search-history-q {
+  flex: 1 1 auto;
+  font-size: 15px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-history-x {
+  background: transparent;
+  border: 0;
+  padding: var(--sp-2);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
 </style>

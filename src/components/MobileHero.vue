@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { Play } from 'lucide-vue-next';
 import { apiUrl } from '@/lib/api';
 
@@ -26,6 +26,61 @@ const fallbackStyle = computed(() =>
   props.bgGradient ? { background: props.bgGradient } : null,
 );
 const coverSrc = computed(() => apiUrl(props.cover));
+
+// Scroll-driven progress 0..1 for the Spotify-style shrink-as-you-
+// scroll hero. We hand-listen on .view-scroll (the only scroll
+// container in the app) instead of using IntersectionObserver because
+// we need a smooth continuous value, not a discrete in/out signal.
+const scrollProgress = ref(0);
+let scrollEl = null;
+const FADE_DISTANCE = 220; // px to fade out by
+
+function onScroll() {
+  if (!scrollEl) return;
+  const y = scrollEl.scrollTop;
+  scrollProgress.value = Math.max(0, Math.min(1, y / FADE_DISTANCE));
+}
+
+onMounted(() => {
+  // .view-scroll is the only scrolling element in the shell. The hero
+  // can be inside any sub-view (album / playlist / artist), but they
+  // all render into the same scroll container.
+  scrollEl = document.querySelector('.app-shell .view-scroll');
+  if (scrollEl) {
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+    // Reset progress when remounting — sub-views are v-if'd, so a
+    // hero appearing for the first time should start un-scrolled
+    // regardless of where the previous view was.
+    scrollEl.scrollTop = 0;
+    scrollProgress.value = 0;
+  }
+});
+onBeforeUnmount(() => {
+  if (scrollEl) scrollEl.removeEventListener('scroll', onScroll);
+});
+
+// Transform the cover + title block as the user scrolls. Cover shrinks
+// and fades; title slides up + fades. The compositor handles both via
+// transform/opacity → no layout thrash on scroll.
+const coverStyle = computed(() => {
+  const p = scrollProgress.value;
+  const scale = 1 - p * 0.4; // 1 → 0.6
+  return {
+    transform: `scale(${scale})`,
+    opacity: 1 - p * 1.2,
+  };
+});
+const titleStyle = computed(() => {
+  const p = scrollProgress.value;
+  return {
+    transform: `translateY(${-p * 30}px)`,
+    opacity: 1 - p * 1.6,
+  };
+});
+const bgStyle = computed(() => {
+  const p = scrollProgress.value;
+  return { opacity: 0.45 * (1 - p * 0.6) };
+});
 </script>
 
 <template>
@@ -33,11 +88,17 @@ const coverSrc = computed(() => apiUrl(props.cover));
     <!-- Blurred backdrop: same image as the cover, scaled up + blurred, with a
          dark vignette fading to the page bg. Gives the immersive
          Spotify/Deezer feel without needing a separate banner asset. -->
-    <div class="mh-bg" :style="cover ? { backgroundImage: `url('${coverSrc}')` } : fallbackStyle" />
+    <div
+      class="mh-bg"
+      :style="[
+        cover ? { backgroundImage: `url('${coverSrc}')` } : fallbackStyle,
+        bgStyle,
+      ]"
+    />
     <div class="mh-fade" />
 
     <div class="mh-body">
-      <div class="mh-cover-wrap" :class="`shape-${shape}`">
+      <div class="mh-cover-wrap" :class="`shape-${shape}`" :style="coverStyle">
         <img
           v-if="cover"
           class="mh-cover"
@@ -48,10 +109,12 @@ const coverSrc = computed(() => apiUrl(props.cover));
         <div v-else class="mh-cover mh-cover-fallback" :style="fallbackStyle" />
       </div>
 
-      <div v-if="eyebrow" class="mh-eyebrow">{{ eyebrow }}</div>
-      <h1 class="mh-title">{{ title }}</h1>
-      <div v-if="subtitle || $slots.subtitle" class="mh-sub">
-        <slot name="subtitle">{{ subtitle }}</slot>
+      <div class="mh-text" :style="titleStyle">
+        <div v-if="eyebrow" class="mh-eyebrow">{{ eyebrow }}</div>
+        <h1 class="mh-title">{{ title }}</h1>
+        <div v-if="subtitle || $slots.subtitle" class="mh-sub">
+          <slot name="subtitle">{{ subtitle }}</slot>
+        </div>
       </div>
 
       <div v-if="$slots.actions || showPlay" class="mh-actions">
@@ -103,6 +166,19 @@ const coverSrc = computed(() => apiUrl(props.cover));
   aspect-ratio: 1 / 1;
   margin-bottom: 16px;
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+  transform-origin: center top;
+  transition: transform 0s, opacity 0s;
+  will-change: transform, opacity;
+}
+/* Eyebrow + title + subtitle grouped so the scroll-driven transform
+ * affects them as one block. Centered to match the original layout
+ * (the parent was already a flex column centering its children). */
+.mh-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  will-change: transform, opacity;
 }
 .mh-cover-wrap.shape-square { border-radius: 8px; overflow: hidden; }
 .mh-cover-wrap.shape-circle { border-radius: 50%; overflow: hidden; }

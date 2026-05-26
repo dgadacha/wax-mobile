@@ -82,10 +82,25 @@ const navTitle = computed(() => {
   }
 });
 
+// Scroll progress 0..1 of the current sub-view's hero. Drives the
+// Spotify-style "title slides into the nav-bar" effect: at the top
+// the hero owns the title (nav-bar is empty), once the user scrolls
+// past ~half the hero the nav-bar title fades in. Computed in this
+// component (rather than emitted from MobileHero) so the nav-bar
+// doesn't need to know about hero internals.
+const heroScrollProgress = ref(0);
 // On the top-level tabs Spotify hides the title (the view renders its own
 // big heading) — keep the title visible only on sub-views so the user has a
-// stable "where am I" affordance.
+// stable "where am I" affordance. On sub-views, fade in as the hero
+// scrolls off so the two never compete for attention.
 const showNavTitle = computed(() => isSubview.value);
+const navTitleStyle = computed(() => {
+  if (!isSubview.value) return { opacity: 1 };
+  // Stay invisible until the user has scrolled past 50% of the hero,
+  // then ramp to fully visible by 90%. Mirrors Apple Music / Spotify.
+  const t = Math.max(0, Math.min(1, (heroScrollProgress.value - 0.5) / 0.4));
+  return { opacity: t };
+});
 
 watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
@@ -101,6 +116,37 @@ watch(() => view.name, () => {
     const el = document.querySelector('.app-shell .view-scroll');
     if (el) void el.offsetHeight; // reading offsetHeight forces sync layout
   });
+});
+
+// Sub-view <Transition> direction. Push (drilling into playlist/album/
+// artist/mix) slides from the right; back (popping to a top-level tab)
+// slides off to the right too — we use the view store's history depth
+// as the cue: history growing = forward = slide-left, history shrinking
+// = back = slide-right. Falls back to a fade on the very first transition.
+const transitionName = ref('view-fade');
+let lastHistoryDepth = 0;
+watch(() => view.history?.length ?? 0, (depth) => {
+  if (depth > lastHistoryDepth) transitionName.value = 'view-push';
+  else if (depth < lastHistoryDepth) transitionName.value = 'view-pop';
+  else transitionName.value = 'view-fade';
+  lastHistoryDepth = depth;
+});
+
+// Scroll listener wired to .view-scroll for the hero-fade-out + nav-
+// bar-title-fade-in. Same 220 px FADE_DISTANCE as MobileHero uses
+// internally so the two effects stay in sync. Reset on view change
+// because a sub-view re-mount snaps scrollTop back to 0.
+const HERO_FADE_DISTANCE = 220;
+function onViewScroll() {
+  const el = document.querySelector('.app-shell .view-scroll');
+  if (!el) return;
+  heroScrollProgress.value = Math.max(
+    0,
+    Math.min(1, el.scrollTop / HERO_FADE_DISTANCE),
+  );
+}
+watch(() => view.name, () => {
+  heroScrollProgress.value = 0;
 });
 
 // Online/offline state. `navigator.onLine` is best-effort (the browser
@@ -176,6 +222,13 @@ onMounted(async () => {
 
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+
+  // Hook the hero-scroll listener onto .view-scroll once the DOM is
+  // mounted. Passive for buttery scroll perf — we only read scrollTop.
+  nextTick(() => {
+    const el = document.querySelector('.app-shell .view-scroll');
+    if (el) el.addEventListener('scroll', onViewScroll, { passive: true });
+  });
   // When the network comes back, light up the channels we skipped at
   // boot. Idempotent: _listenAlbumProgress guards against double-open,
   // discover.refresh is safe to call repeatedly.
@@ -222,6 +275,7 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
       class="nav-bar"
       :title="showNavTitle ? navTitle : ''"
       :border="false"
+      :style="{ '--wax-nav-title-opacity': navTitleStyle.opacity }"
       safe-area-inset-top
       @click-left="view.back()"
     >
@@ -244,10 +298,16 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
       <ViewSearch   v-show="view.name === 'download'" />
       <ViewLibrary  v-show="view.name === 'library'" />
       <ViewSettings v-show="view.name === 'settings'" />
-      <ViewPlaylist v-if="view.name === 'playlist'" />
-      <ViewAlbum    v-if="view.name === 'album'" />
-      <ViewArtist   v-if="view.name === 'artist'" />
-      <ViewMix      v-if="view.name === 'mix'" />
+      <!-- Sub-views slide in from the right on push, slide out left on
+           back. Wrapped in <Transition> so each mount/unmount animates;
+           the v-if's stay one-at-a-time (only one sub-view exists at
+           a time) so we get a clean cross-fade-slide without overlap. -->
+      <Transition :name="transitionName">
+        <ViewPlaylist v-if="view.name === 'playlist'" key="playlist" />
+        <ViewAlbum    v-else-if="view.name === 'album'"    key="album" />
+        <ViewArtist   v-else-if="view.name === 'artist'"   key="artist" />
+        <ViewMix      v-else-if="view.name === 'mix'"      key="mix" />
+      </Transition>
     </div>
 
     <MobilePlayer />

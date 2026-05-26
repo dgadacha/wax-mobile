@@ -164,6 +164,17 @@ watch(
     class="np-popup"
   >
     <div class="np-screen">
+      <!-- Cover-derived background: same image as the album art,
+           massively blurred + dark vignette. Same trick as MobileHero
+           but full-bleed. Gives every track its own ambient color
+           palette without needing a real dominant-color extractor. -->
+      <div
+        v-if="cover"
+        class="np-bg"
+        :style="{ backgroundImage: `url('${cover}')` }"
+      />
+      <div class="np-bg-fade" />
+
       <!-- Wrapper handles the notch via padding-top so it works even when
            the popup teleports outside the document flow (env(safe-area-*)
            on van-nav-bar's internal class is sometimes flaky in fullscreen
@@ -386,14 +397,39 @@ watch(
 .np-popup { background: var(--bg) !important; }
 
 .np-screen {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg);
+  isolation: isolate;
   /* Notch is owned here, not by the nested van-nav-bar — see template
    * comment. Keeps the chevron/title sitting comfortably below the
    * status bar on iPhone notched devices. */
   padding-top: var(--safe-top);
+}
+
+/* Cover-derived ambient background — full-bleed, blurred to a soft
+ * color wash, dark-vignetted so foreground text stays readable. The
+ * 1.2s transition gives a smooth crossfade when the next track loads
+ * even though the underlying image swap is instant. */
+.np-bg {
+  position: absolute;
+  inset: -60px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(60px) saturate(1.4);
+  opacity: 0.55;
+  z-index: -2;
+  transition: background-image 1.2s ease, opacity 1.2s ease;
+}
+.np-bg-fade {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120% 70% at 50% 0%, transparent 0%, rgba(13, 15, 20, 0.5) 70%, var(--bg) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.35) 60%, var(--bg) 100%);
+  z-index: -1;
 }
 
 .np-body {

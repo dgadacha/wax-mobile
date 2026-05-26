@@ -172,6 +172,34 @@ img { max-width: 100%; display: block; }
   background: var(--bg);
 }
 
+/* Sub-view page transitions. Push = slide in from right (forward
+ * drill-down). Pop = slide out to the right (back gesture). Fade =
+ * neutral fallback. Sub-views are mounted via v-if inside a
+ * <Transition>, so only one is present at a time — the leaving view
+ * and entering view briefly coexist absolutely-positioned during the
+ * crossfade-slide. */
+.view-push-enter-active,
+.view-push-leave-active,
+.view-pop-enter-active,
+.view-pop-leave-active,
+.view-fade-enter-active,
+.view-fade-leave-active {
+  transition: transform var(--motion-mid) var(--ease), opacity var(--motion-short) var(--ease);
+  will-change: transform, opacity;
+}
+.view-push-enter-from { transform: translateX(20%); opacity: 0; }
+.view-push-leave-to   { transform: translateX(-10%); opacity: 0; }
+.view-pop-enter-from  { transform: translateX(-10%); opacity: 0; }
+.view-pop-leave-to    { transform: translateX(20%); opacity: 0; }
+.view-fade-enter-from,
+.view-fade-leave-to   { opacity: 0; }
+
+/* Top-level tab transitions handled via opacity on the v-show'd
+ * elements — Vue's <Transition> doesn't work cleanly with v-show on
+ * multiple siblings, so we fade the view-scroll itself briefly. */
+.app-shell .view-scroll > [style*="display: none"] { opacity: 0; }
+.app-shell .view-scroll > * { transition: opacity var(--motion-short) var(--ease); }
+
 /* Offline indicator strip. Sits between the nav-bar and the scrollable
  * view; in-flow so content slides down by its own height instead of
  * being covered. Subtle amber so it reads as info rather than alarm. */
@@ -194,6 +222,14 @@ img { max-width: 100%; display: block; }
   padding-top: var(--safe-top);
   background: var(--bg);
   z-index: 4;
+}
+/* Spotify-style nav-bar title that fades in as the hero scrolls off.
+ * The opacity is driven by --wax-nav-title-opacity set inline on the
+ * van-nav-bar from App.vue (0 at the top of a sub-view, 1 once the
+ * hero is mostly off-screen). */
+.app-shell .nav-bar :deep(.van-nav-bar__title) {
+  opacity: var(--wax-nav-title-opacity, 1);
+  transition: opacity var(--motion-short) var(--ease);
 }
 
 .app-shell .view-scroll {
