@@ -162,6 +162,24 @@ button { font: inherit; color: inherit; }
 
 img { max-width: 100%; display: block; }
 
+/* Global text selection / callout disable. The app is touch-first —
+ * the iOS Copy / Look up / Translate callout never adds value here
+ * and actively conflicts with long-press for the action sheet, swipe
+ * gestures on the player, and drag-to-reorder. Disable everywhere by
+ * default, then re-enable on the few surfaces where copy/select is
+ * actually useful (text inputs, the lyrics modal content). */
+html, body, #app {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable="true"],
+.lyrics-content, .modal-message {
+  -webkit-touch-callout: default;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* App shell ---------------------------------------------------------------- */
 
 .app-shell {
