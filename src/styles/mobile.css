@@ -397,8 +397,15 @@ img { max-width: 100%; display: block; }
    * this bump it would render underneath. */
   z-index: 2100;
   display: flex;
-  align-items: flex-end;
+  /* Center vertically — the previous `flex-end` made the modal stick
+   * to the bottom, which on iOS got shoved off-screen by the mini-
+   * player + tab-bar + Safari's bottom toolbar. Centering keeps it in
+   * the visible viewport regardless of iOS chrome height. The
+   * .modal-content keeps its slide-up animation so it still feels
+   * like a sheet rising into view. */
+  align-items: center;
   justify-content: center;
+  padding: var(--sp-4);
   pointer-events: none;
 }
 .modal-overlay {
@@ -413,13 +420,15 @@ img { max-width: 100%; display: block; }
   pointer-events: auto;
   width: 100%;
   max-width: 480px;
-  max-height: calc(90vh - var(--safe-top));
+  max-height: calc(80vh - var(--safe-top));
   display: flex;
   flex-direction: column;
   background: var(--card);
-  border-radius: 16px 16px 0 0;
-  padding: 20px 20px calc(20px + var(--safe-bottom));
-  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
+  /* Now that the modal is centered, round all four corners — it's a
+   * floating card, not a bottom sheet. */
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
   animation: modal-slide-up 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .modal-content.wide { max-width: 100%; }

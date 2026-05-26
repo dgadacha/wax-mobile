@@ -124,18 +124,6 @@ export const usePlayerStore = defineStore('player', {
         // here on every `playing` event is the documented WebKit
         // workaround — costs nothing and finally lets ⏮/⏭ show up.
         this._registerMediaSessionHandlers();
-        // Background-only AirPods recovery: when iOS auto-resumes
-        // playback after AirPods are reinserted (without the user
-        // touching anything), it sometimes fires `playing` but
-        // leaves audio routed to nowhere. Foreground resumes go
-        // through this same event but skip the check — the global
-        // watchdog version of this caused infinite reload loops on
-        // healthy in-app playback.
-        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-          this._armBackgroundResumeCheck();
-        } else {
-          this._bgRecoveryAttempts = 0;
-        }
       });
       // 'waiting' fires when the buffer underruns. The corresponding
       // 'playing' event fires once buffering recovers — but on a stale
@@ -406,61 +394,6 @@ export const usePlayerStore = defineStore('player', {
         this.stallTimer = null;
       }
     },
-    // Background AirPods-reconnect recovery. Fired ONLY from the
-    // `playing` event when document.visibilityState === 'hidden' —
-    // i.e. the app is in the background / screen locked and iOS
-    // auto-resumed playback after the user reinserted their AirPod.
-    // In that scenario iOS sometimes leaves audio routing decoupled
-    // from the audio element: the page thinks it's playing, no
-    // sound comes out, no JS callback fires.
-    //
-    // We spot-check 800 ms after the resume. If currentTime
-    // advanced (delta > 0.3 s), audio is healthy → bail. Otherwise
-    // force a reload to reset the routing pipeline. Capped at 2
-    // attempts per resume cycle so a permanently-broken state can't
-    // turn into a loop.
-    //
-    // Foreground resumes never reach this path — the `playing`
-    // listener checks visibilityState first. That's the lesson from
-    // the global watchdog (0.10.12) which fired everywhere and made
-    // healthy tracks loop every 2 s.
-    _armBackgroundResumeCheck() {
-      if (!this.audioEl) return;
-      const isBlob = typeof this.audioEl.src === 'string'
-        && this.audioEl.src.startsWith('blob:');
-      if (isBlob) return; // memory playback has no routing bug
-
-      const startedAt = this.audioEl.currentTime;
-      setTimeout(() => {
-        if (!this.audioEl || this.audioEl.paused) return;
-        if (document.visibilityState !== 'hidden') {
-          this._bgRecoveryAttempts = 0;
-          return;
-        }
-        const delta = this.audioEl.currentTime - startedAt;
-        if (delta > 0.3) {
-          this._bgRecoveryAttempts = 0;
-          return;
-        }
-        this._bgRecoveryAttempts = (this._bgRecoveryAttempts || 0) + 1;
-        if (this._bgRecoveryAttempts > 2) {
-          console.warn('[player] background resume still silent after 2 retries — giving up');
-          return;
-        }
-        console.warn('[player] background resume stuck silent — reloading',
-          { attempt: this._bgRecoveryAttempts });
-        const src = this.audioEl.src;
-        const t = this.audioEl.currentTime;
-        try {
-          this.audioEl.load();
-          this.audioEl.src = src;
-          this.audioEl.currentTime = t;
-          this.audioEl.play().catch(() => {});
-        } catch (e) {
-          console.warn('[player] recovery failed', e);
-        }
-      }, 800);
-    },
     _onAudioTimeUpdate() {
       if (!this.audioEl?.duration) return;
       this.currentTime = this.audioEl.currentTime;
@@ -515,13 +448,38 @@ export const usePlayerStore = defineStore('player', {
     _registerMediaSessionHandlers() {
       if (!('mediaSession' in navigator)) return;
       const ms = navigator.mediaSession;
-      // Simple handlers — the silent-resume recovery now lives in
-      // the `playing` event listener, gated on visibilityState ===
-      // 'hidden'. That catches BOTH the explicit lock-screen play
-      // tap AND iOS's automatic AirPods-reconnect resume (which
-      // doesn't fire any MediaSession action — iOS bypasses us and
-      // calls audio.play() natively).
-      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
+      // Play from MediaSession (lock-screen tap, AirPods double-tap,
+      // CarPlay, possibly iOS auto-resume after AirPods reconnect)
+      // unconditionally reloads the audio element before resuming.
+      // The AirPods-reconnect bug leaves iOS's audio routing
+      // decoupled from the element; just calling .play() resumes
+      // silently. audio.load() + restore src/currentTime + play
+      // forces iOS to rebuild the routing pipeline.
+      //
+      // Cost: a tiny gap (~150 ms) when the user explicitly taps
+      // play from the lock screen. Worth it given there's no other
+      // way to recover in background where JS is suspended and
+      // setTimeout can't fire. Blob URLs (offline) skip the reload
+      // since memory playback has no routing decouple.
+      try {
+        ms.setActionHandler('play', () => {
+          if (!this.audioEl) return;
+          const isBlob = typeof this.audioEl.src === 'string'
+            && this.audioEl.src.startsWith('blob:');
+          if (isBlob) {
+            this.audioEl.play().catch(() => {});
+            return;
+          }
+          const src = this.audioEl.src;
+          const t = this.audioEl.currentTime;
+          try {
+            this.audioEl.load();
+            this.audioEl.src = src;
+            this.audioEl.currentTime = t;
+            this.audioEl.play().catch(() => {});
+          } catch {}
+        });
+      } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
