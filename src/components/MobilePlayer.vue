@@ -14,6 +14,7 @@ import { haptics } from '@/lib/haptics';
 import { fetchLyrics } from '@/composables/useLyrics';
 import { showToast } from '@/lib/toast';
 import { t } from '@/lib/i18n';
+import MarqueeText from '@/components/MarqueeText.vue';
 import { useVisualizer, setEq } from '@/composables/useVisualizer';
 import { useGestures } from '@/composables/useGestures';
 import { applyAccent, revertAccentToUser } from '@/stores/prefs';
@@ -394,7 +395,7 @@ watch(
       <img v-if="cover" :src="cover" alt="" />
     </div>
     <div class="mp-meta">
-      <div class="mp-title text-ellipsis">{{ title || 'Aucune lecture' }}</div>
+      <MarqueeText class="mp-title" :text="title || 'Aucune lecture'" />
       <div class="mp-sub text-ellipsis">{{ sub }}</div>
     </div>
     <div class="mp-actions" @click.stop>
@@ -477,7 +478,7 @@ watch(
           </div>
         </div>
         <div class="np-meta">
-          <div class="np-title">{{ title }}</div>
+          <MarqueeText class="np-title" :text="title" />
           <div class="np-sub">{{ sub }}</div>
         </div>
         <div class="np-seek">
@@ -706,6 +707,9 @@ watch(
   font-size: 14px;
   font-weight: 500;
   color: var(--text);
+  /* Marquee wrapping — let MarqueeText's inner-span scroll handle
+   * overflow. The ellipsis utility was removed because we now
+   * marquee-scroll instead of cutting with `…`. */
 }
 .mini-player .mp-sub {
   font-size: 12px;
@@ -809,8 +813,15 @@ watch(
   border-bottom: 1px solid var(--border);
 }
 .np-lyrics-head-text {
-  flex: 1 1 auto;
+  /* min-width: 0 is critical: a flex item's default min-width is
+   * `auto` (= its content's intrinsic width), so without this the
+   * artist — title string would push the close button off-screen
+   * on long names like "Chase Atlantic — Consume feat. Goon Des
+   * Garcons". With 0 the child can shrink and the inner ellipsis
+   * kicks in. */
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
 .np-lyrics-eyebrow {
   font-size: 11px;
@@ -823,6 +834,12 @@ watch(
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+  /* Explicit ellipsis on the meta itself (not just relying on the
+   * .text-ellipsis utility class) so the clip is robust against
+   * CSS reset order. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .np-lyrics-close {
   width: 36px;
@@ -832,7 +849,9 @@ watch(
   border: 0;
   display: grid;
   place-items: center;
-  flex: 0 0 auto;
+  /* Hard pin so the title's overflow can NEVER push the close
+   * button out of the viewport. */
+  flex: 0 0 36px;
 }
 .np-lyrics-close:active { background: rgba(255, 255, 255, 0.18); }
 .np-lyrics-body {
@@ -928,9 +947,10 @@ watch(
   font-size: 19px;
   font-weight: 700;
   color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Overflow handled by MarqueeText (slow horizontal scroll on long
+   * titles). The old text-overflow:ellipsis used to cut "Tsew The
+   * Kid - Quand on danse (lyric…)" at the ellipsis; now the whole
+   * title scrolls into view over a few seconds. */
 }
 .np-meta .np-sub {
   font-size: 14px;
