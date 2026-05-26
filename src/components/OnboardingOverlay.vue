@@ -80,7 +80,13 @@ useGestures(overlayRef, {
   <div ref="overlayRef" class="onb">
     <button v-if="!isLast" class="onb-skip" @click="skip">Passer</button>
 
-    <div class="onb-panels" :style="{ transform: `translateX(-${step * 100}%)` }">
+    <!-- Strip is 300% wide (3 panels side by side, each 100vw).
+         Translate in viewport units so each step shifts by EXACTLY
+         one panel width. Doing `step * 100%` would be 100 % of the
+         strip's own 300 % width = three panel widths per step,
+         which sent panels 2 + 3 entirely off-screen (the bug
+         report). vw keeps the math obvious. -->
+    <div class="onb-panels" :style="{ transform: `translateX(-${step * 100}vw)` }">
       <section v-for="(p, i) in PANELS" :key="i" class="onb-panel">
         <div class="onb-icon">
           <component :is="p.icon" :size="56" :stroke-width="1.6" color="var(--accent)" />
