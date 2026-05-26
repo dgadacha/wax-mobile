@@ -1,8 +1,11 @@
 # NetworkPolicy for the wax app pod.
 #
-# Ingress: only Traefik (kube-system) can reach port 3000.
-#          The wax-agent pod (also in this namespace) has different labels
-#          and is NOT affected by this selector.
+# Two ingress sources on port 3000 (mapped to service :80):
+#   1. Traefik (kube-system) — LAN access via wax.maiz.local
+#   2. cloudflared (cloudflared ns) — public access via wax.nc-maiz.org
+#      Cloudflare Tunnel hits the Service directly (bypasses Traefik):
+#        service: http://wax.wax.svc.cluster.local:80
+#
 # Egress:
 #   - DNS to CoreDNS in kube-system (pod-level selector, both UDP + TCP).
 #   - Public internet on 80/443 for yt-dlp (YouTube CDN), Deezer API,
@@ -27,9 +30,8 @@ spec:
     - Egress
 
   ingress:
-    # Only Traefik pods (in kube-system) may reach the wax server on :3000.
-    # Combined namespaceSelector + podSelector = AND semantics (the pod must
-    # be in kube-system AND carry the Traefik label).
+    # 1. Traefik (LAN — wax.maiz.local)
+    #    Combined namespaceSelector + podSelector = AND semantics.
     - from:
         - namespaceSelector:
             matchLabels:
@@ -37,6 +39,19 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: traefik
+      ports:
+        - port: 3000
+          protocol: TCP
+
+    # 2. Cloudflare Tunnel (public — wax.nc-maiz.org)
+    #    cloudflared bypasses Traefik and hits the Service directly.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudflared
+          podSelector:
+            matchLabels:
+              app: cloudflared
       ports:
         - port: 3000
           protocol: TCP

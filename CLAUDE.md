@@ -128,7 +128,7 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 - `service.yaml` — ClusterIP :80 → :3000
 - `ingress.yaml` — Traefik, host `wax.maiz.local`, entrypoint `web`
 - `pvc.yaml` — RWO 10 Gi sur `/data` (library JSON + MP3 + covers)
-- `networkpolicy.yaml` — **Ingress** : uniquement depuis les pods Traefik (`kube-system`, label `app.kubernetes.io/name=traefik`) sur port 3000. **Egress** : DNS vers CoreDNS (`kube-system:53`) + internet public HTTP/HTTPS (RFC1918 exclu — le pod ne peut pas atteindre le LAN ni les autres pods). Requiert k3s ≥ v1.21 (network policy controller intégré).
+- `networkpolicy.yaml` — **Ingress** sur port 3000 : Traefik (`kube-system`, accès LAN `wax.maiz.local`) **ET** cloudflared (`cloudflared` ns, accès public `wax.nc-maiz.org` — bypass Traefik, va direct sur le Service). **Egress** : DNS CoreDNS (`kube-system:53`) + internet public HTTP/HTTPS (RFC1918 exclu). Requiert k3s ≥ v1.21.
 
 ## File map (src/)
 
