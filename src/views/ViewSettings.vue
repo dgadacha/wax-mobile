@@ -1,10 +1,9 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, Gauge } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlayerStore } from '@/stores/player';
-import { showDialog } from 'vant';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -65,17 +64,9 @@ const sleepLabel = computed(() => {
   return `${mins} min restantes`;
 });
 
-// ── Playback rate ────────────────────────────────────────────────
-// 4-decimal precision means slider step 0.05 reads cleanly: "1.00×".
-function onSpeedChange(v) { player.setPlaybackRate(v); }
-const speedLabel = computed(() =>
-  player.playbackRate.toFixed(2).replace(/\.?0+$/, '') + '×',
-);
-const SPEED_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-function pickSpeedPreset(v) {
-  haptics.selection();
-  player.setPlaybackRate(v);
-}
+// Playback rate moved out of Settings — see the speed bottom-sheet
+// in MobilePlayer (tap the 1× button in np-extras). Settings keeps
+// the player store import for the sleep timer state.
 
 function reopenOnboarding() {
   haptics.light();
@@ -553,38 +544,6 @@ async function onLogout() {
         </template>
       </van-cell>
 
-      <!-- Speed: continuous slider (step 0.05) + 7 quick-pick chips.
-           Slider for fine-grained, chips for one-tap snap. iOS Safari
-           handles audio.playbackRate changes smoothly with no
-           perceivable stutter as long as the value stays 0.5-2.0. -->
-      <van-cell title="Vitesse de lecture" :value="speedLabel">
-        <template #icon>
-          <Gauge :size="18" :stroke-width="2" :color="player.playbackRate !== 1 ? 'var(--accent)' : 'var(--text-muted)'" class="cell-icon" />
-        </template>
-        <template #label>
-          <div class="speed-row">
-            <van-slider
-              :model-value="player.playbackRate"
-              :min="0.5"
-              :max="2"
-              :step="0.05"
-              bar-height="4px"
-              active-color="var(--accent)"
-              inactive-color="var(--border)"
-              @update:model-value="onSpeedChange"
-            />
-          </div>
-          <div class="speed-chips">
-            <button
-              v-for="v in SPEED_PRESETS"
-              :key="v"
-              class="speed-chip"
-              :class="{ active: Math.abs(player.playbackRate - v) < 0.001 }"
-              @click="pickSpeedPreset(v)"
-            >{{ v }}×</button>
-          </div>
-        </template>
-      </van-cell>
     </van-cell-group>
 
     <van-cell-group inset title="Bibliothèque">
@@ -735,7 +694,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.15.1" />
+      <van-cell title="Version" value="0.15.2" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -798,35 +757,6 @@ async function onLogout() {
 }
 .quality-chip:active { transform: scale(0.97); }
 
-/* Playback speed — slider on top with breathing room, then a row
- * of preset chips for one-tap snap. Reuses the existing chip
- * vocabulary (border + accent-fill on active). */
-.speed-row {
-  padding: var(--sp-2) 0 var(--sp-3);
-}
-.speed-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
-}
-.speed-chip {
-  flex: 0 0 auto;
-  padding: var(--sp-1) var(--sp-3);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all var(--motion-short) var(--ease);
-}
-.speed-chip.active {
-  background: var(--accent);
-  color: var(--bg);
-  border-color: var(--accent);
-}
-.speed-chip:active { transform: scale(0.95); }
 
 /* Inline cell hint — small grey explanatory text under a Vant cell's
  * title, used to spell out toggle behaviour ("Met en attente quand

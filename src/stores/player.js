@@ -213,9 +213,11 @@ export const usePlayerStore = defineStore('player', {
         useStreamsStore().prefetch(track.ytId);
       }
       this.audioEl.volume = this.muted ? 0 : prefs.volume;
-      // Restore the user-picked playback rate — audio elements reset
-      // to 1.0 on src change, so without this every new track would
-      // ignore the slider value.
+      // Restore the user-picked playback rate + pitched mode — audio
+      // elements reset BOTH on src change, so without this each new
+      // track would silently revert to 1.0× preservesPitch=true.
+      try { this.audioEl.preservesPitch = false; } catch {}
+      try { this.audioEl.webkitPreservesPitch = false; } catch {}
       this.audioEl.playbackRate = this.playbackRate;
       this.audioEl.play().catch(() => { this.loading = false; });
       // Look-ahead: warm the next streamable track's URL so the queue
@@ -472,17 +474,31 @@ export const usePlayerStore = defineStore('player', {
     // ============================================================
     // Playback rate (speed)
     // ============================================================
-    // Set audio.playbackRate AND persist via savePlayerState so it
-    // survives reloads. Clamped 0.5-2.0; values outside that range
-    // get audibly bad on every browser. Changes are applied to the
-    // live audio element synchronously — iOS Safari handles rate
-    // changes smoothly without stutter as long as the value is
-    // reasonable, no need to debounce slider input.
+    // Set audio.playbackRate + DISABLE preservesPitch so the audio
+    // is genuinely played faster/slower instead of being time-
+    // stretched by the browser's podcast-style algorithm.
+    //
+    // With preservesPitch = true (the default), changing rate keeps
+    // the original pitch — useful for podcasts but for MUSIC the
+    // time-stretch artefacts make everything sound robotic and
+    // washed-out. Setting it false gives the "slowed + reverbed"
+    // / "sped up" remix vibe everyone knows from TikTok / YouTube:
+    // 0.85× = darker, lower pitch, dreamier; 1.15× = brighter,
+    // higher pitch, energetic. No artefacts because the audio is
+    // literally replayed at a different rate.
+    //
+    // webkitPreservesPitch is the legacy prefixed name; setting both
+    // covers iOS 17 → 18 in one go.
     setPlaybackRate(rate) {
       const clamped = Math.max(0.5, Math.min(2, Number(rate) || 1));
       this.playbackRate = clamped;
-      if (this.audioEl) this.audioEl.playbackRate = clamped;
-      if (this.audioEl2) this.audioEl2.playbackRate = clamped;
+      for (const el of [this.audioEl, this.audioEl2]) {
+        if (!el) continue;
+        try { el.preservesPitch = false; } catch {}
+        try { el.mozPreservesPitch = false; } catch {}
+        try { el.webkitPreservesPitch = false; } catch {}
+        el.playbackRate = clamped;
+      }
       this.savePlayerState();
     },
     _onAudioTimeUpdate() {

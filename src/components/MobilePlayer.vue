@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import {
   Play, Pause, SkipBack, SkipForward, Heart, ChevronDown,
-  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1, X,
+  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1, X, Gauge,
 } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -29,6 +29,23 @@ const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
 const queueOpen = ref(false);
+// Playback speed bottom-sheet. Lives next to the lyrics overlay
+// inside the fullscreen player so the user can scrub the slider
+// without leaving the listening context.
+const speedSheetOpen = ref(false);
+const SPEED_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const speedLabel = computed(() =>
+  player.playbackRate.toFixed(2).replace(/\.?0+$/, '') + '×',
+);
+function onSpeedChange(v) { player.setPlaybackRate(v); }
+function pickSpeedPreset(v) {
+  haptics.selection();
+  player.setPlaybackRate(v);
+}
+function toggleSpeedSheet() {
+  haptics.light();
+  speedSheetOpen.value = !speedSheetOpen.value;
+}
 
 // Lyrics overlay state — slides up over the player content (Spotify
 // style). Owned here instead of a global modal so it can sit inside
@@ -557,11 +574,68 @@ watch(
               :color="lyricsOpen ? 'var(--accent)' : 'var(--text-muted)'"
             />
           </button>
+          <button
+            class="np-extra np-speed-btn"
+            :class="{ 'is-active': player.playbackRate !== 1 }"
+            aria-label="Vitesse de lecture"
+            @click="toggleSpeedSheet"
+          >
+            <span v-if="player.playbackRate !== 1" class="np-speed-badge">{{ speedLabel }}</span>
+            <Gauge
+              v-else
+              :size="22"
+              :stroke-width="2"
+              color="var(--text-muted)"
+            />
+          </button>
           <button class="np-extra" aria-label="File d'attente" @click="queueOpen = true">
             <ListMusic :size="22" :stroke-width="2" color="var(--text-muted)" />
           </button>
         </div>
       </div>
+
+      <!-- Speed bottom-sheet — slides up over the player, contains
+           a continuous slider + 7 preset chips. preservesPitch is
+           false so dragging the slider gives the "slowed/sped up"
+           remix vibe (pitch follows tempo) rather than the time-
+           stretched podcast effect. -->
+      <Transition name="lyrics-slide">
+        <div v-if="speedSheetOpen" class="np-speed-sheet" @click.self="speedSheetOpen = false">
+          <div class="np-speed-card">
+            <div class="np-speed-head">
+              <div>
+                <div class="np-speed-eyebrow">Vitesse</div>
+                <div class="np-speed-value">{{ speedLabel }}</div>
+              </div>
+              <button class="np-lyrics-close" aria-label="Fermer" @click="speedSheetOpen = false">
+                <X :size="22" :stroke-width="2" color="var(--text)" />
+              </button>
+            </div>
+            <div class="np-speed-slider">
+              <van-slider
+                :model-value="player.playbackRate"
+                :min="0.5"
+                :max="2"
+                :step="0.05"
+                bar-height="6px"
+                active-color="var(--accent)"
+                inactive-color="var(--card-hover)"
+                button-size="22px"
+                @update:model-value="onSpeedChange"
+              />
+            </div>
+            <div class="np-speed-chips">
+              <button
+                v-for="v in SPEED_PRESETS"
+                :key="v"
+                class="np-speed-chip"
+                :class="{ active: Math.abs(player.playbackRate - v) < 0.001 }"
+                @click="pickSpeedPreset(v)"
+              >{{ v }}×</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
 
       <!-- Lyrics overlay — slides up over the player content,
            Spotify-style. Lives inside the fullscreen popup so the
@@ -784,6 +858,92 @@ watch(
     radial-gradient(120% 70% at 50% 0%, transparent 0%, rgba(13, 15, 20, 0.5) 70%, var(--bg) 100%),
     linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.35) 60%, var(--bg) 100%);
   z-index: -1;
+}
+
+/* Speed bottom-sheet — absolute-positioned, anchored bottom so it
+ * comes up like an iOS modal. Tapping the dim backdrop closes. */
+.np-speed-sheet {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.45);
+}
+.np-speed-card {
+  width: 100%;
+  background: var(--card);
+  border-radius: var(--r-3) var(--r-3) 0 0;
+  padding: var(--sp-4) var(--sp-4) calc(var(--sp-6) + var(--safe-bottom));
+  box-shadow: 0 -20px 50px rgba(0, 0, 0, 0.5);
+}
+.np-speed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-4);
+}
+.np-speed-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--text-muted);
+}
+.np-speed-value {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  margin-top: 2px;
+}
+.np-speed-slider {
+  padding: var(--sp-2) 0 var(--sp-4);
+}
+.np-speed-chips {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.np-speed-chips::-webkit-scrollbar { display: none; }
+.np-speed-chip {
+  flex: 0 0 auto;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+  min-width: 56px;
+}
+.np-speed-chip.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.np-speed-chip:active { transform: scale(0.95); }
+
+/* The 1× badge in np-extras when speed != 1× — shows the numeric
+ * value as a small pill (compact, accent border) instead of the
+ * default Gauge icon, so the user can see at a glance "I'm on
+ * 1.25×" without opening the sheet. */
+.np-speed-btn { padding: 0; }
+.np-speed-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
 
 /* Lyrics overlay — absolute-positioned full-bleed sheet that
