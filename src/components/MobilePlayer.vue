@@ -111,12 +111,22 @@ useGestures(npCoverRef, {
     if (axis !== 'x') { coverDx.value = 0; return; }
     coverDx.value = dx;
   },
+  // Velocity-based commit (fast swipe, regardless of distance)
   onSwipeLeft: () => { haptics.light(); commitCover('next'); },
   onSwipeRight: () => { haptics.light(); commitCover('prev'); },
   onEnd: ({ committed }) => {
-    // Only snap back when the gesture was NOT a commit — commitCover
-    // owns the animation in the committed case so we don't fight it.
-    if (!committed) settleCover();
+    if (committed) return; // commitCover already owns the animation
+    // Distance-based commit fallback: a SLOW drag past ~30% of the
+    // cover width still counts. Without this the user had to swipe
+    // fast — a relaxed pull-to-center motion (very common) just
+    // snapped back which felt unresponsive. 30% mirrors Apple
+    // Music's cutoff.
+    const el = npCoverRef.value;
+    const width = el ? el.offsetWidth : 360;
+    const threshold = width * 0.3;
+    if (coverDx.value <= -threshold) { haptics.light(); commitCover('next'); }
+    else if (coverDx.value >= threshold) { haptics.light(); commitCover('prev'); }
+    else settleCover();
   },
 });
 useGestures(npBodyRef, {
@@ -127,7 +137,19 @@ useGestures(npBodyRef, {
   },
   onSwipeDown: () => { haptics.light(); fullscreen.value = false; },
   onSwipeUp: () => { haptics.light(); queueOpen.value = true; },
-  onEnd: () => settleBody(),
+  onEnd: ({ committed }) => {
+    if (committed) {
+      settleBody();
+      return;
+    }
+    // Slow downward drag past ~25% of viewport → dismiss anyway.
+    // Same distance-fallback idea as the cover swipe.
+    if (bodyDy.value >= window.innerHeight * 0.25) {
+      haptics.light();
+      fullscreen.value = false;
+    }
+    settleBody();
+  },
 });
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));

@@ -1,10 +1,8 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed } from 'vue';
 import { Heart, MoreHorizontal, Play, Check, Download as DownloadIcon } from 'lucide-vue-next';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
-import { useGestures } from '@/composables/useGestures';
-import { haptics } from '@/lib/haptics';
 
 const props = defineProps({
   track: { type: Object, required: true },
@@ -47,33 +45,11 @@ const sub = computed(() => {
   return bits.join(' · ');
 });
 
-// Long-press on the row → emit `more` (open action sheet). Two-stage:
-//   1. onLongPressArmed fires at the 450 ms mark while the finger is
-//      still down → haptic tick so the user knows "menu is coming".
-//   2. onLongPress fires on touchend → emit('more') a tick LATER so
-//      the action-sheet's overlay isn't rendered into the same task
-//      that processes the synthetic click. preventDefault on touchend
-//      should also block that click, but defer + suppressTap is the
-//      belt-and-suspenders that finally pins the bug.
-const cellRef = ref(null);
-const suppressTap = ref(false);
-useGestures(cellRef, {
-  onLongPressArmed: () => haptics.medium(),
-  onLongPress: () => {
-    suppressTap.value = true;
-    setTimeout(() => emit('more'), 0);
-    setTimeout(() => { suppressTap.value = false; }, 400);
-  },
-});
-function onCellClick() {
-  if (suppressTap.value) return;
-  emit('play');
-}
+function onCellClick() { emit('play'); }
 </script>
 
 <template>
   <div
-    ref="cellRef"
     class="mtc track-cell"
     :class="{
       'is-playing': isPlaying,
