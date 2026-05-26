@@ -109,15 +109,19 @@ watch(() => player.playing, (playing) => {
   document.body.dataset.playing = playing ? 'true' : 'false';
 }, { immediate: true });
 
-// iOS WebKit cache-busting: every time view.name flips (tab switch,
-// sub-view drill-in, back), force a layout read on .view-scroll so
-// the compositor invalidates its cached layer and actually repaints
-// the newly-visible v-show'd content. Without this, the user can
-// land on a fully blank tab until they switch away and back.
+// iOS WebKit cache-busting + scroll reset. Every time view.name
+// flips (tab switch, sub-view drill-in, back), force a layout read
+// on .view-scroll so the compositor invalidates its cached layer
+// AND scroll the container back to the top so the new view always
+// starts at its header — Spotify/Apple Music both reset scroll on
+// tab switch, and otherwise navigating from a scrolled-down
+// Settings into the Wrapped sub-view leaves you mid-page.
 watch(() => view.name, () => {
   nextTick(() => {
     const el = document.querySelector('.app-shell .view-scroll');
-    if (el) void el.offsetHeight; // reading offsetHeight forces sync layout
+    if (!el) return;
+    void el.offsetHeight; // reading offsetHeight forces sync layout
+    el.scrollTop = 0;
   });
 });
 
