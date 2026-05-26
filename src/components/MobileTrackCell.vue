@@ -1,8 +1,10 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { Heart, MoreHorizontal, Play, Check, Download as DownloadIcon } from 'lucide-vue-next';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
+import { useGestures } from '@/composables/useGestures';
+import { haptics } from '@/lib/haptics';
 
 const props = defineProps({
   track: { type: Object, required: true },
@@ -44,17 +46,41 @@ const sub = computed(() => {
   if (t.duration) bits.push(fmtDuration(t.duration));
   return bits.join(' · ');
 });
+
+// Long-press on the row → emit `more`, same as tapping the
+// MoreHorizontal button. Standard mobile pattern (Apple Music,
+// Spotify both do this). The `suppressTapAfterLongPress` flag
+// blocks the synthetic click that follows a long-press so the
+// row's @click="emit('play')" doesn't also fire.
+const cellRef = ref(null);
+const suppressTap = ref(false);
+useGestures(cellRef, {
+  onLongPress: () => {
+    haptics.medium();
+    suppressTap.value = true;
+    emit('more');
+    // Re-arm after the synthetic click event has bubbled and been
+    // ignored. 350 ms covers the longest tap-delay tail iOS can
+    // produce here.
+    setTimeout(() => { suppressTap.value = false; }, 350);
+  },
+});
+function onCellClick() {
+  if (suppressTap.value) return;
+  emit('play');
+}
 </script>
 
 <template>
   <div
+    ref="cellRef"
     class="mtc track-cell"
     :class="{
       'is-playing': isPlaying,
       'is-loading': loading,
       'is-muted': muted,
     }"
-    @click="emit('play')"
+    @click="onCellClick"
   >
     <div v-if="variant === 'index' || showIndex" class="mtc-index">
       <van-loading v-if="loading" size="14" color="var(--accent)" />

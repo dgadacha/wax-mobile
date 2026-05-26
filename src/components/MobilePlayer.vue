@@ -13,6 +13,7 @@ import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import { showLyrics } from '@/composables/useLyrics';
 import { useVisualizer, setEq } from '@/composables/useVisualizer';
+import { useGestures } from '@/composables/useGestures';
 
 const player = usePlayerStore();
 const lib = useLibraryStore();
@@ -23,6 +24,22 @@ const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
 const queueOpen = ref(false);
+
+// Gesture surfaces inside the fullscreen player: the cover gets
+// horizontal swipes for prev/next (very iPod-coverflow / Apple Music),
+// and the whole body responds to a downward swipe to dismiss + an
+// upward swipe to open the queue. Wired below via useGestures after
+// the refs are bound to template nodes.
+const npCoverRef = ref(null);
+const npBodyRef = ref(null);
+useGestures(npCoverRef, {
+  onSwipeLeft: () => { haptics.light(); player.next(); },
+  onSwipeRight: () => { haptics.light(); player.prev(); },
+});
+useGestures(npBodyRef, {
+  onSwipeDown: () => { haptics.light(); fullscreen.value = false; },
+  onSwipeUp: () => { haptics.light(); queueOpen.value = true; },
+});
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
 
@@ -189,8 +206,8 @@ watch(
           <ChevronDown :size="26" :stroke-width="2" color="var(--text)" />
         </template>
       </van-nav-bar>
-      <div class="np-body">
-        <div class="np-cover">
+      <div ref="npBodyRef" class="np-body">
+        <div ref="npCoverRef" class="np-cover">
           <img v-if="cover" :src="cover" alt="" />
         </div>
         <div class="np-meta">

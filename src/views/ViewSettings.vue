@@ -502,7 +502,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.11.7" />
+      <van-cell title="Version" value="0.12.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
