@@ -82,14 +82,42 @@ function settleBody() {
   setTimeout(() => { bodyAnimating.value = false; }, 240);
 }
 
+// Cover commit: animate the stage all the way to the side cover's
+// resting position (one cover-width + the 16 px gap), then swap
+// player.next/prev AND reset coverDx to 0 in the same Vue tick so
+// the user never sees a slot-shuffling flicker. Without this trick
+// the moment of player.next() would teleport the cover from the
+// "next" slot at +W+16 to the "current" slot at 0 — a visible jump.
+function commitCover(dir) {
+  const el = npCoverRef.value;
+  // Stage is the same width as a cover; +16 px matches the gap that
+  // separates the side covers from the current one in CSS.
+  const width = (el ? el.offsetWidth : 360) + 16;
+  coverAnimating.value = true;
+  coverDx.value = dir === 'next' ? -width : width;
+  setTimeout(() => {
+    // Atomic: turn off animation, swap track, reset offset. Vue
+    // batches these into one DOM patch so the user sees the new
+    // current cover land at center with no in-between frame.
+    coverAnimating.value = false;
+    if (dir === 'next') player.next();
+    else player.prev();
+    coverDx.value = 0;
+  }, 220);
+}
+
 useGestures(npCoverRef, {
   onProgress: ({ dx, axis }) => {
     if (axis !== 'x') { coverDx.value = 0; return; }
     coverDx.value = dx;
   },
-  onSwipeLeft: () => { haptics.light(); player.next(); },
-  onSwipeRight: () => { haptics.light(); player.prev(); },
-  onEnd: () => settleCover(),
+  onSwipeLeft: () => { haptics.light(); commitCover('next'); },
+  onSwipeRight: () => { haptics.light(); commitCover('prev'); },
+  onEnd: ({ committed }) => {
+    // Only snap back when the gesture was NOT a commit — commitCover
+    // owns the animation in the committed case so we don't fight it.
+    if (!committed) settleCover();
+  },
 });
 useGestures(npBodyRef, {
   onProgress: ({ dy, axis }) => {

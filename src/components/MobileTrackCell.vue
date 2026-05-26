@@ -50,16 +50,25 @@ const sub = computed(() => {
 // Long-press on the row → emit `more` (open action sheet). Two-stage:
 //   1. onLongPressArmed fires at the 450 ms mark while the finger is
 //      still down → haptic tick so the user knows "menu is coming".
-//   2. onLongPress fires on touchend → ACTUALLY emit('more'). Firing
-//      the open AFTER touch has ended is what stops iOS from
-//      synthesizing a tap on the action-sheet's overlay (which would
-//      close it immediately, the bug the user just reported).
+//   2. onLongPress fires on touchend → emit('more') a tick LATER so
+//      the action-sheet's overlay isn't rendered into the same task
+//      that processes the synthetic click. preventDefault on touchend
+//      should also block that click, but defer + suppressTap is the
+//      belt-and-suspenders that finally pins the bug.
 const cellRef = ref(null);
+const suppressTap = ref(false);
 useGestures(cellRef, {
   onLongPressArmed: () => haptics.medium(),
-  onLongPress: () => emit('more'),
+  onLongPress: () => {
+    suppressTap.value = true;
+    setTimeout(() => emit('more'), 0);
+    setTimeout(() => { suppressTap.value = false; }, 400);
+  },
 });
-function onCellClick() { emit('play'); }
+function onCellClick() {
+  if (suppressTap.value) return;
+  emit('play');
+}
 </script>
 
 <template>
