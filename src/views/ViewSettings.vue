@@ -1,7 +1,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive, RefreshCw, Trash2 } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles } from 'lucide-vue-next';
+import { useViewStore } from '@/stores/view';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -19,6 +20,12 @@ const prefs = usePrefsStore();
 const profile = useProfileStore();
 const sheet = useActionSheetStore();
 const auth = useAuthStore();
+const view = useViewStore();
+
+function openWrapped() {
+  haptics.light();
+  view.switchTo('wrapped');
+}
 
 // ── Theme picker ──────────────────────────────────────────────────
 const darkThemes = computed(() => THEMES.filter((t) => t.kind === 'dark'));
@@ -61,6 +68,34 @@ const eqTreble = computed({
 function resetEq() {
   haptics.light();
   prefs.eq = { bass: 0, mid: 0, treble: 0 };
+  prefs.save();
+}
+
+// EQ presets — one-tap settings for common genres + a flat baseline.
+// Values are biquad gain in dB (matches the ±12 dB range of the
+// existing sliders). Targets a "feels right" balance — Bass+ is
+// punchy without muddying, Vocal pushes mids without thinning, etc.
+// Lifted from the iTunes preset cohort which most users know.
+const EQ_PRESETS = [
+  { id: 'flat',     label: 'Plat',       bass: 0,  mid: 0,  treble: 0 },
+  { id: 'bass',     label: 'Basses+',    bass: 6,  mid: 0,  treble: -1 },
+  { id: 'vocal',    label: 'Vocal',      bass: -2, mid: 4,  treble: 2 },
+  { id: 'acoustic', label: 'Acoustique', bass: 2,  mid: 3,  treble: 4 },
+  { id: 'rock',     label: 'Rock',       bass: 4,  mid: -1, treble: 4 },
+  { id: 'electro',  label: 'Électro',    bass: 5,  mid: -2, treble: 5 },
+];
+const activePreset = computed(() => {
+  // A preset is active if all three values exactly match. Manual
+  // slider adjustments leave the chip set unselected — visual
+  // signal that the user has tweaked beyond the preset.
+  const e = prefs.eq;
+  return EQ_PRESETS.find(
+    (p) => p.bass === (e.bass || 0) && p.mid === (e.mid || 0) && p.treble === (e.treble || 0),
+  )?.id || '';
+});
+function pickEqPreset(p) {
+  haptics.selection();
+  prefs.eq = { bass: p.bass, mid: p.mid, treble: p.treble };
   prefs.save();
 }
 
@@ -271,6 +306,15 @@ function pickQuality(b) {
   prefs.save();
 }
 
+function toggleWifiOnly(v) {
+  haptics.selection();
+  prefs.downloadsWifiOnly = v;
+  prefs.save();
+  // If switching OFF and there are queued requests, drain them
+  // now — user explicitly said "I want them regardless of network".
+  if (!v) lib._drainWifiQueue(true);
+}
+
 async function onLogout() {
   try {
     await showConfirmDialog({
@@ -383,6 +427,18 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="Égaliseur">
+      <!-- Preset chips — tap to load preset values into bass/mid/treble.
+           Active chip highlights when sliders exactly match a preset;
+           any manual adjustment de-selects them. -->
+      <div class="eq-presets">
+        <button
+          v-for="p in EQ_PRESETS"
+          :key="p.id"
+          class="eq-preset"
+          :class="{ active: activePreset === p.id }"
+          @click="pickEqPreset(p)"
+        >{{ p.label }}</button>
+      </div>
       <div class="eq-row">
         <span class="eq-label">Basses</span>
         <van-slider
@@ -428,6 +484,19 @@ async function onLogout() {
     <van-cell-group inset title="Bibliothèque">
       <van-cell title="Favoris" :value="lib.favorites.length + ' titres'" />
       <van-cell title="Playlists" :value="playlists.items.length + ''" />
+      <!-- "Wrapped" recap — Spotify-style stat slide of top tracks
+           + artists + total listening time. Computed locally from
+           playCount / addedAt / lastPlayedAt; no server call. -->
+      <van-cell
+        title="Ta sélection"
+        value="Voir mes stats"
+        is-link
+        @click="openWrapped"
+      >
+        <template #icon>
+          <Sparkles :size="18" :stroke-width="2" color="var(--accent)" class="cell-icon" />
+        </template>
+      </van-cell>
     </van-cell-group>
 
     <van-cell-group inset title="Hors-ligne">
@@ -464,6 +533,25 @@ async function onLogout() {
               @click="pickQuality(b)"
             >{{ b }} kbps</button>
           </div>
+        </template>
+      </van-cell>
+
+      <!-- Wi-Fi only toggle. When ON, downloadTrack defers cellular
+           requests to a local queue and drains it on the next online
+           event with Wi-Fi. Useful for capped data plans (NC, DOM-TOM,
+           travelers on roaming). -->
+      <van-cell title="Wi-Fi uniquement" center>
+        <template #value>
+          <van-switch
+            :model-value="prefs.downloadsWifiOnly"
+            size="20"
+            @update:model-value="toggleWifiOnly"
+          />
+        </template>
+        <template #label>
+          <span class="cell-hint">
+            Met en attente les téléchargements quand tu es en data mobile.
+          </span>
         </template>
       </van-cell>
 
@@ -526,7 +614,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.13.4" />
+      <van-cell title="Version" value="0.14.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -588,6 +676,15 @@ async function onLogout() {
   border-color: var(--accent);
 }
 .quality-chip:active { transform: scale(0.97); }
+
+/* Inline cell hint — small grey explanatory text under a Vant cell's
+ * title, used to spell out toggle behaviour ("Met en attente quand
+ * tu es en data mobile"). */
+.cell-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
 
 /* Storage summary card — lives inside a van-cell-group so it picks
  * up the group's rounded corners. Padded enough to breathe; the
@@ -705,6 +802,38 @@ async function onLogout() {
   color: #fff;
   margin-right: 12px;
 }
+
+/* EQ preset chips — horizontal scroll row above the sliders.
+ * Active chip fills with accent. Pill shape matches the rest of
+ * the chip vocabulary in the app (library filter chips, theme
+ * picker, etc.). */
+.eq-presets {
+  display: flex;
+  gap: var(--sp-2);
+  overflow-x: auto;
+  padding: var(--sp-3) var(--sp-4);
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+}
+.eq-presets::-webkit-scrollbar { display: none; }
+.eq-preset {
+  flex: 0 0 auto;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+}
+.eq-preset.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.eq-preset:active { transform: scale(0.96); }
 
 /* EQ sliders */
 .eq-row {

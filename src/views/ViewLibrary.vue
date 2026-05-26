@@ -16,6 +16,7 @@ import { haptics } from '@/lib/haptics';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import MobileSkeleton from '@/components/MobileSkeleton.vue';
 import { useActionSheetStore } from '@/stores/actionSheet';
+import { useReorderable } from '@/composables/useReorderable';
 
 const mix = useMixStore();
 const sheet = useActionSheetStore();
@@ -230,6 +231,17 @@ function openCard(card) {
   else if (card.kind === 'artist') view.switchTo('artist', card.id);
 }
 
+// Touch-friendly drag-to-reorder for playlist cards. Only playlist
+// cards carry `data-reorder-id` (favorites virtual / albums /
+// artists don't), so long-pressing them is the only path into the
+// reorder mode. Composable handles the long-press detection +
+// drag-with-finger + drop-indicator + fires reorderPlaylists().
+const cardListRef = ref(null);
+useReorderable(cardListRef, (draggedId, targetId, above) => {
+  haptics.medium();
+  playlists.reorderPlaylists(draggedId, targetId, above);
+});
+
 function playFavoritesFrom(track) {
   const ids = filteredTracks.value.map((t) => t.id);
   player.playFromList(track.id, ids);
@@ -409,11 +421,12 @@ function cardIcon(card) {
         <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
       </div>
 
-      <div v-else class="card-list">
+      <div v-else ref="cardListRef" class="card-list">
         <div
           v-for="c in filteredCards"
           :key="`${c.kind}-${c.id}`"
           class="lib-card"
+          :data-reorder-id="c.kind === 'playlist' ? c.id : null"
           @click="openCard(c)"
         >
           <div
@@ -523,6 +536,25 @@ function cardIcon(card) {
   cursor: pointer;
 }
 .lib-card:active { background: var(--card-hover); }
+
+/* Drag-to-reorder visuals — used only on playlist cards (the only
+ * ones with a [data-reorder-id]). Composable adds is-reorder-
+ * dragging on the picked-up card + reorder-drop-above/below on the
+ * card under the finger. */
+.lib-card.is-reorder-dragging {
+  background: var(--card-hover);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.5);
+  border-radius: var(--r-2);
+  opacity: 0.95;
+  transition: box-shadow var(--motion-short) var(--ease),
+              border-radius var(--motion-short) var(--ease);
+}
+.lib-card.reorder-drop-above {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+.lib-card.reorder-drop-below {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
 .lib-card-cover {
   width: 56px;
   height: 56px;

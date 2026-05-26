@@ -16,6 +16,10 @@ export const useLibraryStore = defineStore('library', {
     search: '',                 // current filter
     libraryDownloads: new Map(), // trackId -> { progress, phase }
     ytdlpStatus: { active: 0, queued: 0 },
+    // Tracks deferred by the "Wi-Fi only" toggle when the device
+    // was on cellular at request time. Drained on the next `online`
+    // event that lands the device on Wi-Fi.
+    _wifiQueue: [],
     // Client-side download pool. Each download opens a long-lived
     // EventSource for progress; browsers cap HTTP/1.1 to ~6 connections
     // per origin, so firing 50 at once would saturate the cap and 44
@@ -440,6 +444,41 @@ export const useLibraryStore = defineStore('library', {
       }
       return orphans.length;
     },
+    // Best-effort connection check. navigator.connection is a draft
+    // standard; iOS Safari < 17.5 doesn't expose it, so we treat
+    // "no API" as "assume Wi-Fi" (the safer fallback — better to
+    // allow a download than to block forever on a working network).
+    _isOnWifi() {
+      if (typeof navigator === 'undefined' || !navigator.onLine) return false;
+      const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (!c) return true; // no API → optimistic
+      if (c.type === 'wifi' || c.type === 'ethernet') return true;
+      // Some browsers populate `effectiveType` ('4g'/'3g'/'2g') but
+      // not `type`. effectiveType === '4g' on Wi-Fi is common, so we
+      // can't 100% rule out cellular from that field alone. Treat
+      // explicit 'cellular' type as the only hard fail; otherwise
+      // give the benefit of the doubt.
+      if (c.type === 'cellular') return false;
+      return true;
+    },
+    // Called from App.vue on the `online` window event AND from
+    // ViewSettings when the user disables the Wi-Fi-only toggle.
+    // Each queued track re-enters downloadTrack; on the online-event
+    // path we let downloadTrack re-check Wi-Fi (so cellular online
+    // still leaves them queued), on the toggle-off path we pass
+    // force=true to short-circuit the check.
+    _drainWifiQueue(force = false) {
+      if (this._wifiQueue.length === 0) return;
+      if (!force && !this._isOnWifi()) return;
+      const queue = [...this._wifiQueue];
+      this._wifiQueue = [];
+      for (const id of queue) {
+        const m = new Map(this.libraryDownloads);
+        m.delete(id); // clear the wifi-wait sentinel before re-queuing
+        this.libraryDownloads = m;
+        this.downloadTrack(id);
+      }
+    },
     // Reserve a slot in the download pool. Resolves immediately if a
     // slot is free, otherwise queues the resolver on _dlWaiters and
     // resolves it when an in-flight download finishes.
@@ -470,6 +509,25 @@ export const useLibraryStore = defineStore('library', {
     },
     async downloadTrack(trackId) {
       if (this.libraryDownloads.has(trackId)) return;
+
+      // Wi-Fi-only gate: if the user opted in and the device is on
+      // cellular, defer the job until the next online + wifi event.
+      // navigator.connection isn't perfectly supported on iOS Safari
+      // (returns 'unknown' for type) — fall back to a presence check
+      // on connection.effectiveType to detect cellular bandwidth.
+      const prefs = (await import('./prefs')).usePrefsStore();
+      if (prefs.downloadsWifiOnly && !this._isOnWifi()) {
+        if (!this._wifiQueue.includes(trackId)) this._wifiQueue.push(trackId);
+        const m0 = new Map(this.libraryDownloads);
+        m0.set(trackId, { progress: 0, phase: 'wifi-wait' });
+        this.libraryDownloads = m0;
+        showToast(
+          'En attente du Wi-Fi pour télécharger',
+          'success',
+        );
+        return;
+      }
+
       // Mark as queued IMMEDIATELY so the UI shows intent (progress
       // ring at 0% on every row in a bulk "Tout télécharger") instead
       // of looking inert while the pool drains the waiter queue.

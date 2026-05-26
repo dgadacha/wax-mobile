@@ -16,6 +16,7 @@ import ViewPlaylist from './views/ViewPlaylist.vue';
 import ViewAlbum from './views/ViewAlbum.vue';
 import ViewArtist from './views/ViewArtist.vue';
 import ViewMix from './views/ViewMix.vue';
+import ViewWrapped from './views/ViewWrapped.vue';
 
 import { useLibraryStore } from './stores/library';
 import { usePlaylistsStore } from './stores/playlists';
@@ -55,6 +56,7 @@ const SUBVIEW_PARENT = {
   album:    'library',
   artist:   'library',
   mix:      'download',
+  wrapped:  'settings',
 };
 
 const activeTab = computed({
@@ -78,6 +80,7 @@ const navTitle = computed(() => {
     case 'album':    return 'Album';
     case 'playlist': return playlists.items.find(p => p.id === view.selectedPlaylistId)?.name || 'Playlist';
     case 'mix':      return 'Mix';
+    case 'wrapped':  return 'Ta sélection';
     default:         return 'Wax';
   }
 });
@@ -236,6 +239,10 @@ onMounted(async () => {
     try { library._listenAlbumProgress(); } catch {}
     try { discover.refresh(); } catch {}
     try { library.warmOfflineCache(); } catch {}
+    // Drain any downloads deferred by the Wi-Fi-only toggle —
+    // each one re-enters downloadTrack and re-checks the network
+    // (so if we're STILL on cellular here, they stay queued).
+    try { library._drainWifiQueue(); } catch {}
   });
 
   // Re-render the LoginGate if the server kicks us out (token expired,
@@ -307,6 +314,7 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
         <ViewAlbum    v-else-if="view.name === 'album'"    key="album" />
         <ViewArtist   v-else-if="view.name === 'artist'"   key="artist" />
         <ViewMix      v-else-if="view.name === 'mix'"      key="mix" />
+        <ViewWrapped  v-else-if="view.name === 'wrapped'"  key="wrapped" />
       </Transition>
     </div>
 

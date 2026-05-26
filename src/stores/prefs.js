@@ -105,6 +105,12 @@ export const usePrefsStore = defineStore('prefs', {
     // 320 is iTunes-quality default; 128 / 192 lower the storage cost
     // for users with limited offline-cache room or capped data plans.
     downloadQuality: '320', // '128' | '192' | '320'
+    // When true, library.downloadTrack refuses to start a job unless
+    // the client is on Wi-Fi (or `navigator.connection.type` reports
+    // 'wifi'). Cellular requests are queued and resumed on the next
+    // `online` event with a Wi-Fi connection. Useful for capped /
+    // expensive data plans (NC, Outre-mer, etc.).
+    downloadsWifiOnly: false,
   }),
   actions: {
     load() {
@@ -148,6 +154,9 @@ export const usePrefsStore = defineStore('prefs', {
         if (['128', '192', '320'].includes(p.downloadQuality)) {
           this.downloadQuality = p.downloadQuality;
         }
+        if (typeof p.downloadsWifiOnly === 'boolean') {
+          this.downloadsWifiOnly = p.downloadsWifiOnly;
+        }
       } catch {}
       this.applyTheme();
       applyAccent(this.accentColor);
@@ -165,6 +174,7 @@ export const usePrefsStore = defineStore('prefs', {
           sidebarExpanded: this.sidebarExpanded,
           accentColor: this.accentColor,
           downloadQuality: this.downloadQuality,
+          downloadsWifiOnly: this.downloadsWifiOnly,
           mobileLocaleMigrated: true,
         }));
       } catch {}

@@ -144,5 +144,29 @@ export const usePlaylistsStore = defineStore('playlists', {
         this.fetch();
       }
     },
+    // Reorder the playlists themselves (in the library list).
+    // `draggedId` moves to land before or after `targetId` based on
+    // `above`. Optimistically updates the local order then persists
+    // via PUT /api/playlists/order with the new id sequence.
+    async reorderPlaylists(draggedId, targetId, above) {
+      if (draggedId === targetId) return;
+      const filtered = this.items.filter((p) => p.id !== draggedId);
+      const targetIdx = filtered.findIndex((p) => p.id === targetId);
+      if (targetIdx === -1) return;
+      const dragged = this.items.find((p) => p.id === draggedId);
+      if (!dragged) return;
+      const insertAt = above ? targetIdx : targetIdx + 1;
+      filtered.splice(insertAt, 0, dragged);
+      this.items = filtered;
+      try {
+        await api('/api/playlists/order', {
+          method: 'PUT',
+          body: JSON.stringify({ playlistIds: filtered.map((p) => p.id) }),
+        });
+      } catch (e) {
+        showToast(t('toast.reorder_error', e.message), 'error');
+        this.fetch();
+      }
+    },
   },
 });

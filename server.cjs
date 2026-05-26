@@ -1806,6 +1806,28 @@ app.post('/api/playlists', (req, res) => {
   res.json({ playlist });
 });
 
+// Reorder the playlist list itself (the order they appear in the
+// library sidebar). Body: { playlistIds: string[] } — the new full
+// order. Any id missing from the array gets appended at the end so
+// the request is safe against partial sends. Defined BEFORE the
+// /:id route so Express doesn't try to match 'order' as a playlist
+// id first.
+app.put('/api/playlists/order', (req, res) => {
+  const ids = Array.isArray(req.body?.playlistIds) ? req.body.playlistIds : null;
+  if (!ids) return res.status(400).json({ error: 'playlistIds required' });
+  const pls = getPlaylists(req.profileId);
+  const byId = new Map(pls.map((p) => [p.id, p]));
+  const reordered = [];
+  for (const id of ids) {
+    if (typeof id !== 'string') continue;
+    const p = byId.get(id);
+    if (p) { reordered.push(p); byId.delete(id); }
+  }
+  for (const p of byId.values()) reordered.push(p); // append leftovers
+  savePlaylists(req.profileId, reordered);
+  res.json({ ok: true });
+});
+
 app.put('/api/playlists/:id', (req, res) => {
   const pls = getPlaylists(req.profileId);
   const pl = pls.find(p => p.id === req.params.id);
