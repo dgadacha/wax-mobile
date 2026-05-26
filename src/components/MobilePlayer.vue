@@ -25,20 +25,80 @@ const audio2Ref = ref(null);
 const fullscreen = ref(false);
 const queueOpen = ref(false);
 
-// Gesture surfaces inside the fullscreen player: the cover gets
-// horizontal swipes for prev/next (very iPod-coverflow / Apple Music),
-// and the whole body responds to a downward swipe to dismiss + an
-// upward swipe to open the queue. Wired below via useGestures after
-// the refs are bound to template nodes.
+// Gesture surfaces inside the fullscreen player.
+//
+//   COVER  — horizontal swipes for prev/next (iPod cover-flow /
+//            Apple Music). Tracks the finger live: the cover
+//            translates with the touch and fades slightly so the
+//            user feels the gesture before commit, then a quick
+//            snap-back tween if uncommitted.
+//   BODY   — vertical swipes: ↓ dismisses the popup, ↑ opens the
+//            queue. The downward drag translates the whole player
+//            so the user gets a "pulling the sheet down" feel.
 const npCoverRef = ref(null);
 const npBodyRef = ref(null);
+// Live transform state — bound into :style on the elements below.
+// Reset to defaults via the `coverAnimating` / `bodyAnimating` flag
+// which enables a CSS transition on snap-back / commit only.
+const coverDx = ref(0);
+const coverAnimating = ref(false);
+const bodyDy = ref(0);
+const bodyAnimating = ref(false);
+
+const coverStyle = computed(() => ({
+  transform: `translate3d(${coverDx.value}px, 0, 0)`,
+  // Fade out as the cover slides — caps at 0.4 opacity to keep
+  // the artwork legible even at peak swipe.
+  opacity: 1 - Math.min(0.6, Math.abs(coverDx.value) / 220),
+  transition: coverAnimating.value
+    ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 220ms cubic-bezier(0.4, 0, 0.2, 1)'
+    : 'none',
+}));
+const bodyStyle = computed(() => ({
+  // Only allow downward drag — upward maps to a queue-open commit,
+  // no need for visual tracking on that direction.
+  transform: bodyDy.value > 0
+    ? `translate3d(0, ${bodyDy.value}px, 0)`
+    : 'translate3d(0, 0, 0)',
+  // Slight fade as the user pulls down — visual hint the player is
+  // about to close.
+  opacity: bodyDy.value > 0
+    ? 1 - Math.min(0.4, bodyDy.value / 600)
+    : 1,
+  transition: bodyAnimating.value
+    ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1), opacity 220ms cubic-bezier(0.4, 0, 0.2, 1)'
+    : 'none',
+}));
+
+function settleCover() {
+  coverAnimating.value = true;
+  coverDx.value = 0;
+  setTimeout(() => { coverAnimating.value = false; }, 240);
+}
+function settleBody() {
+  bodyAnimating.value = true;
+  bodyDy.value = 0;
+  setTimeout(() => { bodyAnimating.value = false; }, 240);
+}
+
 useGestures(npCoverRef, {
+  onProgress: ({ dx, axis }) => {
+    if (axis !== 'x') { coverDx.value = 0; return; }
+    coverDx.value = dx;
+  },
   onSwipeLeft: () => { haptics.light(); player.next(); },
   onSwipeRight: () => { haptics.light(); player.prev(); },
+  onEnd: () => settleCover(),
 });
 useGestures(npBodyRef, {
+  onProgress: ({ dy, axis }) => {
+    if (axis !== 'y' || dy < 0) { bodyDy.value = 0; return; }
+    // Resist past 200 px so the player doesn't fly off mid-swipe
+    bodyDy.value = dy < 200 ? dy : 200 + (dy - 200) * 0.4;
+  },
   onSwipeDown: () => { haptics.light(); fullscreen.value = false; },
   onSwipeUp: () => { haptics.light(); queueOpen.value = true; },
+  onEnd: () => settleBody(),
 });
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
@@ -207,8 +267,8 @@ watch(
           <ChevronDown :size="26" :stroke-width="2" color="var(--text)" />
         </template>
       </van-nav-bar>
-      <div ref="npBodyRef" class="np-body">
-        <div ref="npCoverRef" class="np-cover">
+      <div ref="npBodyRef" class="np-body" :style="bodyStyle">
+        <div ref="npCoverRef" class="np-cover" :style="coverStyle">
           <img v-if="cover" :src="cover" alt="" />
         </div>
         <div class="np-meta">

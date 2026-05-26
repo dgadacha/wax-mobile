@@ -28,12 +28,23 @@ const LONG_PRESS_DRIFT = 10;
  *   onSwipeUp?: () => void,
  *   onSwipeDown?: () => void,
  *   onLongPress?: (e: TouchEvent) => void,
+ *   // Live progress callbacks for finger-tracking animations.
+ *   // `dx`/`dy` are signed deltas from the start of the touch.
+ *   // `axis` is set to 'x' or 'y' once the gesture commits to a
+ *   //   direction (when the move clearly favors one axis over the
+ *   //   other), so the consumer knows which transform to apply.
+ *   //   It stays null until the gesture leaves the dead-zone.
+ *   onProgress?: ({ dx: number, dy: number, axis: 'x'|'y'|null }) => void,
+ *   onEnd?: ({ committed: boolean, direction: 'left'|'right'|'up'|'down'|null }) => void,
  * }} handlers
  */
 export function useGestures(elRef, handlers = {}) {
   let startX = 0;
   let startY = 0;
   let startT = 0;
+  let axis = null;
+  let lastDx = 0;
+  let lastDy = 0;
   let longPressTimer = null;
   let longPressFired = false;
 
@@ -50,6 +61,9 @@ export function useGestures(elRef, handlers = {}) {
     startX = t.clientX;
     startY = t.clientY;
     startT = Date.now();
+    axis = null;
+    lastDx = 0;
+    lastDy = 0;
     longPressFired = false;
     if (handlers.onLongPress) {
       clearLongPress();
@@ -62,13 +76,32 @@ export function useGestures(elRef, handlers = {}) {
   }
 
   function onTouchMove(e) {
-    if (!longPressTimer) return;
     const t = e.touches[0];
     if (!t) return;
-    if (Math.abs(t.clientX - startX) > LONG_PRESS_DRIFT
-      || Math.abs(t.clientY - startY) > LONG_PRESS_DRIFT) {
-      clearLongPress(); // user is scrolling or swiping, not pressing
+    const dx = t.clientX - startX;
+    const dy = t.clientY - startY;
+    lastDx = dx;
+    lastDy = dy;
+    if (longPressTimer) {
+      if (Math.abs(dx) > LONG_PRESS_DRIFT || Math.abs(dy) > LONG_PRESS_DRIFT) {
+        clearLongPress(); // user is scrolling or swiping, not pressing
+      }
     }
+    // Commit to an axis once the move clearly favors one side. Helps
+    // the consumer (e.g. cover swipe) know whether to translateX or
+    // translateY, and prevents diagonal jitter from animating both
+    // axes simultaneously.
+    if (!axis) {
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absX > 10 && absX > absY * 1.5) axis = 'x';
+      else if (absY > 10 && absY > absX * 1.5) axis = 'y';
+    }
+    if (handlers.onProgress) handlers.onProgress({ dx, dy, axis });
+  }
+
+  function emitEnd(committed, direction) {
+    if (handlers.onEnd) handlers.onEnd({ committed, direction });
   }
 
   function onTouchEnd(e) {
@@ -77,31 +110,39 @@ export function useGestures(elRef, handlers = {}) {
       // Suppress the synthetic click that follows a long-press so
       // the row's normal tap handler doesn't also fire.
       e.preventDefault();
+      emitEnd(false, null);
       return;
     }
     const t = (e.changedTouches && e.changedTouches[0]) || null;
-    if (!t) return;
+    if (!t) { emitEnd(false, null); return; }
     const dx = t.clientX - startX;
     const dy = t.clientY - startY;
     const dt = Date.now() - startT;
-    if (dt > SWIPE_MAX_DURATION) return;
+    if (dt > SWIPE_MAX_DURATION) { emitEnd(false, null); return; }
     const absX = Math.abs(dx);
     const absY = Math.abs(dy);
     if (absX > absY) {
-      // Horizontal swipe
-      if (absX < SWIPE_MIN || absY > SWIPE_OFF_AXIS_MAX) return;
-      if (dx < 0 && handlers.onSwipeLeft) handlers.onSwipeLeft();
-      else if (dx > 0 && handlers.onSwipeRight) handlers.onSwipeRight();
+      if (absX < SWIPE_MIN || absY > SWIPE_OFF_AXIS_MAX) {
+        emitEnd(false, null); return;
+      }
+      const dir = dx < 0 ? 'left' : 'right';
+      if (dir === 'left' && handlers.onSwipeLeft) handlers.onSwipeLeft();
+      else if (dir === 'right' && handlers.onSwipeRight) handlers.onSwipeRight();
+      emitEnd(true, dir);
     } else {
-      // Vertical swipe
-      if (absY < SWIPE_MIN || absX > SWIPE_OFF_AXIS_MAX) return;
-      if (dy < 0 && handlers.onSwipeUp) handlers.onSwipeUp();
-      else if (dy > 0 && handlers.onSwipeDown) handlers.onSwipeDown();
+      if (absY < SWIPE_MIN || absX > SWIPE_OFF_AXIS_MAX) {
+        emitEnd(false, null); return;
+      }
+      const dir = dy < 0 ? 'up' : 'down';
+      if (dir === 'up' && handlers.onSwipeUp) handlers.onSwipeUp();
+      else if (dir === 'down' && handlers.onSwipeDown) handlers.onSwipeDown();
+      emitEnd(true, dir);
     }
   }
 
   function onTouchCancel() {
     clearLongPress();
+    emitEnd(false, null);
   }
 
   // Watch the ref so we bind whenever the element appears or

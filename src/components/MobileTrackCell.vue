@@ -185,7 +185,14 @@ function onCellClick() {
   -webkit-user-select: none;
   user-select: none;
 }
-.mtc:active { background: var(--card-hover); }
+/* Tactile feedback on press — slight scale + background tint. iOS
+ * fires :active immediately on touchstart, so this gives instant
+ * "I registered your tap" feedback before any other handler runs. */
+.mtc:active {
+  background: var(--card-hover);
+  transform: scale(0.985);
+  transition: transform 80ms var(--ease), background 80ms var(--ease);
+}
 .mtc.is-muted { opacity: 0.55; }
 
 .mtc-index {
