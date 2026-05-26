@@ -63,6 +63,18 @@ function hexToHsl(hex) {
   return { h, s: s * 100, l: l * 100 };
 }
 
+// Apply the user's saved accent. Called when playback stops so the
+// track-derived adaptive accent (set by extractDominantColor in the
+// player) reverts to whatever the user picked in Settings.
+export function revertAccentToUser() {
+  try {
+    const p = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
+    applyAccent(p.accentColor || DEFAULT_ACCENT);
+  } catch {
+    applyAccent(DEFAULT_ACCENT);
+  }
+}
+
 export function applyAccent(hex) {
   const hsl = hexToHsl(hex);
   if (!hsl) return;
@@ -89,6 +101,10 @@ export const usePrefsStore = defineStore('prefs', {
     eq: { bass: 0, mid: 0, treble: 0 },
     sidebarExpanded: false,
     accentColor: DEFAULT_ACCENT,
+    // MP3 download bitrate sent with every POST /api/library/:id/download.
+    // 320 is iTunes-quality default; 128 / 192 lower the storage cost
+    // for users with limited offline-cache room or capped data plans.
+    downloadQuality: '320', // '128' | '192' | '320'
   }),
   actions: {
     load() {
@@ -129,6 +145,9 @@ export const usePrefsStore = defineStore('prefs', {
         if (typeof p.accentColor === 'string' && /^#?[0-9a-f]{6}$/i.test(p.accentColor)) {
           this.accentColor = p.accentColor;
         }
+        if (['128', '192', '320'].includes(p.downloadQuality)) {
+          this.downloadQuality = p.downloadQuality;
+        }
       } catch {}
       this.applyTheme();
       applyAccent(this.accentColor);
@@ -145,6 +164,7 @@ export const usePrefsStore = defineStore('prefs', {
           eq: this.eq,
           sidebarExpanded: this.sidebarExpanded,
           accentColor: this.accentColor,
+          downloadQuality: this.downloadQuality,
           mobileLocaleMigrated: true,
         }));
       } catch {}

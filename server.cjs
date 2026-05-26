@@ -944,20 +944,60 @@ app.get('/api/mix/:videoId', (req, res) => {
   });
 });
 
-app.get('/api/lyrics', (req, res) => {
+// Two-tier lyrics fetch: lrclib.net first (returns time-stamped LRC
+// when available — drives the karaoke-style synced display), then
+// lyrics.ovh as a plain-text fallback. Response always carries
+// `artist`, `title`, and at least one of `synced` (raw LRC string)
+// or `lyrics` (plain text). Client picks the synced renderer when
+// `synced` is set.
+function httpGetJson(url) {
+  return new Promise((resolve, reject) => {
+    https
+      .get(url, { headers: { 'User-Agent': 'wax/1.0 (https://github.com/dgadacha/wax-mobile)' } }, (r) => {
+        let data = '';
+        r.on('data', (c) => { data += c; });
+        r.on('end', () => {
+          if (r.statusCode === 404) return resolve(null);
+          if (r.statusCode && r.statusCode >= 400) return reject(new Error(`HTTP ${r.statusCode}`));
+          try { resolve(JSON.parse(data)); }
+          catch (e) { reject(e); }
+        });
+      })
+      .on('error', reject);
+  });
+}
+
+app.get('/api/lyrics', async (req, res) => {
   const artist = String(req.query.artist || '').trim();
   const title = String(req.query.title || '').trim();
   if (!artist || !title) return res.status(400).json({ error: 'artist + title required' });
 
+  // 1. lrclib.net — gives back syncedLyrics (LRC) + plainLyrics when
+  // found. Their API key is `track_name` + `artist_name` (lowercased
+  // server-side); we don't need album to get a hit on most tracks.
+  try {
+    const url = `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
+    const hit = await httpGetJson(url);
+    if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
+      return res.json({
+        artist,
+        title,
+        synced: hit.syncedLyrics || '',
+        lyrics: hit.plainLyrics || hit.syncedLyrics || '',
+      });
+    }
+  } catch { /* fall through to lyrics.ovh */ }
+
+  // 2. lyrics.ovh fallback — plain text only, no timing.
   const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
   https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (r) => {
     let data = '';
-    r.on('data', chunk => { data += chunk; });
+    r.on('data', (chunk) => { data += chunk; });
     r.on('end', () => {
       try {
         const json = JSON.parse(data);
         if (json.lyrics && json.lyrics.trim()) {
-          res.json({ lyrics: json.lyrics, artist, title });
+          res.json({ artist, title, synced: '', lyrics: json.lyrics });
         } else {
           res.status(404).json({ error: 'Lyrics not found' });
         }
@@ -1646,12 +1686,17 @@ app.post('/api/library/:trackId/download', (req, res) => {
   const track = lib.find(t => t.id === req.params.trackId);
   if (!track) return res.status(404).json({ error: 'Piste introuvable' });
   if (track.file) return res.status(409).json({ error: 'Déjà téléchargée' });
+  // Client may pass `bitrate` in the body (prefs.downloadQuality); we
+  // whitelist + fall back to 320 if missing or junk. Stored on the
+  // job so yt-dlp picks up the right --audio-quality value below.
+  const requested = String(req.body?.bitrate || '');
+  const bitrate = ['128', '192', '320'].includes(requested) ? requested : '320';
   const id = crypto.randomBytes(8).toString('hex');
   const job = {
     id,
     trackId: track.id,
     url: track.url,
-    bitrate: '320',
+    bitrate,
     progress: 0,
     phase: 'starting',
     status: 'pending',

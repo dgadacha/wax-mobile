@@ -264,6 +264,13 @@ function changeProfile() {
   profile.openPicker();
 }
 
+function pickQuality(b) {
+  if (prefs.downloadQuality === b) return;
+  haptics.selection();
+  prefs.downloadQuality = b;
+  prefs.save();
+}
+
 async function onLogout() {
   try {
     await showConfirmDialog({
@@ -443,6 +450,23 @@ async function onLogout() {
         </div>
       </div>
 
+      <!-- MP3 download bitrate. 320 kbps is iTunes/Apple Music
+           quality; 192 and 128 trade fidelity for storage. Persisted
+           in prefs.downloadQuality, sent on every download POST. -->
+      <van-cell title="Qualité du téléchargement" :value="prefs.downloadQuality + ' kbps'">
+        <template #label>
+          <div class="quality-chips">
+            <button
+              v-for="b in ['128', '192', '320']"
+              :key="b"
+              class="quality-chip"
+              :class="{ active: prefs.downloadQuality === b }"
+              @click="pickQuality(b)"
+            >{{ b }} kbps</button>
+          </div>
+        </template>
+      </van-cell>
+
       <van-cell
         :title="warming ? 'Vérification en cours' : 'Vérifier le cache'"
         :value="warming ? warmingProgress : (warmingSummary || 'Re-télécharger les manquants')"
@@ -502,7 +526,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.12.6" />
+      <van-cell title="Version" value="0.13.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -538,6 +562,32 @@ async function onLogout() {
 .cell-icon { margin-right: 10px; }
 .spin-anim { animation: spin 1.1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Quality picker chips — three small pills laid out in a row
+ * below the cell title. Active one fills with the accent. */
+.quality-chips {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.quality-chip {
+  flex: 1 1 0;
+  padding: var(--sp-2) 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+}
+.quality-chip.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.quality-chip:active { transform: scale(0.97); }
 
 /* Storage summary card — lives inside a van-cell-group so it picks
  * up the group's rounded corners. Padded enough to breathe; the

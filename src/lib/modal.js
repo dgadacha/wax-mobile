@@ -169,6 +169,10 @@ export function openLyricsModal({ artist, title, status, content }) {
     lyricsTitle: title,
     lyricsStatus: status,
     lyricsContent: content,
+    // Synced (LRC) lines as [{time, text}]. Empty means the modal
+    // falls back to the plain-text renderer. Populated by
+    // useLyrics.showLyrics() when lrclib.net returns a hit.
+    lyricsSynced: [],
     confirmLabel: '',
     cancelLabel: t('common.close'),
     wide: true,

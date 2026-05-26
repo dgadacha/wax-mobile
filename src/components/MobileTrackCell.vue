@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { Heart, MoreHorizontal, Play, Check, Download as DownloadIcon } from 'lucide-vue-next';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
@@ -46,6 +46,17 @@ const sub = computed(() => {
 });
 
 function onCellClick() { emit('play'); }
+
+// Heart-tap pop animation. The class is added on click and removed
+// 420 ms later — long enough for the CSS keyframe to play out once.
+// Spotify/Apple Music both do a short scale bounce on like; reads
+// as "I registered your choice" instantly.
+const likeBouncing = ref(false);
+function onLikeClick() {
+  likeBouncing.value = true;
+  setTimeout(() => { likeBouncing.value = false; }, 420);
+  emit('like');
+}
 </script>
 
 <template>
@@ -120,9 +131,10 @@ function onCellClick() { emit('play'); }
 
       <button
         v-if="showLike"
-        class="mtc-btn"
+        class="mtc-btn mtc-like"
+        :class="{ 'is-bouncing': likeBouncing }"
         :aria-label="isLiked ? 'Retirer' : `J'aime`"
-        @click="emit('like')"
+        @click="onLikeClick"
       >
         <Heart
           :size="20"
@@ -251,4 +263,18 @@ function onCellClick() { emit('play'); }
   cursor: pointer;
 }
 .mtc-btn:active { background: rgba(255, 255, 255, 0.08); }
+
+/* Heart bounce on like — overshoot scale + settle back. Targets
+ * the SVG directly so the button's :active bg stays unaffected. */
+@keyframes heart-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.35); }
+  60%  { transform: scale(0.92); }
+  85%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.mtc-like.is-bouncing :deep(svg) {
+  animation: heart-pop 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center;
+}
 </style>

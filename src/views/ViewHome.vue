@@ -1,13 +1,13 @@
 <script setup>
 import { onMounted, computed, ref } from 'vue';
-import { RotateCcw, Sparkles } from 'lucide-vue-next';
+import { RotateCcw, Sparkles, TrendingUp, Clock, Mic2 } from 'lucide-vue-next';
 import { haptics } from '@/lib/haptics';
 import { useDiscoverStore } from '@/stores/discover';
 import { useStreamsStore } from '@/stores/streams';
 import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
-import { fmtDuration } from '@/lib/format';
+import { fmtDuration, parseTrackTitle, normalizeArtistKey, gradientFromString } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import MobileSkeleton from '@/components/MobileSkeleton.vue';
 
@@ -17,7 +17,7 @@ const lib = useLibraryStore();
 const player = usePlayerStore();
 const view = useViewStore();
 
-// Lightweight "Recently played" — the last 6 tracks the player touched
+// Lightweight "Reprends ta lecture" — the last 6 tracks the player touched
 // (queue snapshot). Falls back to favorites when the queue is empty.
 const recents = computed(() => {
   const ids = (player.queue || []).slice(-6).reverse();
@@ -30,6 +30,52 @@ const recents = computed(() => {
   if (fromQueue.length > 0) return fromQueue;
   return lib.favorites.slice(0, 6);
 });
+
+// "Récemment joués" — tracks the user has actually played at least
+// once, sorted by lastPlayedAt desc. Top 10 for the horizontal row.
+const recentlyPlayed = computed(() =>
+  lib.tracks
+    .filter((t) => t.lastPlayedAt)
+    .sort((a, b) => (b.lastPlayedAt || 0) - (a.lastPlayedAt || 0))
+    .slice(0, 10),
+);
+
+// "Top joués" — tracks sorted by playCount. Skips zero plays so a
+// fresh library doesn't show a row of orphan tracks.
+const topPlayed = computed(() =>
+  lib.tracks
+    .filter((t) => (t.playCount || 0) > 0)
+    .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+    .slice(0, 10),
+);
+
+// "Top artistes" — group tracks by normalized artist key, sum
+// playCount per artist, take the top 6. Each entry surfaces its
+// most-played track as the cover.
+const topArtists = computed(() => {
+  const byArtist = new Map(); // key -> { name, plays, top }
+  for (const t of lib.tracks) {
+    const parsed = parseTrackTitle(t);
+    const name = parsed.artist || t.uploader;
+    if (!name) continue;
+    const key = normalizeArtistKey(name);
+    if (!key) continue;
+    const plays = t.playCount || 0;
+    if (plays === 0) continue;
+    const cur = byArtist.get(key) || { name, plays: 0, top: t };
+    cur.plays += plays;
+    if ((t.playCount || 0) > (cur.top.playCount || 0)) cur.top = t;
+    byArtist.set(key, cur);
+  }
+  return Array.from(byArtist.values())
+    .sort((a, b) => b.plays - a.plays)
+    .slice(0, 6);
+});
+
+function openArtist(name) {
+  haptics.light();
+  view.switchTo('artist', name);
+}
 
 function playFromDiscover(t) {
   const ids = discover.tracks.map((s) => s.id);
@@ -79,6 +125,7 @@ async function onRefresh() {
     </div>
 
     <section v-if="recents.length > 0" class="home-section">
+      <div class="section-head"><h2>Reprends ta lecture</h2></div>
       <div class="row-grid">
         <button
           v-for="t in recents"
@@ -90,6 +137,66 @@ async function onRefresh() {
             <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
           </div>
           <span class="text-ellipsis">{{ t.title }}</span>
+        </button>
+      </div>
+    </section>
+
+    <section v-if="recentlyPlayed.length > 0" class="home-section">
+      <div class="section-head">
+        <h2><Clock :size="16" :stroke-width="2.4" class="head-icon" /> Récemment joués</h2>
+      </div>
+      <div class="h-scroll">
+        <button
+          v-for="t in recentlyPlayed"
+          :key="t.id"
+          class="h-card"
+          @click="playOne(t)"
+        >
+          <div class="h-cover">
+            <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
+          </div>
+          <div class="h-title text-ellipsis">{{ t.title }}</div>
+          <div class="h-sub text-ellipsis">{{ t.uploader }}</div>
+        </button>
+      </div>
+    </section>
+
+    <section v-if="topPlayed.length > 0" class="home-section">
+      <div class="section-head">
+        <h2><TrendingUp :size="16" :stroke-width="2.4" class="head-icon" /> Top joués</h2>
+      </div>
+      <div class="h-scroll">
+        <button
+          v-for="t in topPlayed"
+          :key="t.id"
+          class="h-card"
+          @click="playOne(t)"
+        >
+          <div class="h-cover">
+            <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
+          </div>
+          <div class="h-title text-ellipsis">{{ t.title }}</div>
+          <div class="h-sub text-ellipsis">{{ t.playCount }} écoute{{ t.playCount > 1 ? 's' : '' }}</div>
+        </button>
+      </div>
+    </section>
+
+    <section v-if="topArtists.length > 0" class="home-section">
+      <div class="section-head">
+        <h2><Mic2 :size="16" :stroke-width="2.4" class="head-icon" /> Top artistes</h2>
+      </div>
+      <div class="h-scroll">
+        <button
+          v-for="a in topArtists"
+          :key="a.name"
+          class="h-card h-card-artist"
+          @click="openArtist(a.name)"
+        >
+          <div class="h-cover h-cover-circle">
+            <img v-if="a.top?.thumbnail" :src="apiUrl(a.top.thumbnail)" alt="" loading="lazy" />
+          </div>
+          <div class="h-title text-ellipsis">{{ a.name }}</div>
+          <div class="h-sub text-ellipsis">{{ a.plays }} écoute{{ a.plays > 1 ? 's' : '' }}</div>
         </button>
       </div>
     </section>
@@ -175,7 +282,11 @@ async function onRefresh() {
   font-weight: 700;
   margin: 0;
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
 }
+.head-icon { color: var(--accent); }
 .section-head .seed {
   font-size: 11px;
   color: var(--text-muted);
@@ -224,6 +335,55 @@ async function onRefresh() {
   justify-content: center;
   padding: 24px;
 }
+
+/* Horizontal scrolling card rows — Apple Music / Spotify pattern
+ * for "Top X" carousels. Each card is fixed-width and the row
+ * scroll-snaps so the user can flick through naturally. */
+.h-scroll {
+  display: flex;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-4) var(--sp-2);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.h-scroll::-webkit-scrollbar { display: none; }
+.h-card {
+  flex: 0 0 auto;
+  width: 130px;
+  scroll-snap-align: start;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.h-card:active { transform: scale(0.97); transition: transform 80ms var(--ease); }
+.h-cover {
+  width: 130px;
+  height: 130px;
+  border-radius: var(--r-2);
+  overflow: hidden;
+  background: var(--card-hover);
+  margin-bottom: var(--sp-2);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.h-cover img { width: 100%; height: 100%; object-fit: cover; }
+.h-cover-circle { border-radius: 50%; }
+.h-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.h-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.h-card-artist .h-title { text-align: center; }
+.h-card-artist .h-sub { text-align: center; }
 
 .discover-grid {
   display: grid;

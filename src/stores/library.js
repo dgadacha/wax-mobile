@@ -479,8 +479,13 @@ export const useLibraryStore = defineStore('library', {
 
       await this._acquireDownloadSlot();
       try {
+        // Pass the user-picked download quality so the server's
+        // yt-dlp call uses the right --audio-quality. Falls back to
+        // 320 server-side if the body is missing/invalid.
+        const prefs = (await import('./prefs')).usePrefsStore();
         const { id: jobId } = await api(`/api/library/${trackId}/download`, {
           method: 'POST',
+          body: JSON.stringify({ bitrate: prefs.downloadQuality }),
         });
         this._listenLibraryProgress(jobId, trackId);
       } catch (e) {

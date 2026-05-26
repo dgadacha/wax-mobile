@@ -14,6 +14,8 @@ import { haptics } from '@/lib/haptics';
 import { showLyrics } from '@/composables/useLyrics';
 import { useVisualizer, setEq } from '@/composables/useVisualizer';
 import { useGestures } from '@/composables/useGestures';
+import { applyAccent, revertAccentToUser } from '@/stores/prefs';
+import { extractDominantColor } from '@/lib/extractColor';
 
 const player = usePlayerStore();
 const lib = useLibraryStore();
@@ -168,6 +170,29 @@ function _coverFor(qIdx) {
 const prevCover = computed(() => _coverFor(player.index - 1));
 const nextCover = computed(() => _coverFor(player.index + 1));
 
+// Adaptive accent: each new track's cover gets sampled for its
+// dominant color and pushed into --accent. Reverts to the user-
+// picked accent when playback stops or the track has no cover
+// available. The extraction runs off the main render frame — it's
+// async + canvas-based but with a 40x40 downsample it's <20 ms.
+let _lastAccentTrackId = null;
+watch(
+  () => player.currentTrack?.id,
+  async (trackId) => {
+    if (!trackId) { _lastAccentTrackId = null; revertAccentToUser(); return; }
+    if (trackId === _lastAccentTrackId) return;
+    _lastAccentTrackId = trackId;
+    const url = apiUrl(player.currentTrack?.thumbnail || '');
+    if (!url) { revertAccentToUser(); return; }
+    const hex = await extractDominantColor(url);
+    // Guard against a race: another track may have started while we
+    // were extracting. Bail if so — the newer track's effect wins.
+    if (_lastAccentTrackId !== trackId) return;
+    if (hex) applyAccent(hex);
+    else revertAccentToUser();
+  },
+);
+
 // Resolve every queue id to a track (library or stream). The currently
 // playing one gets the accent treatment.
 const queueTracks = computed(() => {
@@ -199,8 +224,11 @@ const seekPct = computed(() => {
   return (player.currentTime / player.duration) * 100;
 });
 
+const likeBouncing = ref(false);
 function toggleLike() {
   haptics.medium();
+  likeBouncing.value = true;
+  setTimeout(() => { likeBouncing.value = false; }, 420);
   const trackId = player.queue[player.index];
   if (!trackId) return;
   if (typeof trackId === 'string' && trackId.startsWith('stream-')) {
@@ -342,8 +370,13 @@ watch(
           <div class="np-cover np-cover-side np-cover-prev">
             <img v-if="prevCover" :src="prevCover" alt="" />
           </div>
-          <div class="np-cover">
+          <!-- Current cover gets the vinyl treatment: circular,
+               thin dark outer ring + spindle dot, slow rotation
+               while player.playing. Side covers stay square +
+               static so the swipe preview is readable. -->
+          <div class="np-cover np-cover-current is-vinyl" :class="{ 'is-spinning': player.playing }">
             <img v-if="cover" :src="cover" alt="" />
+            <span class="np-vinyl-spindle" aria-hidden="true" />
           </div>
           <div class="np-cover np-cover-side np-cover-next">
             <img v-if="nextCover" :src="nextCover" alt="" />
@@ -407,7 +440,12 @@ watch(
           </button>
         </div>
         <div class="np-extras">
-          <button class="np-extra" aria-label="J'aime" @click="toggleLike">
+          <button
+            class="np-extra np-like"
+            :class="{ 'is-bouncing': likeBouncing }"
+            aria-label="J'aime"
+            @click="toggleLike"
+          >
             <Heart :size="24" :stroke-width="2"
               :color="player.isLikedCurrent ? 'var(--accent)' : 'var(--text-muted)'"
               :fill="player.isLikedCurrent ? 'var(--accent)' : 'transparent'" />
@@ -638,6 +676,55 @@ watch(
 }
 .np-cover-prev { left: calc(-100% - 16px); }
 .np-cover-next { left: calc(100% + 16px); }
+
+/* Vinyl treatment for the CURRENT cover only — side covers stay
+ * square so the swipe preview reads as a thumbnail. Circular
+ * radius + a thin dark outer ring + a tiny spindle dot at the
+ * center. Slow continuous rotation while playing; pauses
+ * mid-revolution on pause via animation-play-state. */
+.np-cover.is-vinyl {
+  border-radius: 50%;
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 6px rgba(0, 0, 0, 0.4),
+    inset 0 0 0 8px rgba(255, 255, 255, 0.06);
+}
+.np-cover.is-vinyl img {
+  border-radius: 50%;
+  /* Slight inner inset so the cover doesn't kiss the ring */
+  transform: scale(0.94);
+  transform-origin: center;
+}
+.np-vinyl-spindle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+  z-index: 1;
+  pointer-events: none;
+}
+/* Continuous rotation. 18 s per turn matches an LP's ~33⅓ RPM
+ * scaled down for visual calm — fast enough to read as motion,
+ * slow enough not to distract from the music. */
+@keyframes vinyl-spin { to { transform: rotate(360deg); } }
+.np-cover.is-vinyl.is-spinning img {
+  animation: vinyl-spin 18s linear infinite;
+  /* Keep the 0.94 scale via composition. Without this the keyframe
+   * would override our static transform and the cover would
+   * suddenly fill the vinyl ring on play. */
+}
+.np-cover.is-vinyl.is-spinning img {
+  animation-name: vinyl-spin-scaled;
+}
+@keyframes vinyl-spin-scaled {
+  from { transform: scale(0.94) rotate(0deg); }
+  to   { transform: scale(0.94) rotate(360deg); }
+}
 
 .np-meta {
   text-align: center;
