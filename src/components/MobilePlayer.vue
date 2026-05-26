@@ -574,9 +574,14 @@ watch(
             <header class="np-lyrics-head">
               <div class="np-lyrics-head-text">
                 <div class="np-lyrics-eyebrow">Paroles</div>
-                <div class="np-lyrics-meta text-ellipsis">
-                  {{ lyricsArtist }} — {{ lyricsTitle }}
-                </div>
+                <!-- MarqueeText handles the overflow case (long
+                     "Artist — Title (feat. X)" combos that used to
+                     push the close button off-screen). Same scroll-
+                     when-overflowing pattern as the player titles. -->
+                <MarqueeText
+                  class="np-lyrics-meta"
+                  :text="`${lyricsArtist} — ${lyricsTitle}`"
+                />
               </div>
               <button class="np-lyrics-close" aria-label="Fermer" @click="lyricsOpen = false">
                 <X :size="22" :stroke-width="2" color="var(--text)" />
@@ -817,9 +822,16 @@ watch(
    * `auto` (= its content's intrinsic width), so without this the
    * artist — title string would push the close button off-screen
    * on long names like "Chase Atlantic — Consume feat. Goon Des
-   * Garcons". With 0 the child can shrink and the inner ellipsis
-   * kicks in. */
-  flex: 1 1 0;
+   * Garcons". With 0 the child can shrink and the inner clip
+   * + MarqueeText scroll kicks in.
+   *
+   * `width: 0` companion to `flex: 1` — some WebKit versions don't
+   * honor `flex-basis: 0` alone for shrinking decisions; setting
+   * width: 0 forces the row to compute "head-text wants to be
+   * tiny" so the flex algorithm hands it exactly the remaining
+   * space (viewport - close button - padding - gap). */
+  flex: 1;
+  width: 0;
   min-width: 0;
   overflow: hidden;
 }
@@ -834,12 +846,11 @@ watch(
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
-  /* Explicit ellipsis on the meta itself (not just relying on the
-   * .text-ellipsis utility class) so the clip is robust against
-   * CSS reset order. */
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Width pinned to 100% of the parent text column so MarqueeText's
+   * internal `scrollWidth > clientWidth` check has a stable
+   * reference (the parent's flex-constrained width, not the
+   * intrinsic span width). */
+  width: 100%;
 }
 .np-lyrics-close {
   width: 36px;
