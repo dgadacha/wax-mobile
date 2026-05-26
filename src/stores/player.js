@@ -394,6 +394,37 @@ export const usePlayerStore = defineStore('player', {
         this.stallTimer = null;
       }
     },
+    // Lock-screen / AirPods play tap. iOS's MediaSession play action
+    // fires here; we kick the audio + run a single spot-check to
+    // recover from the "playing but silent" routing bug that hits
+    // when AirPods reconnect mid-pause. Only the MediaSession
+    // surface goes through this — togglePlay() in the foreground
+    // calls audio.play() directly, so an in-app resume can never
+    // trip the recovery path (which is what made the global
+    // watchdog dangerous).
+    _playFromMediaSession() {
+      if (!this.audioEl) return;
+      const isBlob = typeof this.audioEl.src === 'string'
+        && this.audioEl.src.startsWith('blob:');
+      const startedAt = this.audioEl.currentTime;
+      this.audioEl.play().catch(() => {});
+      if (isBlob) return; // blobs play from memory — no routing bug
+      setTimeout(() => {
+        if (!this.audioEl || this.audioEl.paused) return;
+        if (this.audioEl.currentTime - startedAt > 0.3) return; // healthy
+        console.warn('[player] lock-screen resume stuck silent — reloading');
+        const src = this.audioEl.src;
+        const t = this.audioEl.currentTime;
+        try {
+          this.audioEl.load();
+          this.audioEl.src = src;
+          this.audioEl.currentTime = t;
+          this.audioEl.play().catch(() => {});
+        } catch (e) {
+          console.warn('[player] recovery failed', e);
+        }
+      }, 800);
+    },
     _onAudioTimeUpdate() {
       if (!this.audioEl?.duration) return;
       this.currentTime = this.audioEl.currentTime;
@@ -448,7 +479,15 @@ export const usePlayerStore = defineStore('player', {
     _registerMediaSessionHandlers() {
       if (!('mediaSession' in navigator)) return;
       const ms = navigator.mediaSession;
-      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
+      // Play from MediaSession (lock screen, AirPods double-tap, etc.)
+      // gets a spot-check 800 ms after resume: if currentTime didn't
+      // advance, iOS's audio routing decoupled (the AirPods reconnect
+      // bug) and we force a reload to fix it. Limited to the
+      // MediaSession surface so it can't loop on in-app playback —
+      // togglePlay() / loadAndPlay() in the foreground never go
+      // through this handler. Blob URLs skipped: they play from
+      // memory and don't have the routing bug.
+      try { ms.setActionHandler('play', () => this._playFromMediaSession()); } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
