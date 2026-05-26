@@ -83,6 +83,18 @@ export const usePlayerStore = defineStore('player', {
     saveStateTimer: null,
     stallTimer: null, // armed by 'waiting'/'stalled', cleared on progress or pause
     _lastBlobUrl: null, // last URL.createObjectURL — revoked on next loadAndPlay / stop
+    // Sleep timer state. `sleepEndAt` is a Date.now()-style ms timestamp
+    // when playback should stop (null = no timer running). The timer
+    // itself is stored in `_sleepTimer` so we can cancel/reschedule.
+    // The last 5 s ramps volume down so the cut isn't jarring.
+    sleepEndAt: null,
+    _sleepTimer: null,
+    _sleepFadeRaf: null,
+    _sleepPreFadeVolume: null,
+    // Playback rate, 0.5 → 2.0. Persisted in localStorage via the
+    // player-state save loop. Restored on bindAudio + each
+    // loadAndPlay so a track change doesn't reset it.
+    playbackRate: 1,
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -201,6 +213,10 @@ export const usePlayerStore = defineStore('player', {
         useStreamsStore().prefetch(track.ytId);
       }
       this.audioEl.volume = this.muted ? 0 : prefs.volume;
+      // Restore the user-picked playback rate — audio elements reset
+      // to 1.0 on src change, so without this every new track would
+      // ignore the slider value.
+      this.audioEl.playbackRate = this.playbackRate;
       this.audioEl.play().catch(() => { this.loading = false; });
       // Look-ahead: warm the next streamable track's URL so the queue
       // transition feels instant. Only prefetches the immediate next.
@@ -394,6 +410,81 @@ export const usePlayerStore = defineStore('player', {
         this.stallTimer = null;
       }
     },
+    // ============================================================
+    // Sleep timer
+    // ============================================================
+    // Schedule playback to stop in `minutes`. Last 5 s smoothly
+    // ramps audio volume to 0 (requestAnimationFrame) so the cut
+    // doesn't startle the user falling asleep. Volume is restored
+    // to its pre-fade value after stop so the next manual play
+    // resumes at the user's normal level.
+    setSleepTimer(minutes) {
+      this.cancelSleepTimer();
+      if (!minutes || minutes <= 0) return;
+      const totalMs = minutes * 60 * 1000;
+      this.sleepEndAt = Date.now() + totalMs;
+      const fadeStart = Math.max(0, totalMs - 5000);
+
+      // Phase 1: idle until 5 s before the end.
+      this._sleepTimer = setTimeout(() => {
+        this._sleepTimer = null;
+        if (!this.audioEl) { this._finalizeSleep(); return; }
+        // Phase 2: 5 s volume fade. Snapshot the volume so we can
+        // restore it after the timer fires (otherwise a future play
+        // starts silent).
+        this._sleepPreFadeVolume = this.audioEl.volume;
+        const v0 = this._sleepPreFadeVolume;
+        const t0 = performance.now();
+        const tick = (now) => {
+          if (!this.audioEl) { this._finalizeSleep(); return; }
+          const p = Math.min(1, (now - t0) / 5000);
+          this.audioEl.volume = v0 * (1 - p);
+          if (p < 1) {
+            this._sleepFadeRaf = requestAnimationFrame(tick);
+          } else {
+            this._sleepFadeRaf = null;
+            this._finalizeSleep();
+          }
+        };
+        this._sleepFadeRaf = requestAnimationFrame(tick);
+      }, fadeStart);
+    },
+    cancelSleepTimer() {
+      if (this._sleepTimer) { clearTimeout(this._sleepTimer); this._sleepTimer = null; }
+      if (this._sleepFadeRaf) { cancelAnimationFrame(this._sleepFadeRaf); this._sleepFadeRaf = null; }
+      // Restore the volume if a fade was in progress.
+      if (this._sleepPreFadeVolume != null && this.audioEl) {
+        this.audioEl.volume = this._sleepPreFadeVolume;
+      }
+      this._sleepPreFadeVolume = null;
+      this.sleepEndAt = null;
+    },
+    _finalizeSleep() {
+      // Stop playback + restore volume so the next manual play
+      // doesn't start silent.
+      if (this.audioEl) this.audioEl.pause();
+      if (this._sleepPreFadeVolume != null && this.audioEl) {
+        this.audioEl.volume = this._sleepPreFadeVolume;
+      }
+      this._sleepPreFadeVolume = null;
+      this.sleepEndAt = null;
+    },
+    // ============================================================
+    // Playback rate (speed)
+    // ============================================================
+    // Set audio.playbackRate AND persist via savePlayerState so it
+    // survives reloads. Clamped 0.5-2.0; values outside that range
+    // get audibly bad on every browser. Changes are applied to the
+    // live audio element synchronously — iOS Safari handles rate
+    // changes smoothly without stutter as long as the value is
+    // reasonable, no need to debounce slider input.
+    setPlaybackRate(rate) {
+      const clamped = Math.max(0.5, Math.min(2, Number(rate) || 1));
+      this.playbackRate = clamped;
+      if (this.audioEl) this.audioEl.playbackRate = clamped;
+      if (this.audioEl2) this.audioEl2.playbackRate = clamped;
+      this.savePlayerState();
+    },
     _onAudioTimeUpdate() {
       if (!this.audioEl?.duration) return;
       this.currentTime = this.audioEl.currentTime;
@@ -540,6 +631,7 @@ export const usePlayerStore = defineStore('player', {
             currentTime: this.audioEl?.currentTime || 0,
             shuffle: this.shuffle,
             repeat: this.repeat,
+            playbackRate: this.playbackRate,
           }));
         } catch {}
       }, 800);
@@ -557,6 +649,9 @@ export const usePlayerStore = defineStore('player', {
       this.index = idx;
       this.shuffle = !!saved.shuffle;
       this.repeat = saved.repeat || 'off';
+      if (typeof saved.playbackRate === 'number' && saved.playbackRate >= 0.5 && saved.playbackRate <= 2) {
+        this.playbackRate = saved.playbackRate;
+      }
       const track = lib.findById(validQueue[idx]);
       if (!track) return;
       this.visible = true;

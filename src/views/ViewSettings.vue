@@ -1,8 +1,10 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, Gauge } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
+import { usePlayerStore } from '@/stores/player';
+import { showDialog } from 'vant';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
@@ -21,10 +23,64 @@ const profile = useProfileStore();
 const sheet = useActionSheetStore();
 const auth = useAuthStore();
 const view = useViewStore();
+const player = usePlayerStore();
 
 function openWrapped() {
   haptics.light();
   view.switchTo('wrapped');
+}
+
+// ── Sleep timer ───────────────────────────────────────────────────
+const SLEEP_OPTIONS = [5, 10, 15, 30, 45, 60];
+async function pickSleepTimer() {
+  haptics.light();
+  try {
+    const { index } = await sheet.open([
+      ...SLEEP_OPTIONS.map((m) => ({ name: `Arrêter dans ${m} min` })),
+      { name: 'Désactiver', color: 'var(--danger)' },
+    ]);
+    if (index < SLEEP_OPTIONS.length) {
+      player.setSleepTimer(SLEEP_OPTIONS[index]);
+      showToast({ message: `Lecture arrêtée dans ${SLEEP_OPTIONS[index]} min`, position: 'bottom' });
+    } else {
+      player.cancelSleepTimer();
+      showToast({ message: 'Minuteur désactivé', position: 'bottom' });
+    }
+  } catch {}
+}
+// Live "X min restantes" label — recomputed every 10 s so the user
+// sees the countdown decrement without us setting up our own
+// per-second tick. `_now` is the throttled reactive that drives it.
+const _now = ref(Date.now());
+let _nowTimer = null;
+onMounted(() => {
+  _nowTimer = setInterval(() => { _now.value = Date.now(); }, 10000);
+});
+onBeforeUnmount(() => { if (_nowTimer) clearInterval(_nowTimer); });
+const sleepLabel = computed(() => {
+  if (!player.sleepEndAt) return 'Désactivé';
+  const remainingMs = player.sleepEndAt - _now.value;
+  if (remainingMs <= 0) return 'Désactivé';
+  const mins = Math.max(1, Math.ceil(remainingMs / 60000));
+  return `${mins} min restantes`;
+});
+
+// ── Playback rate ────────────────────────────────────────────────
+// 4-decimal precision means slider step 0.05 reads cleanly: "1.00×".
+function onSpeedChange(v) { player.setPlaybackRate(v); }
+const speedLabel = computed(() =>
+  player.playbackRate.toFixed(2).replace(/\.?0+$/, '') + '×',
+);
+const SPEED_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+function pickSpeedPreset(v) {
+  haptics.selection();
+  player.setPlaybackRate(v);
+}
+
+function reopenOnboarding() {
+  haptics.light();
+  // App.vue listens to this and re-opens the overlay with `rerun=true`.
+  window.dispatchEvent(new CustomEvent('wax:reopen-onboarding'));
 }
 
 // ── Theme picker ──────────────────────────────────────────────────
@@ -481,6 +537,56 @@ async function onLogout() {
       <van-cell title="Réinitialiser" is-link @click="resetEq" />
     </van-cell-group>
 
+    <!-- Lecture — sleep timer + playback speed. Lives above the
+         library section because both are playback-related controls
+         the user reaches for during a listening session, not
+         "library admin". -->
+    <van-cell-group inset title="Lecture">
+      <van-cell
+        title="Minuteur de sommeil"
+        :value="sleepLabel"
+        is-link
+        @click="pickSleepTimer"
+      >
+        <template #icon>
+          <Moon :size="18" :stroke-width="2" :color="player.sleepEndAt ? 'var(--accent)' : 'var(--text-muted)'" class="cell-icon" />
+        </template>
+      </van-cell>
+
+      <!-- Speed: continuous slider (step 0.05) + 7 quick-pick chips.
+           Slider for fine-grained, chips for one-tap snap. iOS Safari
+           handles audio.playbackRate changes smoothly with no
+           perceivable stutter as long as the value stays 0.5-2.0. -->
+      <van-cell title="Vitesse de lecture" :value="speedLabel">
+        <template #icon>
+          <Gauge :size="18" :stroke-width="2" :color="player.playbackRate !== 1 ? 'var(--accent)' : 'var(--text-muted)'" class="cell-icon" />
+        </template>
+        <template #label>
+          <div class="speed-row">
+            <van-slider
+              :model-value="player.playbackRate"
+              :min="0.5"
+              :max="2"
+              :step="0.05"
+              bar-height="4px"
+              active-color="var(--accent)"
+              inactive-color="var(--border)"
+              @update:model-value="onSpeedChange"
+            />
+          </div>
+          <div class="speed-chips">
+            <button
+              v-for="v in SPEED_PRESETS"
+              :key="v"
+              class="speed-chip"
+              :class="{ active: Math.abs(player.playbackRate - v) < 0.001 }"
+              @click="pickSpeedPreset(v)"
+            >{{ v }}×</button>
+          </div>
+        </template>
+      </van-cell>
+    </van-cell-group>
+
     <van-cell-group inset title="Bibliothèque">
       <van-cell title="Favoris" :value="lib.favorites.length + ' titres'" />
       <van-cell title="Playlists" :value="playlists.items.length + ''" />
@@ -613,8 +719,23 @@ async function onLogout() {
       />
     </van-cell-group>
 
+    <van-cell-group inset title="Aide">
+      <!-- Re-open the 3-screen onboarding intro. Useful for users
+           who skipped it on install, or to remind them of the
+           multi-profile / offline features they may have forgotten.
+           Implementation: window event picked up by App.vue, which
+           clears the localStorage flag and re-mounts the overlay
+           with `rerun: true` (last-screen button reads "Fermer"
+           instead of "Commencer"). -->
+      <van-cell
+        title="Revoir l'introduction"
+        is-link
+        @click="reopenOnboarding"
+      />
+    </van-cell-group>
+
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.14.1" />
+      <van-cell title="Version" value="0.15.0" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 
@@ -676,6 +797,36 @@ async function onLogout() {
   border-color: var(--accent);
 }
 .quality-chip:active { transform: scale(0.97); }
+
+/* Playback speed — slider on top with breathing room, then a row
+ * of preset chips for one-tap snap. Reuses the existing chip
+ * vocabulary (border + accent-fill on active). */
+.speed-row {
+  padding: var(--sp-2) 0 var(--sp-3);
+}
+.speed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.speed-chip {
+  flex: 0 0 auto;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+}
+.speed-chip.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+.speed-chip:active { transform: scale(0.95); }
 
 /* Inline cell hint — small grey explanatory text under a Vant cell's
  * title, used to spell out toggle behaviour ("Met en attente quand

@@ -7,6 +7,7 @@ import MobilePlayer from './components/MobilePlayer.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import ProfileGate from './components/ProfileGate.vue';
 import LoginGate from './components/LoginGate.vue';
+import OnboardingOverlay from './components/OnboardingOverlay.vue';
 
 import ViewHome from './views/ViewHome.vue';
 import ViewSearch from './views/ViewSearch.vue';
@@ -156,6 +157,30 @@ watch(() => view.name, () => {
   heroScrollProgress.value = 0;
 });
 
+// Onboarding overlay — shown on first launch (no localStorage flag),
+// dismissible from inside, re-openable from Settings via a window
+// event we listen to here. Re-mounts via the `key` increment so the
+// component starts fresh on every re-open even if the user dismissed
+// mid-walkthrough last time.
+const showOnboarding = ref(false);
+const onboardingKey = ref(0);
+const onboardingRerun = ref(false);
+function checkOnboarding() {
+  try {
+    if (!localStorage.getItem('wax:onboarding-done')) showOnboarding.value = true;
+  } catch {}
+}
+function openOnboardingRerun() {
+  try { localStorage.removeItem('wax:onboarding-done'); } catch {}
+  onboardingKey.value += 1;
+  onboardingRerun.value = true;
+  showOnboarding.value = true;
+}
+function onOnboardingDone() {
+  showOnboarding.value = false;
+  onboardingRerun.value = false;
+}
+
 // Online/offline state. `navigator.onLine` is best-effort (the browser
 // only knows whether it has a route to a network, not whether the
 // internet works), but combined with the SW's NetworkFirst cache fall-
@@ -266,6 +291,14 @@ onMounted(async () => {
   auth.loadToken();
   await auth.verify();
   if (auth.loggedIn) await bootstrapAfterAuth();
+
+  // Check onboarding AFTER auth so a fresh-install user lands on
+  // the login gate first, then sees the 3-screen intro post-login.
+  checkOnboarding();
+  // Settings → "Revoir l'introduction" dispatches this event so we
+  // can re-open the overlay without prop drilling through the view
+  // hierarchy.
+  window.addEventListener('wax:reopen-onboarding', openOnboardingRerun);
 });
 
 // Once the user logs in via LoginGate, kick off the bootstrap. Triggers
@@ -343,6 +376,12 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
     <ModalRoot />
     <ProfileGate />
     <LoginGate />
+    <OnboardingOverlay
+      v-if="showOnboarding"
+      :key="onboardingKey"
+      :rerun="onboardingRerun"
+      @done="onOnboardingDone"
+    />
 
     <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
          here instead of per-view avoids the "two views stack two sheets in
