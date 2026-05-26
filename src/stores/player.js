@@ -82,7 +82,6 @@ export const usePlayerStore = defineStore('player', {
     playCountedFor: null,
     saveStateTimer: null,
     stallTimer: null, // armed by 'waiting'/'stalled', cleared on progress or pause
-    silentResumeTimer: null, // armed on 'playing', fires if no timeupdate (iOS AirPods bug)
     _lastBlobUrl: null, // last URL.createObjectURL — revoked on next loadAndPlay / stop
   }),
   getters: {
@@ -125,13 +124,6 @@ export const usePlayerStore = defineStore('player', {
         // here on every `playing` event is the documented WebKit
         // workaround — costs nothing and finally lets ⏮/⏭ show up.
         this._registerMediaSessionHandlers();
-        // iOS audio routing can decouple from playback after an
-        // AirPods removal + reinsertion: the `playing` event fires
-        // (UI shows playing) but no audio comes out and timeupdate
-        // never advances. Arm a 1.5 s watchdog — if no timeupdate
-        // fires in that window, audio is stuck silent, reload the
-        // source to reset the routing pipeline.
-        this._armSilentResumeWatchdog();
       });
       // 'waiting' fires when the buffer underruns. The corresponding
       // 'playing' event fires once buffering recovers — but on a stale
@@ -168,7 +160,6 @@ export const usePlayerStore = defineStore('player', {
         // stall watchdog (covers browsers that don't fire 'playing'
         // after a recover).
         if (this.stallTimer) this._clearStallWatchdog();
-        if (this.silentResumeTimer) this._clearSilentResumeWatchdog();
         this._onAudioTimeUpdate();
       });
       el.addEventListener('ended', () => this._onAudioEnded());
@@ -382,7 +373,6 @@ export const usePlayerStore = defineStore('player', {
     _onAudioPause() {
       this.playing = false;
       this._clearStallWatchdog();
-      this._clearSilentResumeWatchdog();
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       this.savePlayerState();
     },
@@ -402,53 +392,6 @@ export const usePlayerStore = defineStore('player', {
       if (this.stallTimer) {
         clearTimeout(this.stallTimer);
         this.stallTimer = null;
-      }
-    },
-    // iOS AirPods reconnect bug: `playing` fires but audio is silent
-    // (routing decoupled from playback). The reliable signal is
-    // "audio.currentTime didn't advance" — checking just `paused` is
-    // not enough, because a fully-playing track can also miss
-    // timeupdate events for various reasons (iOS battery saver,
-    // blob:URL decoder warm-up, low-end CPU). An early version of
-    // this watchdog skipped the currentTime delta check and fired
-    // audio.load() on every healthy track, which restarted playback
-    // every 1.5 s in an infinite loop — the "ça lance 2s et ça
-    // reboucle" bug report.
-    //
-    // Also: blob:URL sources (offline cached tracks) play from
-    // memory and don't suffer from the AirPods routing-decouple bug,
-    // so we skip the watchdog entirely for them — no benefit and
-    // any false positive is doubly catastrophic since audio.load()
-    // doesn't restore the blob's currentTime reliably.
-    _armSilentResumeWatchdog() {
-      this._clearSilentResumeWatchdog();
-      if (!this.audioEl) return;
-      if (typeof this.audioEl.src === 'string' && this.audioEl.src.startsWith('blob:')) return;
-      const startTime = this.audioEl.currentTime;
-      this.silentResumeTimer = setTimeout(() => {
-        this.silentResumeTimer = null;
-        if (!this.audioEl || this.audioEl.paused) return;
-        const delta = this.audioEl.currentTime - startTime;
-        // The whole point: only "recover" when audio truly stalled.
-        // 0.3 s tolerance covers normal jitter.
-        if (delta > 0.3) return;
-        const t = this.audioEl.currentTime;
-        const src = this.audioEl.src;
-        console.warn('[player] silent resume after device change — reloading audio', { delta });
-        try {
-          this.audioEl.load();
-          this.audioEl.src = src;
-          this.audioEl.currentTime = t;
-          this.audioEl.play().catch(() => {});
-        } catch (e) {
-          console.warn('[player] silent-resume recovery failed', e);
-        }
-      }, 2500);
-    },
-    _clearSilentResumeWatchdog() {
-      if (this.silentResumeTimer) {
-        clearTimeout(this.silentResumeTimer);
-        this.silentResumeTimer = null;
       }
     },
     _onAudioTimeUpdate() {
