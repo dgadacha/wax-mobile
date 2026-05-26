@@ -403,6 +403,12 @@ watch(
   flex-direction: column;
   background: var(--bg);
   isolation: isolate;
+  /* The blurred .np-bg uses `inset: -60px` to bleed past the edges
+   * before the blur kicks in — without clipping at the screen
+   * boundary, those overflow pixels become draggable content and
+   * iOS treats the popup as horizontally scrollable. Hide the
+   * overflow to keep the player rigid. */
+  overflow: hidden;
   /* Notch is owned here, not by the nested van-nav-bar — see template
    * comment. Keeps the chevron/title sitting comfortably below the
    * status bar on iPhone notched devices. */
