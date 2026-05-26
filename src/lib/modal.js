@@ -159,30 +159,6 @@ export function openComponentModal({
   });
 }
 
-// Lyrics is a special async modal — keep its own helper for clarity.
-export function openLyricsModal({ artist, title, status, content }) {
-  Object.assign(modalState, {
-    visible: true,
-    variant: 'lyrics',
-    title: t('lyrics.title'),
-    lyricsArtist: artist,
-    lyricsTitle: title,
-    lyricsStatus: status,
-    lyricsContent: content,
-    // Synced (LRC) lines as [{time, text}]. Empty means the modal
-    // falls back to the plain-text renderer. Populated by
-    // useLyrics.showLyrics() when lrclib.net returns a hit.
-    lyricsSynced: [],
-    confirmLabel: '',
-    cancelLabel: t('common.close'),
-    wide: true,
-    component: null,
-    componentProps: null,
-    onConfirm: null,
-    onCancel: null,
-  });
-}
-
-export function patchLyricsModal(patch) {
-  Object.assign(modalState, patch);
-}
+// Lyrics modal helpers retired — lyrics now live inline inside the
+// fullscreen player as a slide-up overlay (Spotify pattern). See
+// MobilePlayer.vue + useLyrics.js / fetchLyrics().

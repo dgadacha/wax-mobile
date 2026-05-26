@@ -1,55 +1,41 @@
-// Lyrics fetcher — composable used by the player's lyrics button.
+// Lyrics fetcher — composable used by the player's lyrics overlay.
+// The overlay UI lives in MobilePlayer.vue; this file only knows how
+// to clean a YouTube title, hit /api/lyrics and parse the LRC reply.
+// (The legacy modal-based showLyrics() was removed when we moved
+// lyrics into a Spotify-style inline overlay inside the player.)
 import { api } from '@/lib/api';
-import { showToast } from '@/lib/toast';
-import { openLyricsModal, patchLyricsModal } from '@/lib/modal';
 import { t } from '@/lib/i18n';
-import { usePlayerStore } from '@/stores/player';
-import { useLibraryStore } from '@/stores/library';
 
-function guessArtistAndTitle(track) {
-  const raw = track.title || '';
+export function guessArtistAndTitle(track) {
+  const raw = track?.title || '';
   const cleaned = raw
     .replace(/\s*[\[\(](?:slowed|reverb(?:ed)?|lyrics|official|audio|video|hq|4k|remaster|m\/v|mv|hd)[^)\]]*[\]\)]/gi, '')
     .trim();
   const m = cleaned.match(/^(.+?)\s*[-–—]\s*(.+)$/);
   if (m) return { artist: m[1].trim(), title: m[2].trim() };
-  return { artist: track.uploader || '', title: cleaned };
+  return { artist: track?.uploader || '', title: cleaned };
 }
 
-export async function showLyrics() {
-  const player = usePlayerStore();
-  const lib = useLibraryStore();
-  const trackId = player.queue[player.index];
-  const track = lib.findById(trackId);
-  if (!track) {
-    showToast(t('toast.no_track_playing'), 'error');
-    return;
-  }
+/**
+ * Fetch lyrics for a track. Returns `{artist, title, content, synced}`
+ * on success, where `synced` is an array of {time, text} (empty if
+ * lrclib had no LRC and we fell back to plain text). Throws on error.
+ *
+ * Caller (MobilePlayer) owns the UI state — set its `lyricsLoading`
+ * flag before awaiting and clear on resolve / reject.
+ */
+export async function fetchLyrics(track) {
+  if (!track) throw new Error(t('toast.no_track_playing'));
   const { artist, title } = guessArtistAndTitle(track);
-  openLyricsModal({
+  const data = await api(
+    `/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`,
+  );
+  return {
     artist,
     title,
-    status: 'loading',
-    content: t('lyrics.loading'),
-  });
-  try {
-    const data = await api(`/api/lyrics?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`);
-    // Server returns `synced` (LRC string) when lrclib had a match,
-    // empty otherwise. Parse to an array of {time, text} so the modal
-    // can highlight the current line + auto-scroll.
-    const lines = parseLrc(data.synced);
-    patchLyricsModal({
-      lyricsStatus: 'ok',
-      lyricsContent: data.lyrics,
-      lyricsSynced: lines,
-    });
-  } catch (e) {
-    const isNotFound = /lyrics not found/i.test(e.message) || e.message === 'Paroles introuvables';
-    const msg = isNotFound
-      ? t('lyrics.not_found_detail', { artist, title })
-      : t('common.error_prefix', e.message);
-    patchLyricsModal({ lyricsStatus: 'error', lyricsContent: msg, lyricsSynced: [] });
-  }
+    content: data.lyrics || '',
+    synced: parseLrc(data.synced),
+  };
 }
 
 // Parse an LRC string into an array of {time, text}. Drops metadata

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import {
   Play, Pause, SkipBack, SkipForward, Heart, ChevronDown,
-  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1,
+  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1, X,
 } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -11,7 +11,9 @@ import { usePrefsStore } from '@/stores/prefs';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
-import { showLyrics } from '@/composables/useLyrics';
+import { fetchLyrics } from '@/composables/useLyrics';
+import { showToast } from '@/lib/toast';
+import { t } from '@/lib/i18n';
 import { useVisualizer, setEq } from '@/composables/useVisualizer';
 import { useGestures } from '@/composables/useGestures';
 import { applyAccent, revertAccentToUser } from '@/stores/prefs';
@@ -26,6 +28,89 @@ const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
 const queueOpen = ref(false);
+
+// Lyrics overlay state — slides up over the player content (Spotify
+// style). Owned here instead of a global modal so it can sit inside
+// the fullscreen player popup, react to player.currentTime in real
+// time, and dismiss without bumping the modal z-index stack.
+const lyricsOpen = ref(false);
+const lyricsLoading = ref(false);
+const lyricsStatus = ref(''); // '' | 'ok' | 'error' | 'not_found'
+const lyricsContent = ref('');
+const lyricsSynced = ref([]); // [{ time, text }] when lrclib had a match
+const lyricsArtist = ref('');
+const lyricsTitle = ref('');
+const lyricsTrackId = ref(''); // guard against stale fetch resolving for a new track
+const lyricsScrollRef = ref(null);
+
+async function toggleLyrics() {
+  if (lyricsOpen.value) { lyricsOpen.value = false; return; }
+  const track = player.currentTrack;
+  if (!track) {
+    showToast(t('toast.no_track_playing'), 'error');
+    return;
+  }
+  lyricsOpen.value = true;
+  lyricsLoading.value = true;
+  lyricsStatus.value = '';
+  lyricsSynced.value = [];
+  lyricsTrackId.value = track.id;
+  try {
+    const data = await fetchLyrics(track);
+    // Bail if the user skipped to another track while we were fetching.
+    if (lyricsTrackId.value !== track.id) return;
+    lyricsArtist.value = data.artist;
+    lyricsTitle.value = data.title;
+    lyricsContent.value = data.content;
+    lyricsSynced.value = data.synced;
+    lyricsStatus.value = 'ok';
+  } catch (e) {
+    if (lyricsTrackId.value !== track.id) return;
+    const isNotFound = /lyrics not found/i.test(e.message || '')
+      || e.message === 'Paroles introuvables';
+    lyricsStatus.value = isNotFound ? 'not_found' : 'error';
+    lyricsContent.value = isNotFound
+      ? t('lyrics.not_found_detail', { artist: lyricsArtist.value || track.uploader, title: lyricsTitle.value || track.title })
+      : t('common.error_prefix', e.message);
+  } finally {
+    lyricsLoading.value = false;
+  }
+}
+
+// Active synced line — closest timestamp ≤ player.currentTime, via
+// binary search so even a 200-line LRC computes in microseconds.
+const activeLineIdx = computed(() => {
+  if (lyricsSynced.value.length === 0) return -1;
+  const lines = lyricsSynced.value;
+  const t = player.currentTime;
+  let lo = 0, hi = lines.length - 1, best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].time <= t) { best = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  return best;
+});
+// Auto-scroll the active line into the container's center as the
+// audio progresses. Smooth scrollBehavior reads as karaoke-natural.
+watch(activeLineIdx, async (idx) => {
+  if (idx < 0 || !lyricsOpen.value) return;
+  await nextTick();
+  const container = lyricsScrollRef.value;
+  if (!container) return;
+  const el = container.querySelector(`[data-idx="${idx}"]`);
+  if (!el) return;
+  const cTop = container.getBoundingClientRect().top;
+  const eTop = el.getBoundingClientRect().top;
+  const delta = (eTop - cTop) - (container.clientHeight / 2 - el.clientHeight / 2);
+  container.scrollBy({ top: delta, behavior: 'smooth' });
+});
+
+// Close the overlay automatically when the user skips to a new
+// track (otherwise we'd show stale lyrics on top of new audio).
+watch(() => player.currentTrack?.id, (id, prev) => {
+  if (lyricsOpen.value && id !== prev) lyricsOpen.value = false;
+});
 
 // Gesture surfaces inside the fullscreen player.
 //
@@ -459,14 +544,65 @@ watch(
               :color="player.isLikedCurrent ? 'var(--accent)' : 'var(--text-muted)'"
               :fill="player.isLikedCurrent ? 'var(--accent)' : 'transparent'" />
           </button>
-          <button class="np-extra" aria-label="Paroles" @click="showLyrics(player.currentTrack)">
-            <MessageSquareText :size="22" :stroke-width="2" color="var(--text-muted)" />
+          <button
+            class="np-extra"
+            :class="{ 'is-active': lyricsOpen }"
+            aria-label="Paroles"
+            @click="toggleLyrics"
+          >
+            <MessageSquareText
+              :size="22"
+              :stroke-width="2"
+              :color="lyricsOpen ? 'var(--accent)' : 'var(--text-muted)'"
+            />
           </button>
           <button class="np-extra" aria-label="File d'attente" @click="queueOpen = true">
             <ListMusic :size="22" :stroke-width="2" color="var(--text-muted)" />
           </button>
         </div>
       </div>
+
+      <!-- Lyrics overlay — slides up over the player content,
+           Spotify-style. Lives inside the fullscreen popup so the
+           backdrop / nav-bar / blurred bg stay visible underneath.
+           Karaoke-style active line tracking when lrclib returned
+           LRC, plain-text scroll otherwise. -->
+      <Transition name="lyrics-slide">
+        <div v-if="lyricsOpen" class="np-lyrics" @click.self="lyricsOpen = false">
+          <div class="np-lyrics-sheet">
+            <header class="np-lyrics-head">
+              <div class="np-lyrics-head-text">
+                <div class="np-lyrics-eyebrow">Paroles</div>
+                <div class="np-lyrics-meta text-ellipsis">
+                  {{ lyricsArtist }} — {{ lyricsTitle }}
+                </div>
+              </div>
+              <button class="np-lyrics-close" aria-label="Fermer" @click="lyricsOpen = false">
+                <X :size="22" :stroke-width="2" color="var(--text)" />
+              </button>
+            </header>
+            <div ref="lyricsScrollRef" class="np-lyrics-body">
+              <div v-if="lyricsLoading" class="np-lyrics-state">Chargement…</div>
+              <div v-else-if="lyricsStatus === 'not_found'" class="np-lyrics-state muted">
+                Aucune parole trouvée pour ce morceau.
+              </div>
+              <div v-else-if="lyricsStatus === 'error'" class="np-lyrics-state error">
+                {{ lyricsContent }}
+              </div>
+              <template v-else-if="lyricsSynced.length > 0">
+                <div
+                  v-for="(line, i) in lyricsSynced"
+                  :key="i"
+                  :data-idx="i"
+                  class="lyrics-line"
+                  :class="{ active: i === activeLineIdx, past: i < activeLineIdx }"
+                >{{ line.text }}</div>
+              </template>
+              <pre v-else class="np-lyrics-plain">{{ lyricsContent }}</pre>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </div>
   </van-popup>
 
@@ -639,6 +775,104 @@ watch(
     radial-gradient(120% 70% at 50% 0%, transparent 0%, rgba(13, 15, 20, 0.5) 70%, var(--bg) 100%),
     linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.35) 60%, var(--bg) 100%);
   z-index: -1;
+}
+
+/* Lyrics overlay — absolute-positioned full-bleed sheet that
+ * slides up over the player content (cover, controls, etc.) when
+ * the user taps the lyrics button. Backdrop-blur keeps the player's
+ * ambient bg visible underneath for continuity. */
+.np-lyrics {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+}
+.np-lyrics-sheet {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--safe-top);
+  background: linear-gradient(180deg,
+    rgba(13, 15, 20, 0.92) 0%,
+    rgba(13, 15, 20, 0.96) 60%,
+    rgba(13, 15, 20, 1) 100%);
+  backdrop-filter: blur(40px) saturate(1.2);
+  -webkit-backdrop-filter: blur(40px) saturate(1.2);
+}
+.np-lyrics-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.np-lyrics-head-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.np-lyrics-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+.np-lyrics-meta {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.np-lyrics-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 0;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+.np-lyrics-close:active { background: rgba(255, 255, 255, 0.18); }
+.np-lyrics-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: var(--sp-8) var(--sp-2) calc(var(--sp-8) + var(--safe-bottom));
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.np-lyrics-body::-webkit-scrollbar { display: none; }
+.np-lyrics-state {
+  text-align: center;
+  color: var(--text);
+  font-size: 15px;
+  padding: var(--sp-6);
+}
+.np-lyrics-state.muted { color: var(--text-muted); font-style: italic; }
+.np-lyrics-state.error { color: var(--danger); }
+.np-lyrics-plain {
+  white-space: pre-wrap;
+  font: 14px/1.6 var(--font-body);
+  color: var(--text);
+  text-align: center;
+  margin: 0;
+  padding: 0 var(--sp-4);
+}
+/* Slide-up enter/leave (the active-line styling lives in mobile.css
+ * since the lyrics modal used the same classes — re-used here). */
+.lyrics-slide-enter-active,
+.lyrics-slide-leave-active {
+  transition: transform var(--motion-mid) var(--ease), opacity var(--motion-mid) var(--ease);
+}
+.lyrics-slide-enter-from {
+  transform: translateY(16px);
+  opacity: 0;
+}
+.lyrics-slide-leave-to {
+  transform: translateY(8px);
+  opacity: 0;
 }
 
 .np-body {

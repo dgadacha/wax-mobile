@@ -184,11 +184,18 @@ function onLikeClick() {
 .mtc.is-muted { opacity: 0.55; }
 
 .mtc-index {
-  width: 28px;
-  text-align: center;
+  /* Fixed wider column + grid centering — guarantees the digit /
+   * play icon / spinner all land at the same x and the next
+   * column (meta) starts at the same offset on every row, even
+   * across single- and double-digit indexes. */
+  width: 32px;
+  display: grid;
+  place-items: center;
   font-size: 13px;
+  line-height: 1;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
 }
 .mtc.is-playing .mtc-index { color: var(--accent); }
 
@@ -207,6 +214,7 @@ function onLikeClick() {
   font-size: 14px;
   font-weight: 500;
   color: var(--text);
+  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -215,7 +223,15 @@ function onLikeClick() {
 .mtc .sub {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 3px;
+  line-height: 1.2;
+  /* Uppercase normalises the visual rhythm — uploader names come
+   * raw from YouTube where channel casing is inconsistent ("TSEW
+   * THE KID", "Lomepal", "lord-fhel"). Forcing uppercase gives
+   * every row the same caps-feel without us having to munge the
+   * source string. */
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
