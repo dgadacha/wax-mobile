@@ -57,6 +57,15 @@ const coverStyle = computed(() => ({
     ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1)'
     : 'none',
 }));
+// Side covers (prev/next): invisible at rest, fade in linearly with
+// drag distance. Fully opaque once the user has dragged ~120 px, so
+// the preview reaches readable contrast well before commit.
+const sideCoverStyle = computed(() => ({
+  opacity: Math.min(1, Math.abs(coverDx.value) / 120),
+  transition: coverAnimating.value
+    ? 'opacity 220ms cubic-bezier(0.4, 0, 0.2, 1)'
+    : 'none',
+}));
 const bodyStyle = computed(() => ({
   // Only allow downward drag — upward maps to a queue-open commit,
   // no need for visual tracking on that direction.
@@ -367,18 +376,18 @@ watch(
              positioned just off-screen at -100% / +100% so they
              only become visible when dx pulls them in. -->
         <div ref="npCoverRef" class="np-cover-stage" :style="coverStyle">
-          <div class="np-cover np-cover-side np-cover-prev">
+          <!-- Side covers (prev/next) fade in only during a swipe —
+               opacity scales with |coverDx| via :style so they're
+               invisible at rest, fully opaque once the user has
+               dragged ~120 px. Keeps the static player clean while
+               still previewing what's coming during the gesture. -->
+          <div class="np-cover np-cover-side np-cover-prev" :style="sideCoverStyle">
             <img v-if="prevCover" :src="prevCover" alt="" />
           </div>
-          <!-- Current cover gets the vinyl treatment: circular,
-               thin dark outer ring + spindle dot, slow rotation
-               while player.playing. Side covers stay square +
-               static so the swipe preview is readable. -->
-          <div class="np-cover np-cover-current is-vinyl" :class="{ 'is-spinning': player.playing }">
+          <div class="np-cover np-cover-current">
             <img v-if="cover" :src="cover" alt="" />
-            <span class="np-vinyl-spindle" aria-hidden="true" />
           </div>
-          <div class="np-cover np-cover-side np-cover-next">
+          <div class="np-cover np-cover-side np-cover-next" :style="sideCoverStyle">
             <img v-if="nextCover" :src="nextCover" alt="" />
           </div>
         </div>
@@ -676,55 +685,6 @@ watch(
 }
 .np-cover-prev { left: calc(-100% - 16px); }
 .np-cover-next { left: calc(100% + 16px); }
-
-/* Vinyl treatment for the CURRENT cover only — side covers stay
- * square so the swipe preview reads as a thumbnail. Circular
- * radius + a thin dark outer ring + a tiny spindle dot at the
- * center. Slow continuous rotation while playing; pauses
- * mid-revolution on pause via animation-play-state. */
-.np-cover.is-vinyl {
-  border-radius: 50%;
-  box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.55),
-    inset 0 0 0 6px rgba(0, 0, 0, 0.4),
-    inset 0 0 0 8px rgba(255, 255, 255, 0.06);
-}
-.np-cover.is-vinyl img {
-  border-radius: 50%;
-  /* Slight inner inset so the cover doesn't kiss the ring */
-  transform: scale(0.94);
-  transform-origin: center;
-}
-.np-vinyl-spindle {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 14px;
-  height: 14px;
-  margin: -7px 0 0 -7px;
-  border-radius: 50%;
-  background: var(--bg);
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
-  z-index: 1;
-  pointer-events: none;
-}
-/* Continuous rotation. 18 s per turn matches an LP's ~33⅓ RPM
- * scaled down for visual calm — fast enough to read as motion,
- * slow enough not to distract from the music. */
-@keyframes vinyl-spin { to { transform: rotate(360deg); } }
-.np-cover.is-vinyl.is-spinning img {
-  animation: vinyl-spin 18s linear infinite;
-  /* Keep the 0.94 scale via composition. Without this the keyframe
-   * would override our static transform and the cover would
-   * suddenly fill the vinyl ring on play. */
-}
-.np-cover.is-vinyl.is-spinning img {
-  animation-name: vinyl-spin-scaled;
-}
-@keyframes vinyl-spin-scaled {
-  from { transform: scale(0.94) rotate(0deg); }
-  to   { transform: scale(0.94) rotate(360deg); }
-}
 
 .np-meta {
   text-align: center;
