@@ -178,6 +178,7 @@ watch(
     :style="{ height: '100%' }"
     round
     teleport="body"
+    :lazy-render="false"
     class="np-popup"
   >
     <div class="np-screen">

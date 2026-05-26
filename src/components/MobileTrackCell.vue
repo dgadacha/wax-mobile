@@ -176,6 +176,14 @@ function onCellClick() {
   border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--motion-short) var(--ease);
+  /* iOS sees the long-press as a text-selection gesture and pops
+   * the Copy / Look up / Translate callout under our action sheet.
+   * Disable both the callout AND text selection on rows so the
+   * long-press cleanly maps to "open the menu" with no native UI
+   * fighting for the same touch. */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .mtc:active { background: var(--card-hover); }
 .mtc.is-muted { opacity: 0.55; }

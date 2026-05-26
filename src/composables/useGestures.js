@@ -12,7 +12,7 @@
 //     before the timer or a touchmove that drifts ≥10 px (avoids
 //     firing during a scroll).
 
-import { onBeforeUnmount, onMounted } from 'vue';
+import { onBeforeUnmount, watch } from 'vue';
 
 const SWIPE_MIN = 48;
 const SWIPE_OFF_AXIS_MAX = 36;
@@ -104,22 +104,33 @@ export function useGestures(elRef, handlers = {}) {
     clearLongPress();
   }
 
-  onMounted(() => {
-    const el = elRef.value;
+  // Watch the ref so we bind whenever the element appears or
+  // changes — critical for v-if'd content like Vant's <van-popup>
+  // which lazy-renders its body. A bare onMounted wouldn't catch
+  // the moment the popup actually opens.
+  let bound = null;
+  function bind(el) {
+    if (bound === el) return;
+    if (bound) unbind(bound);
+    bound = el;
     if (!el) return;
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: true });
     el.addEventListener('touchend', onTouchEnd);
     el.addEventListener('touchcancel', onTouchCancel, { passive: true });
-  });
-
-  onBeforeUnmount(() => {
-    const el = elRef.value;
-    if (!el) return;
+  }
+  function unbind(el) {
     el.removeEventListener('touchstart', onTouchStart);
     el.removeEventListener('touchmove', onTouchMove);
     el.removeEventListener('touchend', onTouchEnd);
     el.removeEventListener('touchcancel', onTouchCancel);
+  }
+
+  watch(elRef, (el) => bind(el), { immediate: true, flush: 'post' });
+
+  onBeforeUnmount(() => {
+    if (bound) unbind(bound);
+    bound = null;
     clearLongPress();
   });
 }
