@@ -30,10 +30,11 @@ deploy:
     entrypoint: [""]
   script:
     - kubectl config use-context kidnar/wax:wax-agent
+    # Namespace must exist before other resources can reference it.
     - kubectl apply -f k8s/namespace.yaml
-    - kubectl apply -f k8s/pvc.yaml
-    - kubectl apply -f k8s/service.yaml
-    - kubectl apply -f k8s/deployment.yaml
+    # Apply the full directory — new manifests (ingress, networkpolicy, …)
+    # are picked up automatically; no CI change needed when adding files.
+    - kubectl apply -f k8s/
     - kubectl rollout restart deployment/wax -n wax
     - kubectl rollout status deployment/wax -n wax --timeout=120s
   rules:

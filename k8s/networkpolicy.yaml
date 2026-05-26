@@ -1,0 +1,75 @@
+# NetworkPolicy for the wax app pod.
+#
+# Ingress: only Traefik (kube-system) can reach port 3000.
+#          The wax-agent pod (also in this namespace) has different labels
+#          and is NOT affected by this selector.
+# Egress:
+#   - DNS to CoreDNS in kube-system (pod-level selector, both UDP + TCP).
+#   - Public internet on 80/443 for yt-dlp (YouTube CDN), Deezer API,
+#     MusicBrainz, GitLab registry image pulls at runtime, etc.
+#   - RFC1918 ranges are excluded → the pod can't reach the LAN or other
+#     cluster pods/services directly, which limits lateral movement.
+#
+# Requires k3s ≥ v1.21 (built-in kube-router network policy controller).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wax-app
+  namespace: wax
+  labels:
+    app: wax
+spec:
+  podSelector:
+    matchLabels:
+      app: wax
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Only Traefik pods (in kube-system) may reach the wax server on :3000.
+    # Combined namespaceSelector + podSelector = AND semantics (the pod must
+    # be in kube-system AND carry the Traefik label).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - port: 3000
+          protocol: TCP
+
+  egress:
+    # CoreDNS — needed for every external hostname the backend resolves
+    # (YouTube, Deezer, MusicBrainz, accounts.spotify.com, …).
+    # Using a namespaceSelector rather than a raw IP so the rule survives
+    # CoreDNS pod reschedules.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+
+    # Public internet: YouTube CDN (yt-dlp stream URLs + search),
+    # Deezer API (album metadata), MusicBrainz, Spotify API (optional).
+    # RFC1918 ranges are explicitly excluded so the pod cannot reach LAN
+    # devices (192.168.x.x), other pods (10.42.x.x) or cluster services
+    # (10.43.x.x) via this rule — DNS above is the only intra-cluster path.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP
