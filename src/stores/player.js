@@ -448,38 +448,20 @@ export const usePlayerStore = defineStore('player', {
     _registerMediaSessionHandlers() {
       if (!('mediaSession' in navigator)) return;
       const ms = navigator.mediaSession;
-      // Play from MediaSession (lock-screen tap, AirPods double-tap,
-      // CarPlay, possibly iOS auto-resume after AirPods reconnect)
-      // unconditionally reloads the audio element before resuming.
-      // The AirPods-reconnect bug leaves iOS's audio routing
-      // decoupled from the element; just calling .play() resumes
-      // silently. audio.load() + restore src/currentTime + play
-      // forces iOS to rebuild the routing pipeline.
-      //
-      // Cost: a tiny gap (~150 ms) when the user explicitly taps
-      // play from the lock screen. Worth it given there's no other
-      // way to recover in background where JS is suspended and
-      // setTimeout can't fire. Blob URLs (offline) skip the reload
-      // since memory playback has no routing decouple.
-      try {
-        ms.setActionHandler('play', () => {
-          if (!this.audioEl) return;
-          const isBlob = typeof this.audioEl.src === 'string'
-            && this.audioEl.src.startsWith('blob:');
-          if (isBlob) {
-            this.audioEl.play().catch(() => {});
-            return;
-          }
-          const src = this.audioEl.src;
-          const t = this.audioEl.currentTime;
-          try {
-            this.audioEl.load();
-            this.audioEl.src = src;
-            this.audioEl.currentTime = t;
-            this.audioEl.play().catch(() => {});
-          } catch {}
-        });
-      } catch {}
+      // Note: we DON'T try to recover from the iOS AirPods-reconnect
+      // silent-resume bug here. Tested four flavours of recovery
+      // (global watchdog, visibility-gated watchdog, MediaSession-
+      // play-tap recovery, unconditional reload on MediaSession
+      // play) — none of them fixed the background case. iOS suspends
+      // PWA JS execution when the app is backgrounded, so any
+      // setTimeout-based check can't fire; and iOS's auto-resume on
+      // AirPods reinsertion appears to bypass the MediaSession play
+      // action entirely, so the synchronous reload also gets no
+      // chance to run. The only working "fix" is for the user to
+      // briefly tap into the app, which makes iOS rebuild the
+      // routing on its own. PWA platform limitation, not a code
+      // bug.
+      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
