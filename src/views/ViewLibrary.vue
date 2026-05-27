@@ -15,6 +15,7 @@ import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import MobileSkeleton from '@/components/MobileSkeleton.vue';
+import MobileHero from '@/components/MobileHero.vue';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
 const mix = useMixStore();
@@ -222,14 +223,29 @@ const filteredTracks = computed(() => {
 // virtual card filter mode).
 const showingTracks = computed(() => filter.value === 'tracks' || filter.value === 'offline');
 
-// Displayed header for the track-list mode — gives the user back the
-// "I am in Favoris / Hors-ligne" context they lost when the virtual
-// card switched them into a flat track list. Mirrors the wording on
-// the original card.
+// Hero header for the track-list mode. Same MobileHero treatment used
+// for playlists / mix / album views so Favoris and Hors-ligne don't
+// look like a downgrade. Cover = first visible track's thumbnail
+// (falls back to a name-hashed gradient when the list is empty);
+// subtitle = count.
 const tracksHeader = computed(() => {
-  if (filter.value === 'offline') return { title: 'Hors-ligne', icon: DownloadIcon };
-  return { title: 'Favoris', icon: Heart };
+  const isOffline = filter.value === 'offline';
+  const name = isOffline ? 'Hors-ligne' : 'Favoris';
+  const firstThumb = filteredTracks.value[0]?.thumbnail || '';
+  const n = filteredTracks.value.length;
+  return {
+    title: name,
+    eyebrow: 'Bibliothèque',
+    cover: firstThumb,
+    gradient: gradientFromString(name),
+    subtitle: n ? `${n} titre${n > 1 ? 's' : ''}` : 'Vide',
+  };
 });
+
+function playTracksHeader() {
+  if (filteredTracks.value.length === 0) return;
+  playFavoritesFrom(filteredTracks.value[0]);
+}
 
 function openCard(card) {
   if (card.kind === 'favorites') filter.value = 'tracks';
@@ -356,14 +372,19 @@ function cardIcon(card) {
       </div>
     </div>
 
-    <!-- Header for track-list mode. The chip row above gives a hint but
-         once you scroll past it there's no breadcrumb left — restate the
-         "you're inside Favoris / Hors-ligne" context with an icon + count. -->
-    <div v-if="showingTracks" class="lib-tracks-header">
-      <component :is="tracksHeader.icon" :size="18" :stroke-width="2.2" color="var(--accent)" />
-      <span class="lib-tracks-title">{{ tracksHeader.title }}</span>
-      <span class="lib-tracks-count">{{ filteredTracks.length }}</span>
-    </div>
+    <!-- Hero header for track-list mode (Favoris / Hors-ligne). Same
+         immersive treatment as playlists / mix / album so the virtual
+         cards don't feel like a second-class destination. -->
+    <MobileHero
+      v-if="showingTracks"
+      :cover="tracksHeader.cover"
+      :bg-gradient="tracksHeader.gradient"
+      :eyebrow="tracksHeader.eyebrow"
+      :title="tracksHeader.title"
+      :subtitle="tracksHeader.subtitle"
+      :show-play="filteredTracks.length > 0"
+      @play="playTracksHeader"
+    />
 
     <!-- Sort selector — only meaningful for track lists, so we hide it
          on the card grids (playlists / albums / artists already have
@@ -469,26 +490,6 @@ function cardIcon(card) {
   padding: 8px 12px 4px;
 }
 .lib-toolbar :deep(.van-search__content) { background: var(--card); }
-
-.lib-tracks-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4) var(--sp-1);
-}
-.lib-tracks-title {
-  font-family: var(--font-display, inherit);
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
-  color: var(--text);
-  flex: 1 1 auto;
-}
-.lib-tracks-count {
-  font-size: 13px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
 
 .lib-sort-row {
   display: flex;
