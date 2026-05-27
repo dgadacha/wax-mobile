@@ -332,44 +332,42 @@ function cardIcon(card) {
     <!-- Cards (playlists / albums / artistes / tout). Favoris and
          Hors-ligne are virtual cards in the Playlists tab that route
          through ViewPlaylist for their dedicated page. -->
-    <template>
-      <div v-if="filter === 'playlists'" class="lib-action-row">
-        <button class="ghost-row" @click="playlists.create()">
-          <Plus :size="22" :stroke-width="2" color="var(--accent)" />
-          <span>Nouvelle playlist</span>
-        </button>
-      </div>
+    <div v-if="filter === 'playlists'" class="lib-action-row">
+      <button class="ghost-row" @click="playlists.create()">
+        <Plus :size="22" :stroke-width="2" color="var(--accent)" />
+        <span>Nouvelle playlist</span>
+      </button>
+    </div>
 
-      <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="card" :count="4" />
-      <div v-else-if="filteredCards.length === 0" class="empty-state">
-        <LayoutGrid class="icon" :size="48" :stroke-width="1.5" />
-        <div class="label">Rien ici pour l'instant</div>
-        <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
-      </div>
+    <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="card" :count="4" />
+    <div v-else-if="filteredCards.length === 0" class="empty-state">
+      <LayoutGrid class="icon" :size="48" :stroke-width="1.5" />
+      <div class="label">Rien ici pour l'instant</div>
+      <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
+    </div>
 
-      <div v-else class="card-list">
+    <div v-else class="card-list">
+      <div
+        v-for="c in filteredCards"
+        :key="`${c.kind}-${c.id}`"
+        class="lib-card"
+        @click="openCard(c)"
+      >
         <div
-          v-for="c in filteredCards"
-          :key="`${c.kind}-${c.id}`"
-          class="lib-card"
-          @click="openCard(c)"
+          class="lib-card-cover"
+          :class="{ 'is-circle': c.kind === 'artist' }"
+          :style="c.cover ? {} : { background: c.gradient }"
         >
-          <div
-            class="lib-card-cover"
-            :class="{ 'is-circle': c.kind === 'artist' }"
-            :style="c.cover ? {} : { background: c.gradient }"
-          >
-            <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
-            <component v-else :is="cardIcon(c)" :size="26" :stroke-width="1.8" color="rgba(255,255,255,0.75)" />
-          </div>
-          <div class="lib-card-meta">
-            <div class="lib-card-name text-ellipsis">{{ c.name }}</div>
-            <div class="lib-card-sub text-ellipsis">{{ c.subtitle }}</div>
-          </div>
-          <ChevronRight :size="16" :stroke-width="2" color="var(--text-muted)" />
+          <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
+          <component v-else :is="cardIcon(c)" :size="26" :stroke-width="1.8" color="rgba(255,255,255,0.75)" />
         </div>
+        <div class="lib-card-meta">
+          <div class="lib-card-name text-ellipsis">{{ c.name }}</div>
+          <div class="lib-card-sub text-ellipsis">{{ c.subtitle }}</div>
+        </div>
+        <ChevronRight :size="16" :stroke-width="2" color="var(--text-muted)" />
       </div>
-    </template>
+    </div>
   </div>
   </van-pull-refresh>
 </template>
