@@ -107,11 +107,19 @@ export const usePlayerStore = defineStore('player', {
       const id = state.queue[state.index];
       if (!id) return false;
       const lib = useLibraryStore();
+      // Heart must reflect "is in Favoris" (liked !== false), not "is
+      // in library at all". Playlist-only tracks (added silently with
+      // liked:false by mix.save or playlist add) would otherwise show
+      // the heart filled even though they're not actual favorites.
+      let libTrack;
       if (isStreamId(id)) {
         const stream = useStreamsStore().get(id);
-        return !!stream && lib.tracks.some((t) => t.ytId === stream.ytId);
+        if (!stream) return false;
+        libTrack = lib.tracks.find((t) => t.ytId === stream.ytId);
+      } else {
+        libTrack = lib.findById(id);
       }
-      return lib.tracks.some((t) => t.id === id);
+      return !!libTrack && libTrack.liked !== false;
     },
   },
   actions: {

@@ -79,7 +79,15 @@ const navTitle = computed(() => {
     case 'settings': return 'Réglages';
     case 'artist':   return view.selectedArtist || 'Artiste';
     case 'album':    return 'Album';
-    case 'playlist': return playlists.items.find(p => p.id === view.selectedPlaylistId)?.name || 'Playlist';
+    case 'playlist': {
+      // Virtual ids (Favoris / Hors-ligne) aren't in playlists.items;
+      // map them so the nav-bar title fades in on scroll like a real
+      // playlist.
+      const id = view.selectedPlaylistId;
+      if (id === 'favorites') return 'Favoris';
+      if (id === 'offline') return 'Hors-ligne';
+      return playlists.items.find(p => p.id === id)?.name || 'Playlist';
+    }
     case 'mix':      return 'Mix';
     case 'wrapped':  return 'Ta sélection';
     default:         return 'Wax';

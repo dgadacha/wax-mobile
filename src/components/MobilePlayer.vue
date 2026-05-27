@@ -341,24 +341,16 @@ function toggleLike() {
   haptics.medium();
   likeBouncing.value = true;
   setTimeout(() => { likeBouncing.value = false; }, 420);
-  const trackId = player.queue[player.index];
-  if (!trackId) return;
-  if (typeof trackId === 'string' && trackId.startsWith('stream-')) {
-    const stream = streams.get(trackId);
-    if (!stream) return;
-    const existing = lib.tracks.find((t) => t.ytId === stream.ytId);
-    if (existing) lib.remove(existing.id);
-    else lib.add({
-      id: stream.ytId,
-      title: stream.title,
-      uploader: stream.uploader,
-      duration: stream.duration,
-      thumbnail: stream.thumbnail,
-      url: `https://www.youtube.com/watch?v=${stream.ytId}`,
-    });
-  } else {
-    lib.remove(trackId);
-  }
+  const track = player.currentTrack;
+  if (!track) return;
+  // toggleFav just flips the `liked` flag (and adds the track to the
+  // library first if it's a stream not yet there). The previous code
+  // called lib.remove(trackId) which actually DELETES the row from
+  // the library AND drops it from every playlist AND stops the
+  // player — tapping the heart on a playlist track would silently
+  // delete it everywhere and the queue collapse would cascade-skip
+  // through the next few tracks.
+  lib.toggleFav(track);
 }
 
 function onSeek(pct) {

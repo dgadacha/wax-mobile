@@ -223,8 +223,14 @@ const filteredTracks = computed(() => {
 const showingTracks = computed(() => filter.value === 'tracks' || filter.value === 'offline');
 
 function openCard(card) {
-  if (card.kind === 'favorites') filter.value = 'tracks';
-  else if (card.kind === 'offline') filter.value = 'offline';
+  // Favoris and Hors-ligne route through ViewPlaylist with virtual
+  // ids so they get the same hero / back arrow / scroll behavior as
+  // user-created playlists. The previous in-place filter-swap mode
+  // (filter='tracks'/'offline') is kept as fallback for users who
+  // tap the "Titres" chip in the chip row, but the cards push a
+  // proper sub-view.
+  if (card.kind === 'favorites') view.switchTo('playlist', 'favorites');
+  else if (card.kind === 'offline') view.switchTo('playlist', 'offline');
   else if (card.kind === 'playlist') view.switchTo('playlist', card.id);
   else if (card.kind === 'album') view.switchTo('album', card.id);
   else if (card.kind === 'artist') view.switchTo('artist', card.id);
