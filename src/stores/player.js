@@ -322,6 +322,14 @@ export const usePlayerStore = defineStore('player', {
         try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); } catch {}
         this.crossfading = false;
       }
+      // SYNCHRONOUS intent assertion before any await. When loadAndPlay
+      // is invoked from a MediaSession action handler (lock-screen
+      // next/prev/play), iOS samples mediaSession state right after
+      // the handler returns. The handler returns at the first await
+      // below — if we didn't assert here, iOS would catch us mid-
+      // transition with stale 'paused' (from a previous reset or the
+      // default), even though `play()` is about to fire.
+      this._assertPlaying(true);
       this.visible = true;
       this.loading = true;
       // Revoke the previous blob URL (if any) before minting a new one.
@@ -393,6 +401,13 @@ export const usePlayerStore = defineStore('player', {
     },
     next() {
       if (this.queue.length === 0) return;
+      // Synchronous intent assertion FIRST. When this runs inside an
+      // iOS MediaSession action handler (lock-screen next button), the
+      // handler may return before any subsequent async work fires; iOS
+      // samples state at that moment. Without this pre-write iOS sees
+      // whatever the lock-screen had cached (often 'paused') and
+      // renders the play-icon while the new track is loading.
+      this._assertPlaying(true);
       // Fast path: if audioEl2 is already buffered with the next
       // track, swap roles with a quick 300 ms crossfade instead of
       // tearing down audioEl and re-fetching from scratch. Skipped
@@ -419,6 +434,9 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.currentTime = 0;
         return;
       }
+      // Same reason as next() — assert intent before the async
+      // loadAndPlay path so iOS gets the right state immediately.
+      this._assertPlaying(true);
       this.index = (this.index - 1 + this.queue.length) % this.queue.length;
       this.loadAndPlay();
     },
@@ -1048,8 +1066,12 @@ export const usePlayerStore = defineStore('player', {
       // Otherwise iOS would call audioEl.play() / .pause() directly,
       // mediaSession.playbackState wouldn't update, and the icon would
       // briefly show the wrong state until the audio event fired.
-      try { ms.setActionHandler('play', () => { this.audioEl?.play().catch(() => {}); this._assertPlaying(true); }); } catch {}
-      try { ms.setActionHandler('pause', () => { this.audioEl?.pause(); this._assertPlaying(false); }); } catch {}
+      // Intent assertion BEFORE the audio call so the lock-screen sees
+      // the right state synchronously inside the action handler — iOS
+      // can sample mediaSession right after the handler returns and
+      // would otherwise capture stale state.
+      try { ms.setActionHandler('play', () => { this._assertPlaying(true); this.audioEl?.play().catch(() => {}); }); } catch {}
+      try { ms.setActionHandler('pause', () => { this._assertPlaying(false); this.audioEl?.pause(); }); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
       // Re-arm seekto so the in-app + Chrome/Android lock-screen
