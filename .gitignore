@@ -11,6 +11,7 @@ library/users/
 library/library.json
 library/playlists.json
 library/profiles.json
+library/.auth-secret
 
 # Build outputs
 dist/
