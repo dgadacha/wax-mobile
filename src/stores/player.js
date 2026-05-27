@@ -115,6 +115,17 @@ export const usePlayerStore = defineStore('player', {
     // would leak because _lastBlobUrl already points at the swap's
     // incoming blob by the time loadAndPlay runs its revoke step).
     _swapOutgoingBlob: null,
+    // True for the brief window between `audioEl.src = newUrl` and the
+    // subsequent .play() resolving. Setting src on a playing audio
+    // element fires a spurious `pause` event (HTMLMediaElement spec:
+    // src change interrupts current playback). In foreground the
+    // following `play` event corrects state instantly, but in iOS
+    // background the play event can be delayed / dropped, leaving
+    // `playing` stuck at false and mediaSession.playbackState at
+    // 'paused' even though audio is actually progressing. The pause
+    // listener checks this flag and bails out instead of overwriting
+    // state.
+    _swapInProgress: false,
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -151,6 +162,30 @@ export const usePlayerStore = defineStore('player', {
       // outgoing) element are ignored.
       this._attachAudioListeners(el);
       if (el2) this._attachAudioListeners(el2);
+      // Resync state on tab/app return. iOS throttles JS in the
+      // background — audio events from a mid-background track swap
+      // (especially the `play` event that fires after the spec-pause
+      // from a src change) can be coalesced or dropped, leaving
+      // `playing` / mediaSession.playbackState out of sync with the
+      // actual audio element. When the user returns we read the truth
+      // off audioEl.paused and push it everywhere.
+      if (typeof document !== 'undefined' && !this._visibilityBound) {
+        this._visibilityBound = true;
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) return;
+          this._resyncPlayState();
+        });
+      }
+    },
+    _resyncPlayState() {
+      if (!this.audioEl) return;
+      const actuallyPlaying = !this.audioEl.paused;
+      if (this.playing !== actuallyPlaying) this.playing = actuallyPlaying;
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.playbackState = actuallyPlaying ? 'playing' : 'paused';
+        } catch {}
+      }
     },
     _attachAudioListeners(el) {
       // Each handler bails when fired from the inactive element.
@@ -162,6 +197,12 @@ export const usePlayerStore = defineStore('player', {
       });
       el.addEventListener('pause', (e) => {
         if (e.currentTarget !== this.audioEl) return;
+        // Ignore the spurious `pause` fired by the spec when we set
+        // `audioEl.src = preloadedUrl` during a swap — see the state
+        // doc-comment on `_swapInProgress`. Without this guard, the
+        // play/pause UI button and lock-screen state would land at
+        // 'paused' even though the new track is playing fine.
+        if (this._swapInProgress) return;
         this._onAudioPause();
       });
       el.addEventListener('playing', (e) => {
@@ -657,6 +698,14 @@ export const usePlayerStore = defineStore('player', {
       // background. Volume starts at 0 only when we'll fade in;
       // otherwise jump straight to baseVol so background playback
       // is audible immediately.
+      //
+      // _swapInProgress muzzles the spurious `pause` event the spec
+      // fires when src changes during playback — the pause listener
+      // checks the flag and skips state mutation. Cleared after a
+      // short delay long enough for the browser to have dispatched
+      // its pause+play pair (the play listener still wins because it
+      // sets state to true and re-asserts mediaSession).
+      this._swapInProgress = true;
       this.audioEl.src = preloadedUrl;
       this.audioEl.volume = wantFade ? 0 : baseVol;
       this.audioEl.currentTime = 0;
@@ -664,6 +713,20 @@ export const usePlayerStore = defineStore('player', {
       try { this.audioEl.webkitPreservesPitch = false; } catch {}
       this.audioEl.playbackRate = this.playbackRate;
       this.audioEl.play().catch(() => { this.loading = false; });
+      // Optimistic state — iOS may delay/drop the `play` event when
+      // backgrounded, leaving the play/pause UI button stuck on
+      // 'play' and the lock-screen state on 'paused' even though
+      // audio is actually progressing. Set both synchronously so the
+      // user always sees the correct UI when they return to the app.
+      // If play() actually rejects, the next pause event (after the
+      // _swapInProgress window) corrects this back to false.
+      this.playing = true;
+      if ('mediaSession' in navigator) {
+        try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+      }
+      // Lift the muzzle after ~250 ms — long enough that the spec's
+      // src-change pause event has been queued and processed.
+      setTimeout(() => { this._swapInProgress = false; }, 250);
 
       this.index = nextIdx;
       this._updateMediaMetadata(nextTrack);
