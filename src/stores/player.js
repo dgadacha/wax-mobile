@@ -568,28 +568,42 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
-      // 'play' from the lock screen on iOS PWA: a plain audioEl.play()
-      // often "succeeds" without actually routing audio to the speakers
-      // after a previous lock-screen pause — iOS releases the audio
-      // session on pause and play() alone doesn't reclaim it. Wrapping
-      // with a load() fallback re-engages the session. Done as a
-      // chained catch so the happy path stays fast (single play() call).
+      // 'play' from the lock screen on iOS PWA: plain audioEl.play()
+      // is unreliable after a lock-screen pause. Two failure modes:
+      //   (a) play() rejects → catch + load() + play() recovers.
+      //   (b) play() resolves silently — audio element claims to be
+      //       playing (paused=false, even timeupdate fires) but no
+      //       audio routes to the speakers. iOS released the audio
+      //       session on pause and the bare play() didn't reclaim it.
+      // For (b) we need a watchdog: snapshot currentTime, wait a
+      // beat, and if it hasn't actually advanced, force a load() +
+      // play() to re-engage the audio session.
       try {
         ms.setActionHandler('play', () => {
           if (!this.audioEl) return;
-          const resume = () => {
+          const forceReengage = () => {
+            if (!this.audioEl) return;
             const t = this.audioEl.currentTime || 0;
             try { this.audioEl.load(); } catch {}
             this.audioEl.currentTime = t;
             this.audioEl.play().catch(() => {});
           };
-          // Try plain play first; if it rejects, fall back to load+play.
-          // Some iOS versions return a silent-success promise where the
-          // audio doesn't actually start — we can't detect that without
-          // a timeupdate watchdog, but the load() path covers the
-          // explicit-reject case which is the most common.
+          const before = this.audioEl.currentTime;
           const p = this.audioEl.play();
-          if (p && typeof p.catch === 'function') p.catch(resume);
+          if (p && typeof p.catch === 'function') p.catch(forceReengage);
+          // Silent-success watchdog. 500 ms is enough for at least
+          // one timeupdate (which fires every ~250 ms when audio is
+          // genuinely playing). If currentTime hasn't budged AND
+          // we're "playing", iOS swallowed the audio output —
+          // re-engage. The check is no-op when audio is genuinely
+          // working.
+          setTimeout(() => {
+            if (!this.audioEl) return;
+            if (this.audioEl.paused) return; // user paused again, fine
+            if (this.audioEl.currentTime <= before + 0.1) {
+              forceReengage();
+            }
+          }, 500);
         });
       } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
