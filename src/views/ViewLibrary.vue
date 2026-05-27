@@ -1,9 +1,9 @@
 <script setup>
 import { computed, ref, watch, onMounted } from 'vue';
-import { showConfirmDialog } from 'vant';
+import { showConfirmDialog, showToast } from 'vant';
 import {
   ListMusic, Disc3, User, Heart, Plus, ChevronRight, LayoutGrid,
-  Download as DownloadIcon, ArrowDownAZ,
+  Download as DownloadIcon, ArrowDownAZ, MoreHorizontal,
 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -226,25 +226,94 @@ const showingTracks = computed(() => filter.value === 'tracks' || filter.value =
 // Hero header for the track-list mode. Same MobileHero treatment used
 // for playlists / mix / album views so Favoris and Hors-ligne don't
 // look like a downgrade. Cover = first visible track's thumbnail
-// (falls back to a name-hashed gradient when the list is empty);
-// subtitle = count.
+// (falls back to a name-hashed gradient when the list is empty).
+// Subtitle mirrors the playlist hero shape: "X titres · MM:SS · Y/X hors-ligne"
+// so the user sees how much weight the list carries at a glance.
+const tracksTotalDuration = computed(() =>
+  filteredTracks.value.reduce((acc, t) => acc + (t.duration || 0), 0),
+);
+const tracksDownloadedCount = computed(() =>
+  filteredTracks.value.filter((t) => !!t.file).length,
+);
 const tracksHeader = computed(() => {
   const isOffline = filter.value === 'offline';
   const name = isOffline ? 'Hors-ligne' : 'Favoris';
   const firstThumb = filteredTracks.value[0]?.thumbnail || '';
   const n = filteredTracks.value.length;
+  let subtitle;
+  if (n === 0) {
+    subtitle = 'Vide';
+  } else {
+    const base = `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(tracksTotalDuration.value)}`;
+    if (isOffline) {
+      subtitle = base;
+    } else {
+      // Favoris view — surface how many are also on-device so the
+      // user can tell at a glance how much of their list is offline
+      // ready vs streaming.
+      const off = tracksDownloadedCount.value;
+      if (off === 0) subtitle = base;
+      else if (off === n) subtitle = `${base} · Tout hors-ligne`;
+      else subtitle = `${base} · ${off}/${n} hors-ligne`;
+    }
+  }
   return {
     title: name,
     eyebrow: 'Bibliothèque',
     cover: firstThumb,
     gradient: gradientFromString(name),
-    subtitle: n ? `${n} titre${n > 1 ? 's' : ''}` : 'Vide',
+    subtitle,
   };
 });
 
 function playTracksHeader() {
   if (filteredTracks.value.length === 0) return;
   playFavoritesFrom(filteredTracks.value[0]);
+}
+
+// "Tout télécharger" for Favoris (downloads every fav that isn't on
+// device yet). No-op for Hors-ligne since everything there already
+// has track.file.
+async function downloadAllTracks() {
+  const todo = filteredTracks.value.filter((t) => !t.file && !lib.libraryDownloads.has(t.id));
+  if (todo.length === 0) {
+    showToast({ message: 'Déjà tout hors-ligne', position: 'bottom' });
+    return;
+  }
+  showToast({
+    message: `${todo.length} titre${todo.length > 1 ? 's' : ''} en file de téléchargement`,
+    position: 'bottom',
+  });
+  for (const tr of todo) lib.downloadTrack(tr.id);
+}
+
+// "..." menu for the Favoris / Hors-ligne hero. Per-mode actions —
+// sort is offered everywhere, the rest is contextual.
+async function onTracksHeaderMore() {
+  const isOffline = filter.value === 'offline';
+  try {
+    if (isOffline) {
+      const { index } = await sheet.open([
+        { name: 'Trier' },
+        { name: 'Nettoyer les orphelins' },
+      ]);
+      if (index === 0) pickSort();
+      else if (index === 1) {
+        const removed = await lib.purgeOrphans();
+        showToast({
+          message: removed ? `${removed} titre${removed > 1 ? 's' : ''} nettoyé${removed > 1 ? 's' : ''}` : 'Rien à nettoyer',
+          position: 'bottom',
+        });
+      }
+    } else {
+      const { index } = await sheet.open([
+        { name: 'Trier' },
+        { name: 'Tout télécharger' },
+      ]);
+      if (index === 0) pickSort();
+      else if (index === 1) downloadAllTracks();
+    }
+  } catch { /* dismissed */ }
 }
 
 function openCard(card) {
@@ -373,8 +442,10 @@ function cardIcon(card) {
     </div>
 
     <!-- Hero header for track-list mode (Favoris / Hors-ligne). Same
-         immersive treatment as playlists / mix / album so the virtual
-         cards don't feel like a second-class destination. -->
+         immersive treatment + same +/.../play action row as playlists,
+         so the virtual cards don't feel like a second-class destination.
+         + = Tout télécharger (Favoris) / Trier (Hors-ligne fallback)
+         ... = sort + contextual actions -->
     <MobileHero
       v-if="showingTracks"
       :cover="tracksHeader.cover"
@@ -384,7 +455,26 @@ function cardIcon(card) {
       :subtitle="tracksHeader.subtitle"
       :show-play="filteredTracks.length > 0"
       @play="playTracksHeader"
-    />
+    >
+      <template #actions>
+        <button
+          v-if="filter === 'tracks' && filteredTracks.length > 0"
+          class="hero-icon-btn"
+          aria-label="Tout télécharger"
+          @click="downloadAllTracks"
+        >
+          <DownloadIcon :size="20" :stroke-width="2.2" color="var(--text)" />
+        </button>
+        <button
+          v-if="filteredTracks.length > 0"
+          class="hero-icon-btn"
+          aria-label="Plus"
+          @click="onTracksHeaderMore"
+        >
+          <MoreHorizontal :size="20" :stroke-width="2.2" color="var(--text)" />
+        </button>
+      </template>
+    </MobileHero>
 
     <!-- Sort selector — only meaningful for track lists, so we hide it
          on the card grids (playlists / albums / artists already have
@@ -477,6 +567,21 @@ function cardIcon(card) {
 
 <style scoped>
 .library-view { min-height: 100%; }
+
+/* Hero action buttons (Favoris / Hors-ligne): same circular outlined
+ * style as ViewPlaylist so the row of +/.../play reads consistently
+ * across views. Kept scoped (not promoted to a shared component yet)
+ * because each view scopes its own header chrome. */
+.hero-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 0;
+  display: grid;
+  place-items: center;
+}
+.hero-icon-btn:active { background: rgba(255, 255, 255, 0.16); }
 
 .lib-toolbar {
   position: sticky;
