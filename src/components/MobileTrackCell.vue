@@ -25,6 +25,18 @@ const props = defineProps({
   // Drives the circular progress ring shown in place of the offline
   // indicator while the MP3 is being fetched server-side.
   downloadProgress: { type: Number, default: null },
+  // Explicit offline override for cases where `track.file` isn't a
+  // reliable signal (e.g. mix view, where the row IS a stream wrapper
+  // — `track.file` points at /api/stream/<id>, not a real audio file —
+  // but a library twin with the actual offline MP3 may exist). When
+  // null we fall back to `track.file && !track.isStream`.
+  isOffline: { type: Boolean, default: null },
+});
+
+const showOfflineChip = computed(() => {
+  if (props.isOffline === true) return true;
+  if (props.isOffline === false) return false;
+  return !!props.track.file && !props.track.isStream;
 });
 
 // SVG ring geometry: r=8 → circumference = 2πr ≈ 50.27. Stroke-dashoffset
@@ -121,7 +133,7 @@ function onLikeClick() {
         <DownloadIcon class="mtc-dl-icon" :size="10" :stroke-width="2.5" color="var(--accent)" />
       </div>
       <div
-        v-else-if="track.file"
+        v-else-if="showOfflineChip"
         class="mtc-dl done"
         title="Disponible hors-ligne"
         aria-label="Disponible hors-ligne"

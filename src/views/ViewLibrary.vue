@@ -222,6 +222,15 @@ const filteredTracks = computed(() => {
 // virtual card filter mode).
 const showingTracks = computed(() => filter.value === 'tracks' || filter.value === 'offline');
 
+// Displayed header for the track-list mode — gives the user back the
+// "I am in Favoris / Hors-ligne" context they lost when the virtual
+// card switched them into a flat track list. Mirrors the wording on
+// the original card.
+const tracksHeader = computed(() => {
+  if (filter.value === 'offline') return { title: 'Hors-ligne', icon: DownloadIcon };
+  return { title: 'Favoris', icon: Heart };
+});
+
 function openCard(card) {
   if (card.kind === 'favorites') filter.value = 'tracks';
   else if (card.kind === 'offline') filter.value = 'offline';
@@ -347,6 +356,15 @@ function cardIcon(card) {
       </div>
     </div>
 
+    <!-- Header for track-list mode. The chip row above gives a hint but
+         once you scroll past it there's no breadcrumb left — restate the
+         "you're inside Favoris / Hors-ligne" context with an icon + count. -->
+    <div v-if="showingTracks" class="lib-tracks-header">
+      <component :is="tracksHeader.icon" :size="18" :stroke-width="2.2" color="var(--accent)" />
+      <span class="lib-tracks-title">{{ tracksHeader.title }}</span>
+      <span class="lib-tracks-count">{{ filteredTracks.length }}</span>
+    </div>
+
     <!-- Sort selector — only meaningful for track lists, so we hide it
          on the card grids (playlists / albums / artists already have
          their own natural ordering). -->
@@ -451,6 +469,26 @@ function cardIcon(card) {
   padding: 8px 12px 4px;
 }
 .lib-toolbar :deep(.van-search__content) { background: var(--card); }
+
+.lib-tracks-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4) var(--sp-1);
+}
+.lib-tracks-title {
+  font-family: var(--font-display, inherit);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.2px;
+  color: var(--text);
+  flex: 1 1 auto;
+}
+.lib-tracks-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
 
 .lib-sort-row {
   display: flex;
