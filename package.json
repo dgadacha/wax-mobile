@@ -1,6 +1,6 @@
 {
   "name": "wax-mobile",
-  "version": "0.17.4",
+  "version": "0.17.5",
   "private": true,
   "description": "Wax mobile — YouTube → MP3 player (iOS + Android via Capacitor)",
   "type": "module",

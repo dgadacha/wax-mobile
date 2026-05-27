@@ -162,17 +162,20 @@ export const usePlayerStore = defineStore('player', {
       // outgoing) element are ignored.
       this._attachAudioListeners(el);
       if (el2) this._attachAudioListeners(el2);
-      // Resync state on tab/app return. iOS throttles JS in the
-      // background — audio events from a mid-background track swap
-      // (especially the `play` event that fires after the spec-pause
-      // from a src change) can be coalesced or dropped, leaving
-      // `playing` / mediaSession.playbackState out of sync with the
-      // actual audio element. When the user returns we read the truth
-      // off audioEl.paused and push it everywhere.
+      // Resync mediaSession + `playing` to live audioEl truth on
+      // every visibility transition.
+      //   - On hide (= phone lock): iOS samples mediaSession state
+      //     at this exact moment to render the lock-screen icon. Any
+      //     drift accumulated during the previous foreground session
+      //     (stalls, coalesced events, etc.) gets corrected before
+      //     iOS reads it. Without this the second lock can render a
+      //     "play" icon for audio that's actually progressing.
+      //   - On show (= unlock / app foreground): catches drift that
+      //     happened while we were hidden so the in-app play/pause
+      //     button is correct the moment the user looks.
       if (typeof document !== 'undefined' && !this._visibilityBound) {
         this._visibilityBound = true;
         document.addEventListener('visibilitychange', () => {
-          if (document.hidden) return;
           this._resyncPlayState();
         });
       }
@@ -277,6 +280,20 @@ export const usePlayerStore = defineStore('player', {
         // stall watchdog (covers browsers that don't fire 'playing'
         // after a recover).
         if (this.stallTimer) this._clearStallWatchdog();
+        // Self-healing state sync. timeupdate firing proves the audio
+        // is actually progressing — if our `playing` / mediaSession
+        // got pinned to 'paused' by a coalesced background event,
+        // this is our chance to undo the lie before iOS samples it on
+        // the next lock-screen render. This is the only defense that
+        // works for the "second lock shows wrong icon" path, because
+        // visibilitychange only fires on unlock and the bad write may
+        // happen in the unlock→re-lock gap.
+        if (!this.audioEl.paused && !this.playing) {
+          this.playing = true;
+          if ('mediaSession' in navigator) {
+            try { navigator.mediaSession.playbackState = 'playing'; } catch {}
+          }
+        }
         this._onAudioTimeUpdate();
       });
       el.addEventListener('ended', (e) => {
