@@ -248,6 +248,20 @@ onMounted(async () => {
   }
   setTimeout(() => player.setupMediaSession(), 0);
 
+  // Best-effort portrait lock for the web/PWA path. Real lock is
+  // baked into Info.plist + AndroidManifest by setup-native.mjs for
+  // the Capacitor native build; this is just the cherry on top for
+  // installed PWAs on browsers that implement the Screen Orientation
+  // API (Chrome Android, recent Edge). iOS Safari ignores it
+  // silently — no harm done. Must run after a user gesture in some
+  // browsers, but in practice Chrome on Android accepts it at boot
+  // when the page is in standalone display-mode.
+  try {
+    if (screen?.orientation?.lock) {
+      screen.orientation.lock('portrait').catch(() => {});
+    }
+  } catch {}
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalState.visible) closeModal();
   });

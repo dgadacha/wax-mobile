@@ -361,7 +361,42 @@ function toggleLike() {
   }
 }
 
-function onSeek(pct) {
+// Seekbar gesture handling. We CAN'T bind the slider directly to
+// `seekPct` and commit every update:model-value to player.seekToPct,
+// because each `audio.currentTime = …` triggers a buffer reload that
+// then echoes back through the `timeupdate` event → updates
+// player.currentTime → re-computes seekPct → fights the dragging
+// finger position. Result: jittery, sticky, "two steps forward one
+// step back" scrubbing.
+//
+// Instead: keep a local `scrubValue` that the slider binds to while
+// the user is dragging. We snapshot the position on drag-start, only
+// touch player.currentTime on drag-end. Mid-drag the slider feels
+// instantly responsive (purely local state, no audio I/O), and the
+// audio seeks exactly once at release.
+const scrubbing = ref(false);
+const scrubValue = ref(0);
+const seekDisplayPct = computed(() => (scrubbing.value ? scrubValue.value : seekPct.value));
+const seekDisplayTime = computed(() => {
+  if (!scrubbing.value) return player.currentTime;
+  const dur = player.duration || 0;
+  return (scrubValue.value / 100) * dur;
+});
+function onSeekStart() {
+  scrubValue.value = seekPct.value;
+  scrubbing.value = true;
+}
+function onSeekUpdate(pct) {
+  // Only meaningful while dragging — the slider also fires this
+  // event on tap-to-seek (without a preceding drag-start), in which
+  // case we commit immediately like before.
+  if (scrubbing.value) scrubValue.value = pct;
+  else player.seekToPct(pct);
+}
+function onSeekEnd() {
+  if (!scrubbing.value) return;
+  const pct = scrubValue.value;
+  scrubbing.value = false;
   player.seekToPct(pct);
 }
 
@@ -500,7 +535,7 @@ watch(
         </div>
         <div class="np-seek">
           <van-slider
-            :model-value="seekPct"
+            :model-value="seekDisplayPct"
             :step="0.1"
             :min="0"
             :max="100"
@@ -508,10 +543,12 @@ watch(
             inactive-color="var(--card)"
             bar-height="3px"
             button-size="14px"
-            @update:model-value="onSeek"
+            @drag-start="onSeekStart"
+            @update:model-value="onSeekUpdate"
+            @drag-end="onSeekEnd"
           />
           <div class="np-time">
-            <span>{{ fmtDuration(player.currentTime) }}</span>
+            <span>{{ fmtDuration(seekDisplayTime) }}</span>
             <span>{{ fmtDuration(player.duration) }}</span>
           </div>
         </div>
