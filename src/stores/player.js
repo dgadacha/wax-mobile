@@ -567,13 +567,28 @@ export const usePlayerStore = defineStore('player', {
         } catch {}
       }
     },
-    // Swap audioEl2 (preloaded) into the active role, fade out the
-    // old audioEl over `fadeMs`. Returns true on success, false if
-    // preload state is inconsistent (caller should fall back to
-    // loadAndPlay).
+    // Hand off the preloaded URL to audioEl and (optionally) fade
+    // between the outgoing track parked on audioEl2 and the new one.
+    //
+    // IMPORTANT — we used to swap audioEl ↔ audioEl2 to "promote" the
+    // preloaded element to active. That broke iOS background
+    // playback: the audio session is anchored to a specific element
+    // and doesn't migrate cleanly when JS is suspended, surfacing as
+    // either "doesn't advance" (next track's play() rejected silently
+    // because audio2 had no audio session) or "advances but silent"
+    // (RAF doesn't fire in background → audioEl.volume stays at 0
+    // forever after the start-from-0 ramp).
+    //
+    // Now audioEl always stays the active session-holder. The
+    // preloaded URL is fed directly to audioEl.src — for blob URLs
+    // (offline) this is instant (same blob, no fetch); for stream
+    // URLs the browser HTTP cache may help (warmed via audio2's
+    // earlier .load()). The fade still uses audio2 for the outgoing
+    // track when the document is visible; in background we skip the
+    // fade entirely so audioEl never sits at volume 0.
     _swapToPreloaded(fadeMs = 300) {
       if (!this.audioEl || !this.audioEl2) return false;
-      if (this._preloadedFor == null) return false;
+      if (this._preloadedFor == null || !this._preloadedUrl) return false;
       const nextIdx = this._preloadedFor;
       const nextTrackId = this.queue[nextIdx];
       if (!nextTrackId) return false;
@@ -583,17 +598,24 @@ export const usePlayerStore = defineStore('player', {
       const prefs = usePrefsStore();
       const baseVol = this.muted ? 0 : prefs.volume;
       const FADE = Math.max(50, fadeMs);
+      // RAF doesn't tick when document.hidden is true (Page Visibility
+      // throttles it to ~0Hz). Falling back to setInterval would also
+      // be throttled. So in background we just skip the fade and hard-
+      // swap volumes — the user can't see the transition anyway, only
+      // hear it, and the priority is "audio keeps playing".
+      const wantFade = FADE > 0
+        && typeof document !== 'undefined'
+        && !document.hidden;
 
-      // Mark crossfading so _maybeCrossfade and the soon-to-fire
-      // 'ended' on the outgoing element don't double-fire next().
+      // Mark crossfading so _maybeCrossfade and the about-to-fire
+      // 'ended' on audioEl don't double-fire next().
       this.crossfading = true;
 
-      // Hand off blob-URL ownership. The blob currently held by
-      // audioEl (about to become inactive) was tracked in
-      // _lastBlobUrl. It must stay alive while audioEl2 (formerly
-      // audioEl) keeps playing during the fade — we'll revoke it
-      // when the fade ends. The preloaded blob becomes the new
-      // active blob (so _invalidatePreload doesn't free it).
+      // Hand off blob ownership. _lastBlobUrl (current playing blob)
+      // becomes the outgoing one; the preloaded blob becomes the new
+      // active. The outgoing blob must stay alive while audio2 plays
+      // it back during the fade, so we revoke after the fade ends.
+      const preloadedUrl = this._preloadedUrl;
       const outgoingBlob = this._lastBlobUrl;
       this._lastBlobUrl = this._preloadedBlobUrl;
       this._preloadedBlobUrl = null;
@@ -604,17 +626,40 @@ export const usePlayerStore = defineStore('player', {
         this._preloadTimer = null;
       }
 
-      // Swap refs: the formerly-preloading element is now active.
-      // Listeners on both elements filter by `currentTarget ===
-      // this.audioEl`, so events follow the swap automatically.
-      const outgoing = this.audioEl;
-      this.audioEl = this.audioEl2;
-      this.audioEl2 = outgoing;
+      // Park the outgoing track on audio2 so we can fade it out while
+      // the new one ramps up. Only do this when we'll actually fade —
+      // skipping in background also saves us a doomed audio2.play()
+      // call that iOS often rejects without a recent user gesture.
+      const outgoingSrc = this.audioEl.src;
+      const outgoingTime = this.audioEl.currentTime;
+      let outgoingActive = false;
+      if (wantFade && outgoingSrc) {
+        try {
+          this.audioEl2.src = outgoingSrc;
+          this.audioEl2.currentTime = outgoingTime;
+          this.audioEl2.volume = baseVol;
+          this.audioEl2.play().catch(() => {});
+          outgoingActive = true;
+        } catch {}
+      } else {
+        // Clear audio2's preload buffer — we just consumed it via
+        // preloadedUrl, no need for it to keep its src around.
+        try {
+          this.audioEl2.pause();
+          this.audioEl2.removeAttribute('src');
+          this.audioEl2.load();
+        } catch {}
+      }
 
-      // Start the new active element from the top with the user's
-      // volume + playback rate.
+      // Start the new track on audioEl. audioEl keeps its audio
+      // session — iOS sees a normal "swap the src of an already-
+      // active element" which the OS handles gracefully even in
+      // background. Volume starts at 0 only when we'll fade in;
+      // otherwise jump straight to baseVol so background playback
+      // is audible immediately.
+      this.audioEl.src = preloadedUrl;
+      this.audioEl.volume = wantFade ? 0 : baseVol;
       this.audioEl.currentTime = 0;
-      this.audioEl.volume = 0;
       try { this.audioEl.preservesPitch = false; } catch {}
       try { this.audioEl.webkitPreservesPitch = false; } catch {}
       this.audioEl.playbackRate = this.playbackRate;
@@ -625,20 +670,9 @@ export const usePlayerStore = defineStore('player', {
       this.playCountedFor = null;
       this.loading = false;
 
-      // RAF crossfade. The outgoing element (now audioEl2) continues
-      // playing the previous track at its current position; we just
-      // fade its volume to 0 in parallel with the new one fading in.
-      // If something interrupts mid-fade (user spams next, loadAndPlay
-      // fires) `this.crossfading` is flipped to false externally and
-      // we bail without touching volumes any further — but we still
-      // need to revoke the outgoing blob, which loadAndPlay's regular
-      // _lastBlobUrl revoke does NOT cover (after swap _lastBlobUrl
-      // points at the *new* track's blob). Tracked in state so the
-      // cleanup runs even on interruption.
       this._swapOutgoingBlob = outgoingBlob;
-      const startTime = performance.now();
       const finishSwap = (interrupted) => {
-        if (this.audioEl2) {
+        if (this.audioEl2 && outgoingActive) {
           try {
             this.audioEl2.pause();
             this.audioEl2.removeAttribute('src');
@@ -651,23 +685,30 @@ export const usePlayerStore = defineStore('player', {
         this._swapOutgoingBlob = null;
         if (!interrupted) {
           this.crossfading = false;
-          // Now that the swap is complete, prime the *next* preload
-          // (the new index+1) so the chain keeps rolling.
           this._schedulePreloadNext(800);
         }
       };
+
+      if (!wantFade) {
+        // Background path or fade disabled — cleanup synchronously,
+        // no RAF, audioEl is already at full volume.
+        finishSwap(false);
+        this.savePlayerState();
+        return true;
+      }
+
+      const startTime = performance.now();
       const fade = () => {
         // Interrupted by loadAndPlay / stop — bail without touching
-        // volumes (the new caller has already taken control of
-        // audioEl). Finalize cleanup (revoke outgoing blob, quiesce
-        // audio2) so we don't leak.
+        // volumes (the new caller has already taken control of audioEl).
+        // Still finalize cleanup so we don't leak the outgoing blob.
         if (!this.crossfading || !this.audioEl) {
           finishSwap(true);
           return;
         }
         const t = Math.min((performance.now() - startTime) / FADE, 1);
         this.audioEl.volume = baseVol * t;
-        if (this.audioEl2) this.audioEl2.volume = baseVol * (1 - t);
+        if (this.audioEl2 && outgoingActive) this.audioEl2.volume = baseVol * (1 - t);
         if (t < 1) {
           requestAnimationFrame(fade);
         } else {
