@@ -63,45 +63,62 @@ async function resolvePlayUrl(track) {
 }
 
 // iOS PWA audio-session keeper. iOS releases the system audio session
-// when an HTMLMediaElement is paused — and refuses to re-engage it from
-// a MediaSession action handler in background, regardless of what we do
-// to the element (play(), load(), src reassignment all fail silently).
-// Symptom: lock-screen pause + lock-screen play = audio claims to be
-// playing (lock-screen progress bar advances via setPositionState
-// interpolation) but no sound, currentTime stuck at the pause point;
-// audio only actually resumes when the user reopens the app.
+// when an HTMLMediaElement is paused — and refuses to re-engage it
+// from a MediaSession action handler in background. Symptom: lock-
+// screen pause + lock-screen play = audio claims to be playing (lock-
+// screen progress bar advances via setPositionState interpolation)
+// but no sound, currentTime stuck at the pause point; audio only
+// actually resumes when the user reopens the app.
 //
-// The fix used by every iOS PWA audio app (Spotify, SoundCloud, Howler)
-// is to keep a Web Audio AudioContext alive at all times with a silent
-// oscillator at zero gain. That AudioContext holds the system audio
-// session open continuously, so HTMLMediaElement pause/resume never
-// triggers a session release, and play() works reliably in background.
+// The pattern Spotify / SoundCloud / Howler use: route the HTML audio
+// element through a Web Audio AudioContext via MediaElementAudioSource.
+// Once wired, AudioContext OWNS the audio session — pause/play of
+// the element no longer triggers a session release because the
+// AudioContext is still alive and connected to destination. Plain
+// audio.play() from the lock-screen MediaSession handler then works
+// reliably in background.
 //
-// Must be created INSIDE a user gesture on iOS Safari; we lazy-init it
-// on the first user-triggered play action (togglePlay / playFromList /
-// loadAndPlay are all user-gesture rooted).
+// A silent oscillator alone is not enough on iOS Safari PWA — iOS
+// keeps the AudioContext "warm" but still releases the underlying
+// audio session when the HTMLMediaElement pauses. The element MUST
+// flow through Web Audio.
+//
+// Both AudioContext creation and createMediaElementSource must run
+// INSIDE a user gesture (iOS rule). We lazy-init on the first user-
+// triggered play action — togglePlay, playFromList, MediaSession
+// action handlers are all user-gesture rooted.
 let _sessionCtx = null;
-let _sessionOsc = null;
-function ensureAudioSession() {
-  if (_sessionCtx) {
+let _sessionWired = false;
+function ensureAudioSession(audioEl) {
+  try {
+    if (!_sessionCtx) {
+      const Ctx = (typeof window !== 'undefined')
+        && (window.AudioContext || window.webkitAudioContext);
+      if (!Ctx) return;
+      _sessionCtx = new Ctx();
+    }
+    // Route the HTMLMediaElement through Web Audio so the system
+    // audio session is held by the AudioContext, not by the element.
+    // This is the line that actually fixes the lock-screen pause /
+    // resume bug — a silent oscillator on the side without this
+    // routing keeps the context warm but iOS still releases the
+    // audio session on audio.pause().
+    if (audioEl && !_sessionWired) {
+      try {
+        const src = _sessionCtx.createMediaElementSource(audioEl);
+        src.connect(_sessionCtx.destination);
+      } catch (e) {
+        // createMediaElementSource throws "already connected" if we
+        // attempted this before — mark wired to skip retry.
+        console.warn('[player] media element source wiring', e);
+      }
+      _sessionWired = true;
+    }
     if (_sessionCtx.state === 'suspended') {
       _sessionCtx.resume().catch(() => {});
     }
-    return;
-  }
-  try {
-    const Ctx = (typeof window !== 'undefined')
-      && (window.AudioContext || window.webkitAudioContext);
-    if (!Ctx) return;
-    _sessionCtx = new Ctx();
-    _sessionOsc = _sessionCtx.createOscillator();
-    const gain = _sessionCtx.createGain();
-    gain.gain.value = 0; // silent — only the audio session matters
-    _sessionOsc.connect(gain).connect(_sessionCtx.destination);
-    _sessionOsc.start();
   } catch (e) {
-    console.warn('[player] audio session keeper init failed', e);
-    _sessionCtx = null;
+    console.warn('[player] audio session keeper failed', e);
   }
 }
 
@@ -220,7 +237,7 @@ export const usePlayerStore = defineStore('player', {
       el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
-      ensureAudioSession();
+      ensureAudioSession(this.audioEl);
       const idx = queue.indexOf(trackId);
       this.queue = [...queue];
       this.index = idx >= 0 ? idx : 0;
@@ -280,12 +297,13 @@ export const usePlayerStore = defineStore('player', {
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
-      ensureAudioSession();
+      ensureAudioSession(this.audioEl);
       if (this.audioEl.paused) this.audioEl.play();
       else this.audioEl.pause();
     },
     next() {
       if (this.queue.length === 0) return;
+      ensureAudioSession(this.audioEl);
       if (this.shuffle) {
         this.index = Math.floor(Math.random() * this.queue.length);
       } else {
@@ -295,6 +313,7 @@ export const usePlayerStore = defineStore('player', {
     },
     prev() {
       if (this.queue.length === 0) return;
+      ensureAudioSession(this.audioEl);
       if (this.audioEl?.currentTime > 3) {
         this.audioEl.currentTime = 0;
         return;
@@ -613,15 +632,17 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
-      // Lock-screen play: simple now that the AudioContext keeper
-      // holds the system audio session open through pause/play
-      // cycles. ensureAudioSession() resumes the context if iOS
-      // suspended it during the lock; the audioEl.play() that
-      // follows finds the session active and routes audio normally.
+      // Lock-screen play: audio is routed through the AudioContext
+      // (via MediaElementAudioSource set up on first user-gesture
+      // play action), so the system audio session stays owned by
+      // Web Audio across pause/play cycles. ensureAudioSession()
+      // here just resumes the context if iOS suspended it during
+      // the lock period; the audioEl.play() then routes through
+      // Web Audio to the speakers like any other play.
       try {
         ms.setActionHandler('play', () => {
           if (!this.audioEl) return;
-          ensureAudioSession();
+          ensureAudioSession(this.audioEl);
           this.audioEl.play().catch(() => {});
         });
       } catch {}
