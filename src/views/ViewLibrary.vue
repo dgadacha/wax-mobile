@@ -26,12 +26,14 @@ const playlists = usePlaylistsStore();
 const player = usePlayerStore();
 const view = useViewStore();
 
+// Track-list ("Favoris" / "Hors-ligne") moved out of the chip row when
+// those views got promoted to full pages via ViewPlaylist's virtual
+// id path. Card grid filters stay here.
 const FILTERS = [
   { id: 'playlists', label: 'Playlists' },
   { id: 'all',       label: 'Tout' },
   { id: 'albums',    label: 'Albums' },
   { id: 'artists',   label: 'Artistes' },
-  { id: 'tracks',    label: 'Titres' },
 ];
 
 // Default to Playlists — that's where Favoris + Hors-ligne + custom
@@ -187,15 +189,9 @@ const artistItems = computed(() => {
     }));
 });
 
-// ── Tracks ────────────────────────────────────────────────────────
-// `tracks` chip = favorites only. `offline` chip (entered by tapping
-// the Hors-ligne virtual card) = every library track with track.file
-// set, including ones not flagged liked.
-const trackItems = computed(() => {
-  const base = filter.value === 'offline' ? offlineTracks.value : lib.favorites;
-  return sortTracks(base);
-});
-
+// Card-grid filter. Favoris and Hors-ligne are virtual cards that
+// navigate to ViewPlaylist on tap — no inline track-list mode here
+// anymore.
 const filteredCards = computed(() => {
   const q = search.value.trim().toLowerCase();
   let list = [];
@@ -210,123 +206,15 @@ const filteredCards = computed(() => {
   return list.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 });
 
-const filteredTracks = computed(() => {
-  const q = search.value.trim().toLowerCase();
-  if (!q) return trackItems.value;
-  return trackItems.value.filter((t) =>
-    (t.title || '').toLowerCase().includes(q)
-    || (t.uploader || '').toLowerCase().includes(q),
-  );
-});
-
-// Tracks list shows when chip is 'tracks' (favoris) or 'offline' (the
-// virtual card filter mode).
-const showingTracks = computed(() => filter.value === 'tracks' || filter.value === 'offline');
-
-// Hero header for the track-list mode. Same MobileHero treatment used
-// for playlists / mix / album views so Favoris and Hors-ligne don't
-// look like a downgrade. Cover = first visible track's thumbnail
-// (falls back to a name-hashed gradient when the list is empty).
-// Subtitle mirrors the playlist hero shape: "X titres · MM:SS · Y/X hors-ligne"
-// so the user sees how much weight the list carries at a glance.
-const tracksTotalDuration = computed(() =>
-  filteredTracks.value.reduce((acc, t) => acc + (t.duration || 0), 0),
-);
-const tracksDownloadedCount = computed(() =>
-  filteredTracks.value.filter((t) => !!t.file).length,
-);
-const tracksHeader = computed(() => {
-  const isOffline = filter.value === 'offline';
-  const name = isOffline ? 'Hors-ligne' : 'Favoris';
-  const firstThumb = filteredTracks.value[0]?.thumbnail || '';
-  const n = filteredTracks.value.length;
-  let subtitle;
-  if (n === 0) {
-    subtitle = 'Vide';
-  } else {
-    const base = `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(tracksTotalDuration.value)}`;
-    if (isOffline) {
-      subtitle = base;
-    } else {
-      // Favoris view — surface how many are also on-device so the
-      // user can tell at a glance how much of their list is offline
-      // ready vs streaming.
-      const off = tracksDownloadedCount.value;
-      if (off === 0) subtitle = base;
-      else if (off === n) subtitle = `${base} · Tout hors-ligne`;
-      else subtitle = `${base} · ${off}/${n} hors-ligne`;
-    }
-  }
-  return {
-    title: name,
-    eyebrow: 'Bibliothèque',
-    cover: firstThumb,
-    gradient: gradientFromString(name),
-    subtitle,
-  };
-});
-
-function playTracksHeader() {
-  if (filteredTracks.value.length === 0) return;
-  playFavoritesFrom(filteredTracks.value[0]);
-}
-
-// "Tout télécharger" for Favoris (downloads every fav that isn't on
-// device yet). No-op for Hors-ligne since everything there already
-// has track.file.
-async function downloadAllTracks() {
-  const todo = filteredTracks.value.filter((t) => !t.file && !lib.libraryDownloads.has(t.id));
-  if (todo.length === 0) {
-    showToast({ message: 'Déjà tout hors-ligne', position: 'bottom' });
-    return;
-  }
-  showToast({
-    message: `${todo.length} titre${todo.length > 1 ? 's' : ''} en file de téléchargement`,
-    position: 'bottom',
-  });
-  for (const tr of todo) lib.downloadTrack(tr.id);
-}
-
-// "..." menu for the Favoris / Hors-ligne hero. Per-mode actions —
-// sort is offered everywhere, the rest is contextual.
-async function onTracksHeaderMore() {
-  const isOffline = filter.value === 'offline';
-  try {
-    if (isOffline) {
-      const { index } = await sheet.open([
-        { name: 'Trier' },
-        { name: 'Nettoyer les orphelins' },
-      ]);
-      if (index === 0) pickSort();
-      else if (index === 1) {
-        const removed = await lib.purgeOrphans();
-        showToast({
-          message: removed ? `${removed} titre${removed > 1 ? 's' : ''} nettoyé${removed > 1 ? 's' : ''}` : 'Rien à nettoyer',
-          position: 'bottom',
-        });
-      }
-    } else {
-      const { index } = await sheet.open([
-        { name: 'Trier' },
-        { name: 'Tout télécharger' },
-      ]);
-      if (index === 0) pickSort();
-      else if (index === 1) downloadAllTracks();
-    }
-  } catch { /* dismissed */ }
-}
-
 function openCard(card) {
-  if (card.kind === 'favorites') filter.value = 'tracks';
-  else if (card.kind === 'offline') filter.value = 'offline';
+  // Favoris and Hors-ligne now route through ViewPlaylist via virtual
+  // ids — same hero, back arrow, nav-bar title, all the trimmings.
+  // The in-place track-list mode that used to live here got removed.
+  if (card.kind === 'favorites') view.switchTo('playlist', 'favorites');
+  else if (card.kind === 'offline') view.switchTo('playlist', 'offline');
   else if (card.kind === 'playlist') view.switchTo('playlist', card.id);
   else if (card.kind === 'album') view.switchTo('album', card.id);
   else if (card.kind === 'artist') view.switchTo('artist', card.id);
-}
-
-function playFavoritesFrom(track) {
-  const ids = filteredTracks.value.map((t) => t.id);
-  player.playFromList(track.id, ids);
 }
 
 async function createPlaylist() {
@@ -441,89 +329,10 @@ function cardIcon(card) {
       </div>
     </div>
 
-    <!-- Hero header for track-list mode (Favoris / Hors-ligne). Same
-         immersive treatment + same +/.../play action row as playlists,
-         so the virtual cards don't feel like a second-class destination.
-         + = Tout télécharger (Favoris) / Trier (Hors-ligne fallback)
-         ... = sort + contextual actions -->
-    <MobileHero
-      v-if="showingTracks"
-      :cover="tracksHeader.cover"
-      :bg-gradient="tracksHeader.gradient"
-      :eyebrow="tracksHeader.eyebrow"
-      :title="tracksHeader.title"
-      :subtitle="tracksHeader.subtitle"
-      :show-play="filteredTracks.length > 0"
-      @play="playTracksHeader"
-    >
-      <template #actions>
-        <button
-          v-if="filter === 'tracks' && filteredTracks.length > 0"
-          class="hero-icon-btn"
-          aria-label="Tout télécharger"
-          @click="downloadAllTracks"
-        >
-          <DownloadIcon :size="20" :stroke-width="2.2" color="var(--text)" />
-        </button>
-        <button
-          v-if="filteredTracks.length > 0"
-          class="hero-icon-btn"
-          aria-label="Plus"
-          @click="onTracksHeaderMore"
-        >
-          <MoreHorizontal :size="20" :stroke-width="2.2" color="var(--text)" />
-        </button>
-      </template>
-    </MobileHero>
-
-    <!-- Sort selector — only meaningful for track lists, so we hide it
-         on the card grids (playlists / albums / artists already have
-         their own natural ordering). -->
-    <div v-if="showingTracks && filteredTracks.length > 0" class="lib-sort-row">
-      <button class="lib-sort-btn" @click="pickSort">
-        <ArrowDownAZ :size="16" :stroke-width="2" color="var(--text-muted)" />
-        <span>{{ sortLabel }}</span>
-      </button>
-    </div>
-
-    <!-- Tracks (favoris OR offline mode via the virtual card) -->
-    <template v-if="showingTracks">
-      <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
-      <div v-else-if="filteredTracks.length === 0" class="empty-state">
-        <component
-          :is="filter === 'offline' ? DownloadIcon : Heart"
-          class="icon"
-          :size="48"
-          :stroke-width="1.5"
-        />
-        <div class="label">
-          {{ filter === 'offline' ? 'Aucun titre hors-ligne' : 'Aucun favori' }}
-        </div>
-        <div class="hint">
-          {{
-            filter === 'offline'
-              ? 'Télécharge un titre depuis l’action sheet « … » pour le retrouver ici.'
-              : 'Coche un titre depuis la recherche pour le retrouver ici.'
-          }}
-        </div>
-      </div>
-      <div v-else class="track-list">
-        <MobileTrackCell
-          v-for="t in filteredTracks"
-          :key="t.id"
-          :track="t"
-          :is-playing="player.currentTrack && player.currentTrack.id === t.id"
-          :is-liked="lib.isFavorite(t)"
-          :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
-          @play="playFavoritesFrom(t)"
-          @like="lib.toggleFav(t)"
-          @more="onMore(t)"
-        />
-      </div>
-    </template>
-
-    <!-- Cards (playlists / albums / artistes / tout) -->
-    <template v-else>
+    <!-- Cards (playlists / albums / artistes / tout). Favoris and
+         Hors-ligne are virtual cards in the Playlists tab that route
+         through ViewPlaylist for their dedicated page. -->
+    <template>
       <div v-if="filter === 'playlists'" class="lib-action-row">
         <button class="ghost-row" @click="playlists.create()">
           <Plus :size="22" :stroke-width="2" color="var(--accent)" />
