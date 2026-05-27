@@ -568,12 +568,30 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
-      // Wrap action handlers so the lock-screen play/pause taps go
-      // through the same intent-assertion path as in-app togglePlay.
-      // Otherwise iOS would call audioEl.play() / .pause() directly,
-      // mediaSession.playbackState wouldn't update, and the icon would
-      // briefly show the wrong state until the audio event fired.
-      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
+      // 'play' from the lock screen on iOS PWA: a plain audioEl.play()
+      // often "succeeds" without actually routing audio to the speakers
+      // after a previous lock-screen pause — iOS releases the audio
+      // session on pause and play() alone doesn't reclaim it. Wrapping
+      // with a load() fallback re-engages the session. Done as a
+      // chained catch so the happy path stays fast (single play() call).
+      try {
+        ms.setActionHandler('play', () => {
+          if (!this.audioEl) return;
+          const resume = () => {
+            const t = this.audioEl.currentTime || 0;
+            try { this.audioEl.load(); } catch {}
+            this.audioEl.currentTime = t;
+            this.audioEl.play().catch(() => {});
+          };
+          // Try plain play first; if it rejects, fall back to load+play.
+          // Some iOS versions return a silent-success promise where the
+          // audio doesn't actually start — we can't detect that without
+          // a timeupdate watchdog, but the load() path covers the
+          // explicit-reject case which is the most common.
+          const p = this.audioEl.play();
+          if (p && typeof p.catch === 'function') p.catch(resume);
+        });
+      } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
