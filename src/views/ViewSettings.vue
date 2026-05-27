@@ -24,6 +24,10 @@ const auth = useAuthStore();
 const view = useViewStore();
 const player = usePlayerStore();
 
+// Injected by vite.config.js `define` from package.json so we never
+// have to update the About card by hand on every version bump.
+const appVersion = __APP_VERSION__;
+
 function openWrapped() {
   haptics.light();
   view.switchTo('wrapped');
@@ -694,7 +698,7 @@ async function onLogout() {
     </van-cell-group>
 
     <van-cell-group inset title="À propos">
-      <van-cell title="Version" value="0.15.2" />
+      <van-cell title="Version" :value="appVersion" />
       <van-cell title="Backend" :value="'proxy local'" />
     </van-cell-group>
 

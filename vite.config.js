@@ -4,6 +4,12 @@ import Components from 'unplugin-vue-components/vite';
 import { VantResolver } from '@vant/auto-import-resolver';
 import { VitePWA } from 'vite-plugin-pwa';
 import { fileURLToPath, URL } from 'node:url';
+import { readFileSync } from 'node:fs';
+
+// Read package.json version once at build time so __APP_VERSION__ is
+// always in sync with package.json — no more updating two places when
+// bumping versions.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
 
 // Mobile build (Capacitor) loads from file:// in the WebView, so base must be
 // relative. For web dev (npm run dev) the relative base also works.
@@ -16,6 +22,9 @@ export default defineConfig(({ mode }) => {
   const devProxyTarget = env.VITE_DEV_PROXY_TARGET || 'http://localhost:3000';
 
   return {
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version),
+    },
     plugins: [
       vue(),
       Components({ resolvers: [VantResolver()] }),
