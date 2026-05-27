@@ -62,6 +62,49 @@ async function resolvePlayUrl(track) {
   return apiUrl(track.file);
 }
 
+// iOS PWA audio-session keeper. iOS releases the system audio session
+// when an HTMLMediaElement is paused — and refuses to re-engage it from
+// a MediaSession action handler in background, regardless of what we do
+// to the element (play(), load(), src reassignment all fail silently).
+// Symptom: lock-screen pause + lock-screen play = audio claims to be
+// playing (lock-screen progress bar advances via setPositionState
+// interpolation) but no sound, currentTime stuck at the pause point;
+// audio only actually resumes when the user reopens the app.
+//
+// The fix used by every iOS PWA audio app (Spotify, SoundCloud, Howler)
+// is to keep a Web Audio AudioContext alive at all times with a silent
+// oscillator at zero gain. That AudioContext holds the system audio
+// session open continuously, so HTMLMediaElement pause/resume never
+// triggers a session release, and play() works reliably in background.
+//
+// Must be created INSIDE a user gesture on iOS Safari; we lazy-init it
+// on the first user-triggered play action (togglePlay / playFromList /
+// loadAndPlay are all user-gesture rooted).
+let _sessionCtx = null;
+let _sessionOsc = null;
+function ensureAudioSession() {
+  if (_sessionCtx) {
+    if (_sessionCtx.state === 'suspended') {
+      _sessionCtx.resume().catch(() => {});
+    }
+    return;
+  }
+  try {
+    const Ctx = (typeof window !== 'undefined')
+      && (window.AudioContext || window.webkitAudioContext);
+    if (!Ctx) return;
+    _sessionCtx = new Ctx();
+    _sessionOsc = _sessionCtx.createOscillator();
+    const gain = _sessionCtx.createGain();
+    gain.gain.value = 0; // silent — only the audio session matters
+    _sessionOsc.connect(gain).connect(_sessionCtx.destination);
+    _sessionOsc.start();
+  } catch (e) {
+    console.warn('[player] audio session keeper init failed', e);
+    _sessionCtx = null;
+  }
+}
+
 export const usePlayerStore = defineStore('player', {
   state: () => ({
     queue: [],
@@ -177,6 +220,7 @@ export const usePlayerStore = defineStore('player', {
       el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
+      ensureAudioSession();
       const idx = queue.indexOf(trackId);
       this.queue = [...queue];
       this.index = idx >= 0 ? idx : 0;
@@ -236,6 +280,7 @@ export const usePlayerStore = defineStore('player', {
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
+      ensureAudioSession();
       if (this.audioEl.paused) this.audioEl.play();
       else this.audioEl.pause();
     },
@@ -568,40 +613,16 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
-      // 'play' from the lock screen on iOS PWA: plain audioEl.play()
-      // is silently broken after a lock-screen pause — iOS releases
-      // the audio session and bare play() can't reclaim it. The
-      // element claims to be playing (paused=false), but no audio
-      // routes to the speakers and currentTime stays frozen.
-      //
-      // The watchdog approach (setTimeout to detect missed timeupdate)
-      // doesn't work in background: iOS suspends JS, so setTimeout
-      // only fires when the user returns to the app — by which time
-      // it's too late.
-      //
-      // Fix: always synchronously force-reload the audio element
-      // inside the action handler. load() forces iOS to reclaim the
-      // audio session for this element (a fresh "I want to play this
-      // again" signal). Pay the small re-buffer cost on every
-      // lock-screen play in exchange for reliable resume.
+      // Lock-screen play: simple now that the AudioContext keeper
+      // holds the system audio session open through pause/play
+      // cycles. ensureAudioSession() resumes the context if iOS
+      // suspended it during the lock; the audioEl.play() that
+      // follows finds the session active and routes audio normally.
       try {
         ms.setActionHandler('play', () => {
           if (!this.audioEl) return;
-          const t = this.audioEl.currentTime || 0;
-          try { this.audioEl.load(); } catch {}
-          const restoreAndPlay = () => {
-            try { this.audioEl.currentTime = t; } catch {}
-            this.audioEl.play().catch(() => {});
-          };
-          // load() resets the audio element; we need metadata back
-          // before currentTime can be set. If we already have it
-          // (often the case for the resumed track), restore + play
-          // synchronously; otherwise wait once for loadedmetadata.
-          if (this.audioEl.readyState >= 1) {
-            restoreAndPlay();
-          } else {
-            this.audioEl.addEventListener('loadedmetadata', restoreAndPlay, { once: true });
-          }
+          ensureAudioSession();
+          this.audioEl.play().catch(() => {});
         });
       } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
