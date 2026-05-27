@@ -569,41 +569,39 @@ export const usePlayerStore = defineStore('player', {
       // routing on its own. PWA platform limitation, not a code
       // bug.
       // 'play' from the lock screen on iOS PWA: plain audioEl.play()
-      // is unreliable after a lock-screen pause. Two failure modes:
-      //   (a) play() rejects → catch + load() + play() recovers.
-      //   (b) play() resolves silently — audio element claims to be
-      //       playing (paused=false, even timeupdate fires) but no
-      //       audio routes to the speakers. iOS released the audio
-      //       session on pause and the bare play() didn't reclaim it.
-      // For (b) we need a watchdog: snapshot currentTime, wait a
-      // beat, and if it hasn't actually advanced, force a load() +
-      // play() to re-engage the audio session.
+      // is silently broken after a lock-screen pause — iOS releases
+      // the audio session and bare play() can't reclaim it. The
+      // element claims to be playing (paused=false), but no audio
+      // routes to the speakers and currentTime stays frozen.
+      //
+      // The watchdog approach (setTimeout to detect missed timeupdate)
+      // doesn't work in background: iOS suspends JS, so setTimeout
+      // only fires when the user returns to the app — by which time
+      // it's too late.
+      //
+      // Fix: always synchronously force-reload the audio element
+      // inside the action handler. load() forces iOS to reclaim the
+      // audio session for this element (a fresh "I want to play this
+      // again" signal). Pay the small re-buffer cost on every
+      // lock-screen play in exchange for reliable resume.
       try {
         ms.setActionHandler('play', () => {
           if (!this.audioEl) return;
-          const forceReengage = () => {
-            if (!this.audioEl) return;
-            const t = this.audioEl.currentTime || 0;
-            try { this.audioEl.load(); } catch {}
-            this.audioEl.currentTime = t;
+          const t = this.audioEl.currentTime || 0;
+          try { this.audioEl.load(); } catch {}
+          const restoreAndPlay = () => {
+            try { this.audioEl.currentTime = t; } catch {}
             this.audioEl.play().catch(() => {});
           };
-          const before = this.audioEl.currentTime;
-          const p = this.audioEl.play();
-          if (p && typeof p.catch === 'function') p.catch(forceReengage);
-          // Silent-success watchdog. 500 ms is enough for at least
-          // one timeupdate (which fires every ~250 ms when audio is
-          // genuinely playing). If currentTime hasn't budged AND
-          // we're "playing", iOS swallowed the audio output —
-          // re-engage. The check is no-op when audio is genuinely
-          // working.
-          setTimeout(() => {
-            if (!this.audioEl) return;
-            if (this.audioEl.paused) return; // user paused again, fine
-            if (this.audioEl.currentTime <= before + 0.1) {
-              forceReengage();
-            }
-          }, 500);
+          // load() resets the audio element; we need metadata back
+          // before currentTime can be set. If we already have it
+          // (often the case for the resumed track), restore + play
+          // synchronously; otherwise wait once for loadedmetadata.
+          if (this.audioEl.readyState >= 1) {
+            restoreAndPlay();
+          } else {
+            this.audioEl.addEventListener('loadedmetadata', restoreAndPlay, { once: true });
+          }
         });
       } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
