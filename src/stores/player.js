@@ -95,26 +95,6 @@ export const usePlayerStore = defineStore('player', {
     // player-state save loop. Restored on bindAudio + each
     // loadAndPlay so a track change doesn't reset it.
     playbackRate: 1,
-    // Next-track preload state. We warm `audioEl2` with the next
-    // track's audio ~1.5 s after the current track starts playing
-    // so a manual `next()` (or auto-end) can swap to an already-
-    // buffered element instead of fetching from scratch (which used
-    // to leave a 1-3 s gap on stream tracks).
-    //   _preloadedFor: queue index that audio2 is primed for
-    //   _preloadedUrl: the URL currently in audio2.src
-    //   _preloadedBlobUrl: blob: URL we minted (needs revoking)
-    //   _preloadTimer: debounce timer for _preloadNext()
-    _preloadedFor: null,
-    _preloadedUrl: null,
-    _preloadedBlobUrl: null,
-    _preloadTimer: null,
-    // Blob URL of the *outgoing* track during a swap fade. Tracked so
-    // finishSwap() can revoke it whether the fade completes normally
-    // or gets interrupted (a mid-fade loadAndPlay clears crossfading
-    // and our RAF bails — without this state field the outgoing blob
-    // would leak because _lastBlobUrl already points at the swap's
-    // incoming blob by the time loadAndPlay runs its revoke step).
-    _swapOutgoingBlob: null,
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -169,10 +149,6 @@ export const usePlayerStore = defineStore('player', {
         // playing. Re-asserting them on every `playing` event is the
         // documented WebKit workaround so the ⏮/⏭ buttons show up.
         this._registerMediaSessionHandlers();
-        // Once playback is stable, schedule the preload of the next
-        // track on audioEl2 so a subsequent next() / auto-end can
-        // hand off without the 1-3 s URL-resolve + buffer wait.
-        this._schedulePreloadNext();
       });
       el.addEventListener('waiting', () => {
         this.loading = true;
@@ -201,7 +177,6 @@ export const usePlayerStore = defineStore('player', {
       el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
-      this._invalidatePreload();
       const idx = queue.indexOf(trackId);
       this.queue = [...queue];
       this.index = idx >= 0 ? idx : 0;
@@ -213,9 +188,6 @@ export const usePlayerStore = defineStore('player', {
       if (!track || !this.audioEl) return;
       // Switching tracks — drop any stall watchdog from the previous one.
       this._clearStallWatchdog();
-      // A manual loadAndPlay supersedes any in-flight preload: audio2
-      // may be primed for an index we're skipping past.
-      this._invalidatePreload();
       // Stop any in-flight crossfade
       if (this.crossfading && this.audioEl2) {
         try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); } catch {}
@@ -269,20 +241,6 @@ export const usePlayerStore = defineStore('player', {
     },
     next() {
       if (this.queue.length === 0) return;
-      // Fast path: if audioEl2 is already buffered with the next
-      // track, hand off the preloaded URL to audioEl with a quick
-      // 300 ms crossfade instead of tearing down audioEl and re-
-      // fetching from scratch. Skipped in shuffle mode because the
-      // real target is random — what we preloaded (index+1) won't
-      // match.
-      if (!this.shuffle) {
-        const targetIdx = (this.index + 1) % this.queue.length;
-        if (this._preloadedFor === targetIdx
-            && this.audioEl2?.src
-            && targetIdx !== this.index) {
-          if (this._swapToPreloaded(300)) return;
-        }
-      }
       if (this.shuffle) {
         this.index = Math.floor(Math.random() * this.queue.length);
       } else {
@@ -308,7 +266,6 @@ export const usePlayerStore = defineStore('player', {
         try { URL.revokeObjectURL(this._lastBlobUrl); } catch {}
         this._lastBlobUrl = null;
       }
-      this._invalidatePreload();
       this._clearStallWatchdog();
       this.playing = false;
       this.loading = false;
@@ -342,10 +299,6 @@ export const usePlayerStore = defineStore('player', {
       }
       const insertAt = this.queue.length > 0 ? this.index + 1 : 0;
       this.queue.splice(insertAt, 0, trackId);
-      // The slot we may have preloaded for (index+1) is now a
-      // different track — drop the stale buffer and re-prime soon.
-      this._invalidatePreload();
-      if (this.playing) this._schedulePreloadNext(500);
       showToast(t('toast.added_to_queue'), 'success');
     },
     toggleNowPlayingOpen() { this.nowPlayingOpen = !this.nowPlayingOpen; },
@@ -354,8 +307,6 @@ export const usePlayerStore = defineStore('player', {
     toggleBigPicture() { this.bigPictureOpen = !this.bigPictureOpen; },
     removeQueueAt(qIdx) {
       this.queue.splice(qIdx, 1);
-      this._invalidatePreload();
-      if (this.playing) this._schedulePreloadNext(500);
     },
     reorderQueue(fromIdx, targetIdx) {
       if (fromIdx <= this.index || fromIdx >= this.queue.length) return;
@@ -363,8 +314,6 @@ export const usePlayerStore = defineStore('player', {
       const [moved] = this.queue.splice(fromIdx, 1);
       const adjusted = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
       this.queue.splice(adjusted, 0, moved);
-      this._invalidatePreload();
-      if (this.playing) this._schedulePreloadNext(500);
     },
     // ============================================================
     // Crossfade
@@ -372,14 +321,6 @@ export const usePlayerStore = defineStore('player', {
     _startCrossfade(nextIdx) {
       if (this.crossfading) return;
       const prefs = usePrefsStore();
-      // If we preloaded the next track on audio2 already, prefer the
-      // swap path: it reuses the already-buffered audio (instant) and
-      // works for stream tracks too (the legacy reload path below only
-      // handled offline tracks via `apiUrl(nextTrack.file)`).
-      if (this._preloadedFor === nextIdx && this.audioEl2?.src) {
-        this._swapToPreloaded(prefs.crossfadeDuration * 1000);
-        return;
-      }
       const baseVol = this.muted ? 0 : prefs.volume;
       const nextTrackId = this.queue[nextIdx];
       const nextTrack = findTrack(nextTrackId);
@@ -420,277 +361,6 @@ export const usePlayerStore = defineStore('player', {
         }
       };
       fade();
-    },
-    // ============================================================
-    // Preload + fast swap
-    // ============================================================
-    // Goal: when the user (or auto-end) advances to the next track,
-    // playback should start instantly with a short fade instead of
-    // freezing for 1-3 s while the new URL is fetched + buffered.
-    //
-    // Strategy: ~1.5 s after the current track starts playing,
-    // resolve the *next* track's URL and load it into audioEl2
-    // (with preload='auto' so the browser actually downloads the
-    // audio). On next() / _onAudioEnded, if audioEl2 is primed for
-    // the target index, swap roles: audioEl2 becomes the active
-    // element (playing the new track from its already-buffered
-    // state), the outgoing audioEl becomes audio2 and is faded out.
-    //
-    // bindAudio attaches listeners to BOTH elements so the swap
-    // doesn't lose play/pause/timeupdate/ended wiring — each handler
-    // filters by `event.currentTarget === this.audioEl` to ignore
-    // events from whichever element is currently inactive.
-    //
-    // Skipped in shuffle mode (next() picks a random index, so what
-    // we preloaded won't match) and when repeat='one' (we already
-    // have the buffer).
-    _computeNextIndex() {
-      if (this.queue.length === 0) return -1;
-      if (this.shuffle) return -1;       // random — can't predict
-      if (this.repeat === 'one') return -1; // same track, already loaded
-      const nextIdx = this.index + 1;
-      if (nextIdx >= this.queue.length) {
-        return this.repeat === 'all' ? 0 : -1;
-      }
-      return nextIdx;
-    },
-    _schedulePreloadNext(delayMs = 1500) {
-      if (this._preloadTimer) {
-        clearTimeout(this._preloadTimer);
-        this._preloadTimer = null;
-      }
-      this._preloadTimer = setTimeout(() => {
-        this._preloadTimer = null;
-        this._preloadNext().catch((e) => console.warn('[player] preload err', e));
-      }, delayMs);
-    },
-    async _preloadNext() {
-      if (!this.audioEl2) return;
-      const nextIdx = this._computeNextIndex();
-      if (nextIdx === -1 || nextIdx === this.index) return;
-      if (this._preloadedFor === nextIdx && this.audioEl2.src) return;
-
-      const trackId = this.queue[nextIdx];
-      const track = findTrack(trackId);
-      if (!track) return;
-
-      // Warm the stream URL cache so resolvePlayUrl doesn't have to
-      // wait on yt-dlp at swap time.
-      if (!track.file && track.ytId) {
-        useStreamsStore().prefetch(track.ytId);
-      }
-
-      const url = await resolvePlayUrl(track);
-      // State may have shifted while resolvePlayUrl was awaiting.
-      // Drop the result if the queue rearranged, we already advanced
-      // past this index, or we already started playing this track.
-      if (!url) return;
-      if (this.queue[nextIdx] !== trackId) return;
-      if (this.queue[this.index] === trackId) return;
-
-      // Revoke any stale preload blob (don't touch the one currently
-      // playing — that's tracked separately in _lastBlobUrl).
-      if (this._preloadedBlobUrl && this._preloadedBlobUrl !== this._lastBlobUrl) {
-        try { URL.revokeObjectURL(this._preloadedBlobUrl); } catch {}
-      }
-      this._preloadedBlobUrl = url.startsWith('blob:') ? url : null;
-
-      try {
-        this.audioEl2.preload = 'auto';
-        this.audioEl2.src = url;
-        this.audioEl2.volume = 0;
-        // Audio elements reset playbackRate + preservesPitch on src
-        // change, so re-assert them or the preloaded track plays at
-        // 1× when swapped in.
-        try { this.audioEl2.preservesPitch = false; } catch {}
-        try { this.audioEl2.webkitPreservesPitch = false; } catch {}
-        this.audioEl2.playbackRate = this.playbackRate;
-        this.audioEl2.load();
-      } catch (e) {
-        console.warn('[player] preload assign failed', e);
-        this._preloadedBlobUrl = null;
-        return;
-      }
-      this._preloadedFor = nextIdx;
-      this._preloadedUrl = url;
-    },
-    _invalidatePreload() {
-      if (this._preloadTimer) {
-        clearTimeout(this._preloadTimer);
-        this._preloadTimer = null;
-      }
-      // Only revoke if it's not the URL currently playing (after a
-      // swap _lastBlobUrl = the formerly-preloaded blob; we mustn't
-      // free it under the active audio element).
-      if (this._preloadedBlobUrl && this._preloadedBlobUrl !== this._lastBlobUrl) {
-        try { URL.revokeObjectURL(this._preloadedBlobUrl); } catch {}
-      }
-      this._preloadedBlobUrl = null;
-      this._preloadedFor = null;
-      this._preloadedUrl = null;
-      // Quiesce audio2 unless a crossfade is in flight (in which case
-      // it's actively playing the outgoing track and will be cleaned
-      // up by the fade itself).
-      if (this.audioEl2 && !this.crossfading) {
-        try {
-          this.audioEl2.pause();
-          this.audioEl2.removeAttribute('src');
-          this.audioEl2.load();
-        } catch {}
-      }
-    },
-    // Hand off the preloaded URL to audioEl and (optionally) fade
-    // between the outgoing track parked on audioEl2 and the new one.
-    //
-    // IMPORTANT — we used to swap audioEl ↔ audioEl2 to "promote" the
-    // preloaded element to active. That broke iOS background
-    // playback: the audio session is anchored to a specific element
-    // and doesn't migrate cleanly when JS is suspended, surfacing as
-    // either "doesn't advance" (next track's play() rejected silently
-    // because audio2 had no audio session) or "advances but silent"
-    // (RAF doesn't fire in background → audioEl.volume stays at 0
-    // forever after the start-from-0 ramp).
-    //
-    // Now audioEl always stays the active session-holder. The
-    // preloaded URL is fed directly to audioEl.src — for blob URLs
-    // (offline) this is instant (same blob, no fetch); for stream
-    // URLs the browser HTTP cache may help (warmed via audio2's
-    // earlier .load()). The fade still uses audio2 for the outgoing
-    // track when the document is visible; in background we skip the
-    // fade entirely so audioEl never sits at volume 0.
-    _swapToPreloaded(fadeMs = 300) {
-      if (!this.audioEl || !this.audioEl2) return false;
-      if (this._preloadedFor == null || !this._preloadedUrl) return false;
-      const nextIdx = this._preloadedFor;
-      const nextTrackId = this.queue[nextIdx];
-      if (!nextTrackId) return false;
-      const nextTrack = findTrack(nextTrackId);
-      if (!nextTrack) return false;
-
-      const prefs = usePrefsStore();
-      const baseVol = this.muted ? 0 : prefs.volume;
-      const FADE = Math.max(50, fadeMs);
-      // RAF doesn't tick when document.hidden is true (Page Visibility
-      // throttles it to ~0Hz). Falling back to setInterval would also
-      // be throttled. So in background we just skip the fade and hard-
-      // swap volumes — the user can't see the transition anyway, only
-      // hear it, and the priority is "audio keeps playing".
-      const wantFade = FADE > 0
-        && typeof document !== 'undefined'
-        && !document.hidden;
-
-      // Mark crossfading so _maybeCrossfade and the about-to-fire
-      // 'ended' on audioEl don't double-fire next().
-      this.crossfading = true;
-
-      // Hand off blob ownership. _lastBlobUrl (current playing blob)
-      // becomes the outgoing one; the preloaded blob becomes the new
-      // active. The outgoing blob must stay alive while audio2 plays
-      // it back during the fade, so we revoke after the fade ends.
-      const preloadedUrl = this._preloadedUrl;
-      const outgoingBlob = this._lastBlobUrl;
-      this._lastBlobUrl = this._preloadedBlobUrl;
-      this._preloadedBlobUrl = null;
-      this._preloadedFor = null;
-      this._preloadedUrl = null;
-      if (this._preloadTimer) {
-        clearTimeout(this._preloadTimer);
-        this._preloadTimer = null;
-      }
-
-      // Park the outgoing track on audio2 so we can fade it out while
-      // the new one ramps up. Only do this when we'll actually fade —
-      // skipping in background also saves us a doomed audio2.play()
-      // call that iOS often rejects without a recent user gesture.
-      const outgoingSrc = this.audioEl.src;
-      const outgoingTime = this.audioEl.currentTime;
-      let outgoingActive = false;
-      if (wantFade && outgoingSrc) {
-        try {
-          this.audioEl2.src = outgoingSrc;
-          this.audioEl2.currentTime = outgoingTime;
-          this.audioEl2.volume = baseVol;
-          this.audioEl2.play().catch(() => {});
-          outgoingActive = true;
-        } catch {}
-      } else {
-        // Clear audio2's preload buffer — we just consumed it via
-        // preloadedUrl, no need for it to keep its src around.
-        try {
-          this.audioEl2.pause();
-          this.audioEl2.removeAttribute('src');
-          this.audioEl2.load();
-        } catch {}
-      }
-
-      // Start the new track on audioEl. audioEl keeps its audio
-      // session — iOS sees a normal "swap the src of an already-
-      // active element" which the OS handles gracefully even in
-      // background. Volume starts at 0 only when we'll fade in;
-      // otherwise jump straight to baseVol so background playback
-      // is audible immediately.
-      this.audioEl.src = preloadedUrl;
-      this.audioEl.volume = wantFade ? 0 : baseVol;
-      this.audioEl.currentTime = 0;
-      try { this.audioEl.preservesPitch = false; } catch {}
-      try { this.audioEl.webkitPreservesPitch = false; } catch {}
-      this.audioEl.playbackRate = this.playbackRate;
-      this.audioEl.play().catch(() => { this.loading = false; });
-
-      this.index = nextIdx;
-      this._updateMediaMetadata(nextTrack);
-      this.playCountedFor = null;
-      this.loading = false;
-
-      this._swapOutgoingBlob = outgoingBlob;
-      const finishSwap = (interrupted) => {
-        if (this.audioEl2 && outgoingActive) {
-          try {
-            this.audioEl2.pause();
-            this.audioEl2.removeAttribute('src');
-            this.audioEl2.load();
-          } catch {}
-        }
-        if (this._swapOutgoingBlob && this._swapOutgoingBlob !== this._lastBlobUrl) {
-          try { URL.revokeObjectURL(this._swapOutgoingBlob); } catch {}
-        }
-        this._swapOutgoingBlob = null;
-        if (!interrupted) {
-          this.crossfading = false;
-          this._schedulePreloadNext(800);
-        }
-      };
-
-      if (!wantFade) {
-        // Background path or fade disabled — cleanup synchronously,
-        // no RAF, audioEl is already at full volume.
-        finishSwap(false);
-        this.savePlayerState();
-        return true;
-      }
-
-      const startTime = performance.now();
-      const fade = () => {
-        // Interrupted by loadAndPlay / stop — bail without touching
-        // volumes (the new caller has already taken control of audioEl).
-        // Still finalize cleanup so we don't leak the outgoing blob.
-        if (!this.crossfading || !this.audioEl) {
-          finishSwap(true);
-          return;
-        }
-        const t = Math.min((performance.now() - startTime) / FADE, 1);
-        this.audioEl.volume = baseVol * t;
-        if (this.audioEl2 && outgoingActive) this.audioEl2.volume = baseVol * (1 - t);
-        if (t < 1) {
-          requestAnimationFrame(fade);
-        } else {
-          finishSwap(false);
-        }
-      };
-      fade();
-
-      this.savePlayerState();
-      return true;
     },
     _maybeCrossfade() {
       if (this.crossfading) return;
