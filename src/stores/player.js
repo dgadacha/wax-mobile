@@ -115,17 +115,6 @@ export const usePlayerStore = defineStore('player', {
     // would leak because _lastBlobUrl already points at the swap's
     // incoming blob by the time loadAndPlay runs its revoke step).
     _swapOutgoingBlob: null,
-    // True for the brief window between `audioEl.src = newUrl` and the
-    // subsequent .play() resolving. Setting src on a playing audio
-    // element fires a spurious `pause` event (HTMLMediaElement spec:
-    // src change interrupts current playback). In foreground the
-    // following `play` event corrects state instantly, but in iOS
-    // background the play event can be delayed / dropped, leaving
-    // `playing` stuck at false and mediaSession.playbackState at
-    // 'paused' even though audio is actually progressing. The pause
-    // listener checks this flag and bails out instead of overwriting
-    // state.
-    _swapInProgress: false,
   }),
   getters: {
     currentTrackId: (state) => state.queue[state.index] || null,
@@ -162,121 +151,38 @@ export const usePlayerStore = defineStore('player', {
       const prefs = usePrefsStore();
       el.volume = this.muted ? 0 : prefs.volume;
       if (el2) el2.volume = 0;
-      // Both elements get the same listeners — after a preload swap
-      // the "active" role moves from one element to the other, and
-      // we want events from the (new) active element to fire normally.
-      // The handlers themselves filter via `event.currentTarget ===
-      // this.audioEl` so events from the inactive (preloading /
-      // outgoing) element are ignored.
-      this._attachAudioListeners(el);
-      if (el2) this._attachAudioListeners(el2);
-      // Resync mediaSession + `playing` to live audioEl truth on
-      // every visibility transition.
-      //   - On hide (= phone lock): iOS samples mediaSession state
-      //     at this exact moment to render the lock-screen icon. Any
-      //     drift accumulated during the previous foreground session
-      //     (stalls, coalesced events, etc.) gets corrected before
-      //     iOS reads it. Without this the second lock can render a
-      //     "play" icon for audio that's actually progressing.
-      //   - On show (= unlock / app foreground): catches drift that
-      //     happened while we were hidden so the in-app play/pause
-      //     button is correct the moment the user looks.
-      if (typeof document !== 'undefined' && !this._visibilityBound) {
-        this._visibilityBound = true;
-        document.addEventListener('visibilitychange', () => {
-          this._resyncPlayState();
-        });
-        // pagehide / pageshow are the iOS-friendly companions to
-        // visibilitychange — iOS Safari fires these reliably for PWA
-        // lock/unlock while visibilitychange is sometimes flaky in
-        // standalone display mode. Double-listening costs nothing.
-        window.addEventListener('pagehide', () => this._resyncPlayState());
-        window.addEventListener('pageshow', () => this._resyncPlayState());
-      }
-      // Periodic re-assertion: iOS Safari has a long-standing quirk
-      // where it silently resets mediaSession.playbackState to
-      // 'paused' across audio-session transitions (page hide, audio
-      // route changes, interruption recovery, src changes), and the
-      // lock-screen icon flips to "play" until something writes it
-      // back. timeupdate covers most cases but in deep background
-      // it's throttled and may not fire between an iOS reset and a
-      // lock-screen sample. A plain interval that re-writes whatever
-      // audioEl.paused currently says is the cheapest bulletproof
-      // defense — clamped at 0.5 s to feel "instant" to the user
-      // and to win the race against most iOS samples.
-      if (!this._stateAssertTimer) {
-        this._stateAssertTimer = setInterval(() => this._resyncPlayState(), 500);
-      }
-    },
-    _resyncPlayState() {
-      // Re-assert mediaSession.playbackState from INTENT (this.playing),
-      // not from audioEl.paused. iOS Safari periodically resets
-      // playbackState to 'paused' across transitions (page hide,
-      // audio-session interruption recovery, src change). The setInterval
-      // + visibilitychange + pageshow/pagehide listeners all call this
-      // to overwrite the bad state within a second. Reading from
-      // audioEl.paused here would defeat the whole intent model —
-      // audioEl flickers paused for ~ms during every src= but the user's
-      // intent is still "playing".
-      if ('mediaSession' in navigator) {
-        try {
-          navigator.mediaSession.playbackState = this.playing ? 'playing' : 'paused';
-        } catch {}
-      }
-    },
-    _attachAudioListeners(el) {
-      // Each handler bails when fired from the inactive element.
-      // We can't compare against a captured ref because `this.audioEl`
-      // is what gets swapped — we re-evaluate it on every event.
-      el.addEventListener('play', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
-        this._onAudioPlay();
-      });
-      el.addEventListener('pause', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
-        this._onAudioPause();
-      });
-      el.addEventListener('playing', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
+      // ONLY el gets listeners. audioEl2 is used purely as a
+      // URL/buffer warmer for the next-track preload — we never
+      // call play() on it and never swap it into the active role,
+      // so its events would be pure noise. The original pre-0.16
+      // architecture (single-element listeners) is the one that
+      // worked correctly with iOS lock-screen state; the dual-
+      // listener + intent + setInterval edifice that grew on top
+      // confused iOS Safari more than it helped.
+      el.addEventListener('play', () => this._onAudioPlay());
+      el.addEventListener('pause', () => this._onAudioPause());
+      el.addEventListener('playing', () => {
         this.loading = false;
         this._clearStallWatchdog();
         // iOS Safari (17/18) only honors the registered MediaSession
         // handler set if you set them AFTER the audio is actively
-        // playing. Setting them at app boot / before the first
-        // `playing` event makes iOS fall back to its default lock-
-        // screen controls (the ±10 s seek arrows). Re-asserting them
-        // here on every `playing` event is the documented WebKit
-        // workaround — costs nothing and finally lets ⏮/⏭ show up.
+        // playing. Re-asserting them on every `playing` event is the
+        // documented WebKit workaround so the ⏮/⏭ buttons show up.
         this._registerMediaSessionHandlers();
         // Once playback is stable, schedule the preload of the next
         // track on audioEl2 so a subsequent next() / auto-end can
         // hand off without the 1-3 s URL-resolve + buffer wait.
         this._schedulePreloadNext();
       });
-      // 'waiting' fires when the buffer underruns. The corresponding
-      // 'playing' event fires once buffering recovers — but on a stale
-      // YouTube CDN URL (signed, expires mid-track) the audio just sits
-      // there forever with no error. Watchdog kicks in after 10 s of
-      // silence and skips the track.
-      el.addEventListener('waiting', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
+      el.addEventListener('waiting', () => {
         this.loading = true;
         this._armStallWatchdog();
       });
-      el.addEventListener('stalled', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
-        this._armStallWatchdog();
-      });
-      el.addEventListener('error', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
+      el.addEventListener('stalled', () => this._armStallWatchdog());
+      el.addEventListener('error', () => {
         this._clearStallWatchdog();
         this.loading = false;
         const track = findTrack(this.queue[this.index]);
-        // Offline + the track *was supposed* to be cached = SW cache
-        // hole. Tell the user explicitly instead of the generic "can't
-        // play" so they understand this was a "should have worked
-        // offline" failure (and that warmOfflineCache will fix it
-        // next time they're online).
         const offlineMiss = typeof navigator !== 'undefined'
           && navigator.onLine === false
           && track?.file;
@@ -288,18 +194,11 @@ export const usePlayerStore = defineStore('player', {
         );
         setTimeout(() => { if (this.queue.length > 1) this.next(); }, 3000);
       });
-      el.addEventListener('timeupdate', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
-        // Any progress means buffer recovered — disarm any in-flight
-        // stall watchdog (covers browsers that don't fire 'playing'
-        // after a recover).
+      el.addEventListener('timeupdate', () => {
         if (this.stallTimer) this._clearStallWatchdog();
         this._onAudioTimeUpdate();
       });
-      el.addEventListener('ended', (e) => {
-        if (e.currentTarget !== this.audioEl) return;
-        this._onAudioEnded();
-      });
+      el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
       this._invalidatePreload();
@@ -322,14 +221,6 @@ export const usePlayerStore = defineStore('player', {
         try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); } catch {}
         this.crossfading = false;
       }
-      // SYNCHRONOUS intent assertion before any await. When loadAndPlay
-      // is invoked from a MediaSession action handler (lock-screen
-      // next/prev/play), iOS samples mediaSession state right after
-      // the handler returns. The handler returns at the first await
-      // below — if we didn't assert here, iOS would catch us mid-
-      // transition with stale 'paused' (from a previous reset or the
-      // default), even though `play()` is about to fire.
-      this._assertPlaying(true);
       this.visible = true;
       this.loading = true;
       // Revoke the previous blob URL (if any) before minting a new one.
@@ -357,7 +248,6 @@ export const usePlayerStore = defineStore('player', {
       try { this.audioEl.webkitPreservesPitch = false; } catch {}
       this.audioEl.playbackRate = this.playbackRate;
       this.audioEl.play().catch(() => { this.loading = false; });
-      this._assertPlaying(true);
       // Look-ahead: warm the next streamable track's URL so the queue
       // transition feels instant. Only prefetches the immediate next.
       const streamsStore = useStreamsStore();
@@ -374,45 +264,17 @@ export const usePlayerStore = defineStore('player', {
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
-      if (this.audioEl.paused) {
-        this.audioEl.play().catch(() => {});
-        this._assertPlaying(true);
-      } else {
-        this.audioEl.pause();
-        this._assertPlaying(false);
-      }
-    },
-    // Intent-based state writer. Sets the in-app player.playing and
-    // the lock-screen / Control Center mediaSession.playbackState in
-    // one shot. All player actions (next, prev, togglePlay, swap,
-    // load, stop, queue-exhausted) call this; audio events DO NOT.
-    // That's the whole point — `audioEl.paused` flickers true for
-    // brief windows that aren't real user-visible pauses (src change,
-    // stall, iOS interruption recovery), and in background each of
-    // those flickers would fire pause → write mediaSession='paused'
-    // → next iOS lock-screen sample shows the wrong icon.
-    _assertPlaying(playing) {
-      this.playing = !!playing;
-      if ('mediaSession' in navigator) {
-        try {
-          navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
-        } catch {}
-      }
+      if (this.audioEl.paused) this.audioEl.play();
+      else this.audioEl.pause();
     },
     next() {
       if (this.queue.length === 0) return;
-      // Synchronous intent assertion FIRST. When this runs inside an
-      // iOS MediaSession action handler (lock-screen next button), the
-      // handler may return before any subsequent async work fires; iOS
-      // samples state at that moment. Without this pre-write iOS sees
-      // whatever the lock-screen had cached (often 'paused') and
-      // renders the play-icon while the new track is loading.
-      this._assertPlaying(true);
       // Fast path: if audioEl2 is already buffered with the next
-      // track, swap roles with a quick 300 ms crossfade instead of
-      // tearing down audioEl and re-fetching from scratch. Skipped
-      // in shuffle mode because the real target is random — what we
-      // preloaded (index+1) won't match.
+      // track, hand off the preloaded URL to audioEl with a quick
+      // 300 ms crossfade instead of tearing down audioEl and re-
+      // fetching from scratch. Skipped in shuffle mode because the
+      // real target is random — what we preloaded (index+1) won't
+      // match.
       if (!this.shuffle) {
         const targetIdx = (this.index + 1) % this.queue.length;
         if (this._preloadedFor === targetIdx
@@ -434,9 +296,6 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.currentTime = 0;
         return;
       }
-      // Same reason as next() — assert intent before the async
-      // loadAndPlay path so iOS gets the right state immediately.
-      this._assertPlaying(true);
       this.index = (this.index - 1 + this.queue.length) % this.queue.length;
       this.loadAndPlay();
     },
@@ -451,7 +310,7 @@ export const usePlayerStore = defineStore('player', {
       }
       this._invalidatePreload();
       this._clearStallWatchdog();
-      this._assertPlaying(false);
+      this.playing = false;
       this.loading = false;
       this.visible = false;
     },
@@ -770,13 +629,6 @@ export const usePlayerStore = defineStore('player', {
       // background. Volume starts at 0 only when we'll fade in;
       // otherwise jump straight to baseVol so background playback
       // is audible immediately.
-      //
-      // _swapInProgress muzzles the spurious `pause` event the spec
-      // fires when src changes during playback — the pause listener
-      // checks the flag and skips state mutation. Cleared after a
-      // short delay long enough for the browser to have dispatched
-      // its pause+play pair (the play listener still wins because it
-      // sets state to true and re-asserts mediaSession).
       this.audioEl.src = preloadedUrl;
       this.audioEl.volume = wantFade ? 0 : baseVol;
       this.audioEl.currentTime = 0;
@@ -786,11 +638,7 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl.play().catch(() => { this.loading = false; });
 
       this.index = nextIdx;
-      // Metadata FIRST, then state assertion. Some iOS versions reset
-      // the lock-screen playbackState when the metadata object is
-      // replaced; asserting AFTER keeps us as the last word.
       this._updateMediaMetadata(nextTrack);
-      this._assertPlaying(true);
       this.playCountedFor = null;
       this.loading = false;
 
@@ -866,19 +714,14 @@ export const usePlayerStore = defineStore('player', {
     // Audio event handlers
     // ============================================================
     _onAudioPlay() {
-      // Intent owns this.playing now — events are noise. We still
-      // persist progress in case state changed elsewhere.
+      this.playing = true;
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
       this.savePlayerState();
     },
     _onAudioPause() {
-      // Audio element transitioning to paused is no longer a state
-      // signal — it could be a spec-mandated pause from src change,
-      // a stall, an iOS audio-session reshuffle on unlock, etc. The
-      // only state-changing pauses are those WE initiated via
-      // togglePlay / stop / queue-end, and those already called
-      // _assertPlaying(false). We still clear the stall watchdog
-      // because pause genuinely means audio isn't progressing.
+      this.playing = false;
       this._clearStallWatchdog();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       this.savePlayerState();
     },
     _armStallWatchdog() {
@@ -957,10 +800,6 @@ export const usePlayerStore = defineStore('player', {
       }
       this._sleepPreFadeVolume = null;
       this.sleepEndAt = null;
-      // Sleep timer is a legit user-initiated pause — surface it on
-      // the lock screen instead of letting the audio.pause() event
-      // get swallowed by the intent model.
-      this._assertPlaying(false);
     },
     // ============================================================
     // Playback rate (speed)
@@ -1009,9 +848,7 @@ export const usePlayerStore = defineStore('player', {
         return;
       }
       if (this.index >= this.queue.length - 1 && this.repeat !== 'all' && !this.shuffle) {
-        // Queue truly done — this is the only auto-end path where we
-        // legitimately want lock-screen to show "play" (paused).
-        this._assertPlaying(false);
+        this.playing = false;
         return;
       }
       this.next();
@@ -1066,12 +903,8 @@ export const usePlayerStore = defineStore('player', {
       // Otherwise iOS would call audioEl.play() / .pause() directly,
       // mediaSession.playbackState wouldn't update, and the icon would
       // briefly show the wrong state until the audio event fired.
-      // Intent assertion BEFORE the audio call so the lock-screen sees
-      // the right state synchronously inside the action handler — iOS
-      // can sample mediaSession right after the handler returns and
-      // would otherwise capture stale state.
-      try { ms.setActionHandler('play', () => { this._assertPlaying(true); this.audioEl?.play().catch(() => {}); }); } catch {}
-      try { ms.setActionHandler('pause', () => { this._assertPlaying(false); this.audioEl?.pause(); }); } catch {}
+      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
+      try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
       // Re-arm seekto so the in-app + Chrome/Android lock-screen
