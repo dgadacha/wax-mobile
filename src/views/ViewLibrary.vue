@@ -1,9 +1,9 @@
 <script setup>
 import { computed, ref, watch, onMounted } from 'vue';
-import { showConfirmDialog, showToast } from 'vant';
+import { showConfirmDialog } from 'vant';
 import {
   ListMusic, Disc3, User, Heart, Plus, ChevronRight, LayoutGrid,
-  Download as DownloadIcon, ArrowDownAZ, MoreHorizontal,
+  Download as DownloadIcon, ArrowDownAZ,
 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
@@ -15,7 +15,6 @@ import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import MobileSkeleton from '@/components/MobileSkeleton.vue';
-import MobileHero from '@/components/MobileHero.vue';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
 const mix = useMixStore();
@@ -26,14 +25,12 @@ const playlists = usePlaylistsStore();
 const player = usePlayerStore();
 const view = useViewStore();
 
-// Track-list ("Favoris" / "Hors-ligne") moved out of the chip row when
-// those views got promoted to full pages via ViewPlaylist's virtual
-// id path. Card grid filters stay here.
 const FILTERS = [
   { id: 'playlists', label: 'Playlists' },
   { id: 'all',       label: 'Tout' },
   { id: 'albums',    label: 'Albums' },
   { id: 'artists',   label: 'Artistes' },
+  { id: 'tracks',    label: 'Titres' },
 ];
 
 // Default to Playlists — that's where Favoris + Hors-ligne + custom
@@ -189,9 +186,15 @@ const artistItems = computed(() => {
     }));
 });
 
-// Card-grid filter. Favoris and Hors-ligne are virtual cards that
-// navigate to ViewPlaylist on tap — no inline track-list mode here
-// anymore.
+// ── Tracks ────────────────────────────────────────────────────────
+// `tracks` chip = favorites only. `offline` chip (entered by tapping
+// the Hors-ligne virtual card) = every library track with track.file
+// set, including ones not flagged liked.
+const trackItems = computed(() => {
+  const base = filter.value === 'offline' ? offlineTracks.value : lib.favorites;
+  return sortTracks(base);
+});
+
 const filteredCards = computed(() => {
   const q = search.value.trim().toLowerCase();
   let list = [];
@@ -206,15 +209,30 @@ const filteredCards = computed(() => {
   return list.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 });
 
+const filteredTracks = computed(() => {
+  const q = search.value.trim().toLowerCase();
+  if (!q) return trackItems.value;
+  return trackItems.value.filter((t) =>
+    (t.title || '').toLowerCase().includes(q)
+    || (t.uploader || '').toLowerCase().includes(q),
+  );
+});
+
+// Tracks list shows when chip is 'tracks' (favoris) or 'offline' (the
+// virtual card filter mode).
+const showingTracks = computed(() => filter.value === 'tracks' || filter.value === 'offline');
+
 function openCard(card) {
-  // Favoris and Hors-ligne now route through ViewPlaylist via virtual
-  // ids — same hero, back arrow, nav-bar title, all the trimmings.
-  // The in-place track-list mode that used to live here got removed.
-  if (card.kind === 'favorites') view.switchTo('playlist', 'favorites');
-  else if (card.kind === 'offline') view.switchTo('playlist', 'offline');
+  if (card.kind === 'favorites') filter.value = 'tracks';
+  else if (card.kind === 'offline') filter.value = 'offline';
   else if (card.kind === 'playlist') view.switchTo('playlist', card.id);
   else if (card.kind === 'album') view.switchTo('album', card.id);
   else if (card.kind === 'artist') view.switchTo('artist', card.id);
+}
+
+function playFavoritesFrom(track) {
+  const ids = filteredTracks.value.map((t) => t.id);
+  player.playFromList(track.id, ids);
 }
 
 async function createPlaylist() {
@@ -329,66 +347,97 @@ function cardIcon(card) {
       </div>
     </div>
 
-    <!-- Cards (playlists / albums / artistes / tout). Favoris and
-         Hors-ligne are virtual cards in the Playlists tab that route
-         through ViewPlaylist for their dedicated page. -->
-    <div v-if="filter === 'playlists'" class="lib-action-row">
-      <button class="ghost-row" @click="playlists.create()">
-        <Plus :size="22" :stroke-width="2" color="var(--accent)" />
-        <span>Nouvelle playlist</span>
+    <!-- Sort selector — only meaningful for track lists, so we hide it
+         on the card grids (playlists / albums / artists already have
+         their own natural ordering). -->
+    <div v-if="showingTracks && filteredTracks.length > 0" class="lib-sort-row">
+      <button class="lib-sort-btn" @click="pickSort">
+        <ArrowDownAZ :size="16" :stroke-width="2" color="var(--text-muted)" />
+        <span>{{ sortLabel }}</span>
       </button>
     </div>
 
-    <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="card" :count="4" />
-    <div v-else-if="filteredCards.length === 0" class="empty-state">
-      <LayoutGrid class="icon" :size="48" :stroke-width="1.5" />
-      <div class="label">Rien ici pour l'instant</div>
-      <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
-    </div>
-
-    <div v-else class="card-list">
-      <div
-        v-for="c in filteredCards"
-        :key="`${c.kind}-${c.id}`"
-        class="lib-card"
-        @click="openCard(c)"
-      >
-        <div
-          class="lib-card-cover"
-          :class="{ 'is-circle': c.kind === 'artist' }"
-          :style="c.cover ? {} : { background: c.gradient }"
-        >
-          <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
-          <component v-else :is="cardIcon(c)" :size="26" :stroke-width="1.8" color="rgba(255,255,255,0.75)" />
+    <!-- Tracks (favoris OR offline mode via the virtual card) -->
+    <template v-if="showingTracks">
+      <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
+      <div v-else-if="filteredTracks.length === 0" class="empty-state">
+        <component
+          :is="filter === 'offline' ? DownloadIcon : Heart"
+          class="icon"
+          :size="48"
+          :stroke-width="1.5"
+        />
+        <div class="label">
+          {{ filter === 'offline' ? 'Aucun titre hors-ligne' : 'Aucun favori' }}
         </div>
-        <div class="lib-card-meta">
-          <div class="lib-card-name text-ellipsis">{{ c.name }}</div>
-          <div class="lib-card-sub text-ellipsis">{{ c.subtitle }}</div>
+        <div class="hint">
+          {{
+            filter === 'offline'
+              ? 'Télécharge un titre depuis l’action sheet « … » pour le retrouver ici.'
+              : 'Coche un titre depuis la recherche pour le retrouver ici.'
+          }}
         </div>
-        <ChevronRight :size="16" :stroke-width="2" color="var(--text-muted)" />
       </div>
-    </div>
+      <div v-else class="track-list">
+        <MobileTrackCell
+          v-for="t in filteredTracks"
+          :key="t.id"
+          :track="t"
+          :is-playing="player.currentTrack && player.currentTrack.id === t.id"
+          :is-liked="lib.isFavorite(t)"
+          :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
+          @play="playFavoritesFrom(t)"
+          @like="lib.toggleFav(t)"
+          @more="onMore(t)"
+        />
+      </div>
+    </template>
+
+    <!-- Cards (playlists / albums / artistes / tout) -->
+    <template v-else>
+      <div v-if="filter === 'playlists'" class="lib-action-row">
+        <button class="ghost-row" @click="playlists.create()">
+          <Plus :size="22" :stroke-width="2" color="var(--accent)" />
+          <span>Nouvelle playlist</span>
+        </button>
+      </div>
+
+      <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="card" :count="4" />
+      <div v-else-if="filteredCards.length === 0" class="empty-state">
+        <LayoutGrid class="icon" :size="48" :stroke-width="1.5" />
+        <div class="label">Rien ici pour l'instant</div>
+        <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
+      </div>
+
+      <div v-else class="card-list">
+        <div
+          v-for="c in filteredCards"
+          :key="`${c.kind}-${c.id}`"
+          class="lib-card"
+          @click="openCard(c)"
+        >
+          <div
+            class="lib-card-cover"
+            :class="{ 'is-circle': c.kind === 'artist' }"
+            :style="c.cover ? {} : { background: c.gradient }"
+          >
+            <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
+            <component v-else :is="cardIcon(c)" :size="26" :stroke-width="1.8" color="rgba(255,255,255,0.75)" />
+          </div>
+          <div class="lib-card-meta">
+            <div class="lib-card-name text-ellipsis">{{ c.name }}</div>
+            <div class="lib-card-sub text-ellipsis">{{ c.subtitle }}</div>
+          </div>
+          <ChevronRight :size="16" :stroke-width="2" color="var(--text-muted)" />
+        </div>
+      </div>
+    </template>
   </div>
   </van-pull-refresh>
 </template>
 
 <style scoped>
 .library-view { min-height: 100%; }
-
-/* Hero action buttons (Favoris / Hors-ligne): same circular outlined
- * style as ViewPlaylist so the row of +/.../play reads consistently
- * across views. Kept scoped (not promoted to a shared component yet)
- * because each view scopes its own header chrome. */
-.hero-icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  border: 0;
-  display: grid;
-  place-items: center;
-}
-.hero-icon-btn:active { background: rgba(255, 255, 255, 0.16); }
 
 .lib-toolbar {
   position: sticky;

@@ -20,40 +20,9 @@ const lib = useLibraryStore();
 const playlists = usePlaylistsStore();
 const player = usePlayerStore();
 
-// Virtual playlists — Favoris and Hors-ligne route through this view
-// too (via view.switchTo('playlist', 'favorites' | 'offline')) so they
-// get the exact same hero / nav-bar / scroll behavior as a real
-// playlist. The "playlist" object is synthesized on the fly and
-// flagged with `isVirtual` so the action menus can hide rename /
-// delete and swap "Retirer de la playlist" for the right semantic
-// (toggleFav for favoris, removeDownload for offline).
-const VIRTUAL = {
-  favorites: { id: 'favorites', name: 'Favoris',    eyebrow: 'Bibliothèque', isVirtual: true, kind: 'favorites' },
-  offline:   { id: 'offline',   name: 'Hors-ligne', eyebrow: 'Bibliothèque', isVirtual: true, kind: 'offline' },
-};
-const virtual = computed(() => VIRTUAL[view.selectedPlaylistId] || null);
-
-const playlist = computed(() => {
-  if (virtual.value) {
-    // Synthesize a playlist-shaped object with the right trackIds so
-    // every downstream computed (queueIds, subtitle, etc.) keeps
-    // working without special-casing every site.
-    const ids = virtualTracks.value.map((t) => t.id);
-    return { ...virtual.value, trackIds: ids };
-  }
-  return playlists.findById(view.selectedPlaylistId);
-});
-
-const virtualTracks = computed(() => {
-  if (!virtual.value) return [];
-  if (virtual.value.kind === 'favorites') return lib.favorites;
-  if (virtual.value.kind === 'offline') return lib.tracks.filter((t) => !!t.file);
-  return [];
-});
-
+const playlist = computed(() => playlists.findById(view.selectedPlaylistId));
 const tracks = computed(() => {
   if (!playlist.value) return [];
-  if (virtual.value) return virtualTracks.value;
   return playlist.value.trackIds.map((id) => lib.findById(id)).filter(Boolean);
 });
 const queueIds = computed(() => tracks.value.map((t) => t.id));
@@ -61,22 +30,6 @@ const totalDuration = computed(() => tracks.value.reduce((s, t) => s + (t.durati
 
 const coverUrl = computed(() => tracks.value[0]?.thumbnail || '');
 const bgGradient = computed(() => playlist.value ? gradientFromString(playlist.value.name) : '');
-const eyebrow = computed(() => virtual.value?.eyebrow || 'Playlist');
-
-const emptyLabel = computed(() => {
-  if (virtual.value?.kind === 'favorites') return 'Aucun favori';
-  if (virtual.value?.kind === 'offline') return 'Aucun titre hors-ligne';
-  return 'Playlist vide';
-});
-const emptyHint = computed(() => {
-  if (virtual.value?.kind === 'favorites') {
-    return 'Coche un titre depuis la recherche pour le retrouver ici.';
-  }
-  if (virtual.value?.kind === 'offline') {
-    return 'Télécharge un titre depuis l’action sheet « … » pour le retrouver ici.';
-  }
-  return 'Ajoute des titres depuis tes favoris ou la recherche.';
-});
 
 // "Tout télécharger" doesn't have its own batch state — we derive it
 // from libraryDownloads on the playlist tracks. While at least one is
@@ -120,30 +73,6 @@ function isLiked(t) { return lib.isFavorite(t); }
 
 async function onMore() {
   if (!playlist.value) return;
-  // Virtual playlists (Favoris / Hors-ligne) don't get rename / delete
-  // / bulk-add — those only make sense for user-created playlists.
-  if (virtual.value) {
-    try {
-      const items = virtual.value.kind === 'offline'
-        ? [{ name: 'Nettoyer les orphelins' }]
-        : [{ name: 'Tout télécharger' }];
-      const { index } = await sheet.open(items);
-      if (virtual.value.kind === 'offline') {
-        if (index === 0) {
-          const removed = await lib.purgeOrphans();
-          showToast({
-            message: removed
-              ? `${removed} titre${removed > 1 ? 's' : ''} nettoyé${removed > 1 ? 's' : ''}`
-              : 'Rien à nettoyer',
-            position: 'bottom',
-          });
-        }
-      } else {
-        if (index === 0) downloadAll();
-      }
-    } catch { /* dismissed */ }
-    return;
-  }
   try {
     const { index } = await sheet.open([
       { name: 'Ajouter des titres' },
@@ -160,18 +89,12 @@ async function onMore() {
 
 async function onTrackMore(t) {
   if (!playlist.value) return;
-  // Last action label depends on the host: virtual favorites → unlike;
-  // virtual offline → drop the local MP3 (keeps the library entry);
-  // real playlist → remove from the playlist's trackIds.
-  let dangerLabel = 'Retirer de la playlist';
-  if (virtual.value?.kind === 'favorites') dangerLabel = 'Retirer des favoris';
-  else if (virtual.value?.kind === 'offline') dangerLabel = 'Supprimer du cache';
   try {
     const { index } = await sheet.open([
       { name: t.file ? 'Disponible hors-ligne ✓' : 'Télécharger', disabled: !!t.file },
       { name: 'Ajouter à la file' },
       { name: 'Ouvrir l’artiste' },
-      { name: dangerLabel, color: 'var(--danger)' },
+      { name: 'Retirer de la playlist', color: 'var(--danger)' },
     ]);
     if (index === 0 && !t.file) lib.downloadTrack(t.id);
     else if (index === 1) player.addToQueue(t.id);
@@ -179,9 +102,7 @@ async function onTrackMore(t) {
       const a = parseTrackTitle(t).artist || t.uploader;
       if (a) view.switchTo('artist', a);
     } else if (index === 3) {
-      if (virtual.value?.kind === 'favorites') lib._setLiked(t.id, false);
-      else if (virtual.value?.kind === 'offline') lib.removeDownload(t.id);
-      else playlists.removeTrack(playlist.value.id, t.id);
+      playlists.removeTrack(playlist.value.id, t.id);
     }
   } catch {}
 }
@@ -245,20 +166,13 @@ async function deleteThis() {
     <MobileHero
       :cover="coverUrl"
       :bg-gradient="bgGradient"
-      :eyebrow="eyebrow"
+      eyebrow="Playlist"
       :title="playlist.name"
       :subtitle="subtitle"
       @play="playAll"
     >
       <template #actions>
-        <!-- "Add tracks" only makes sense for user-created playlists;
-             virtual Favoris / Hors-ligne are auto-populated. -->
-        <button
-          v-if="!virtual"
-          class="hero-icon-btn"
-          aria-label="Ajouter"
-          @click="addTracks"
-        >
+        <button class="hero-icon-btn" aria-label="Ajouter" @click="addTracks">
           <Plus :size="20" :stroke-width="2.2" color="var(--text)" />
         </button>
         <button class="hero-icon-btn" aria-label="Plus" @click="onMore">
@@ -269,8 +183,8 @@ async function deleteThis() {
 
     <div v-if="tracks.length === 0" class="empty-state">
       <ListMusic class="icon" :size="48" :stroke-width="1.5" />
-      <div class="label">{{ emptyLabel }}</div>
-      <div class="hint">{{ emptyHint }}</div>
+      <div class="label">Playlist vide</div>
+      <div class="hint">Ajoute des titres depuis tes favoris ou la recherche.</div>
     </div>
 
     <div v-else class="track-list">

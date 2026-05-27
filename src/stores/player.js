@@ -62,66 +62,6 @@ async function resolvePlayUrl(track) {
   return apiUrl(track.file);
 }
 
-// iOS PWA audio-session keeper. iOS releases the system audio session
-// when an HTMLMediaElement is paused — and refuses to re-engage it
-// from a MediaSession action handler in background. Symptom: lock-
-// screen pause + lock-screen play = audio claims to be playing (lock-
-// screen progress bar advances via setPositionState interpolation)
-// but no sound, currentTime stuck at the pause point; audio only
-// actually resumes when the user reopens the app.
-//
-// The pattern Spotify / SoundCloud / Howler use: route the HTML audio
-// element through a Web Audio AudioContext via MediaElementAudioSource.
-// Once wired, AudioContext OWNS the audio session — pause/play of
-// the element no longer triggers a session release because the
-// AudioContext is still alive and connected to destination. Plain
-// audio.play() from the lock-screen MediaSession handler then works
-// reliably in background.
-//
-// A silent oscillator alone is not enough on iOS Safari PWA — iOS
-// keeps the AudioContext "warm" but still releases the underlying
-// audio session when the HTMLMediaElement pauses. The element MUST
-// flow through Web Audio.
-//
-// Both AudioContext creation and createMediaElementSource must run
-// INSIDE a user gesture (iOS rule). We lazy-init on the first user-
-// triggered play action — togglePlay, playFromList, MediaSession
-// action handlers are all user-gesture rooted.
-let _sessionCtx = null;
-let _sessionWired = false;
-function ensureAudioSession(audioEl) {
-  try {
-    if (!_sessionCtx) {
-      const Ctx = (typeof window !== 'undefined')
-        && (window.AudioContext || window.webkitAudioContext);
-      if (!Ctx) return;
-      _sessionCtx = new Ctx();
-    }
-    // Route the HTMLMediaElement through Web Audio so the system
-    // audio session is held by the AudioContext, not by the element.
-    // This is the line that actually fixes the lock-screen pause /
-    // resume bug — a silent oscillator on the side without this
-    // routing keeps the context warm but iOS still releases the
-    // audio session on audio.pause().
-    if (audioEl && !_sessionWired) {
-      try {
-        const src = _sessionCtx.createMediaElementSource(audioEl);
-        src.connect(_sessionCtx.destination);
-      } catch (e) {
-        // createMediaElementSource throws "already connected" if we
-        // attempted this before — mark wired to skip retry.
-        console.warn('[player] media element source wiring', e);
-      }
-      _sessionWired = true;
-    }
-    if (_sessionCtx.state === 'suspended') {
-      _sessionCtx.resume().catch(() => {});
-    }
-  } catch (e) {
-    console.warn('[player] audio session keeper failed', e);
-  }
-}
-
 export const usePlayerStore = defineStore('player', {
   state: () => ({
     queue: [],
@@ -167,19 +107,11 @@ export const usePlayerStore = defineStore('player', {
       const id = state.queue[state.index];
       if (!id) return false;
       const lib = useLibraryStore();
-      // Heart icon must reflect "is in Favoris" (liked !== false), not
-      // "is in library at all". Playlist-only tracks have liked:false
-      // and used to falsely render as favorites because the previous
-      // check was just `lib.tracks.some(t => t.id === id)`.
-      let libTrack;
       if (isStreamId(id)) {
         const stream = useStreamsStore().get(id);
-        if (!stream) return false;
-        libTrack = lib.tracks.find((t) => t.ytId === stream.ytId);
-      } else {
-        libTrack = lib.findById(id);
+        return !!stream && lib.tracks.some((t) => t.ytId === stream.ytId);
       }
-      return !!libTrack && libTrack.liked !== false;
+      return lib.tracks.some((t) => t.id === id);
     },
   },
   actions: {
@@ -190,15 +122,7 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl2 = markRaw(el2);
       const prefs = usePrefsStore();
       el.volume = this.muted ? 0 : prefs.volume;
-      if (el2) el2.volume = 0;
-      // ONLY el gets listeners. audioEl2 is used purely as a
-      // URL/buffer warmer for the next-track preload — we never
-      // call play() on it and never swap it into the active role,
-      // so its events would be pure noise. The original pre-0.16
-      // architecture (single-element listeners) is the one that
-      // worked correctly with iOS lock-screen state; the dual-
-      // listener + intent + setInterval edifice that grew on top
-      // confused iOS Safari more than it helped.
+      // Wire event listeners
       el.addEventListener('play', () => this._onAudioPlay());
       el.addEventListener('pause', () => this._onAudioPause());
       el.addEventListener('playing', () => {
@@ -206,10 +130,18 @@ export const usePlayerStore = defineStore('player', {
         this._clearStallWatchdog();
         // iOS Safari (17/18) only honors the registered MediaSession
         // handler set if you set them AFTER the audio is actively
-        // playing. Re-asserting them on every `playing` event is the
-        // documented WebKit workaround so the ⏮/⏭ buttons show up.
+        // playing. Setting them at app boot / before the first
+        // `playing` event makes iOS fall back to its default lock-
+        // screen controls (the ±10 s seek arrows). Re-asserting them
+        // here on every `playing` event is the documented WebKit
+        // workaround — costs nothing and finally lets ⏮/⏭ show up.
         this._registerMediaSessionHandlers();
       });
+      // 'waiting' fires when the buffer underruns. The corresponding
+      // 'playing' event fires once buffering recovers — but on a stale
+      // YouTube CDN URL (signed, expires mid-track) the audio just sits
+      // there forever with no error. Watchdog kicks in after 10 s of
+      // silence and skips the track.
       el.addEventListener('waiting', () => {
         this.loading = true;
         this._armStallWatchdog();
@@ -219,6 +151,11 @@ export const usePlayerStore = defineStore('player', {
         this._clearStallWatchdog();
         this.loading = false;
         const track = findTrack(this.queue[this.index]);
+        // Offline + the track *was supposed* to be cached = SW cache
+        // hole. Tell the user explicitly instead of the generic "can't
+        // play" so they understand this was a "should have worked
+        // offline" failure (and that warmOfflineCache will fix it
+        // next time they're online).
         const offlineMiss = typeof navigator !== 'undefined'
           && navigator.onLine === false
           && track?.file;
@@ -231,13 +168,15 @@ export const usePlayerStore = defineStore('player', {
         setTimeout(() => { if (this.queue.length > 1) this.next(); }, 3000);
       });
       el.addEventListener('timeupdate', () => {
+        // Any progress means buffer recovered — disarm any in-flight
+        // stall watchdog (covers browsers that don't fire 'playing'
+        // after a recover).
         if (this.stallTimer) this._clearStallWatchdog();
         this._onAudioTimeUpdate();
       });
       el.addEventListener('ended', () => this._onAudioEnded());
     },
     playFromList(trackId, queue) {
-      ensureAudioSession(this.audioEl);
       const idx = queue.indexOf(trackId);
       this.queue = [...queue];
       this.index = idx >= 0 ? idx : 0;
@@ -297,13 +236,11 @@ export const usePlayerStore = defineStore('player', {
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
-      ensureAudioSession(this.audioEl);
       if (this.audioEl.paused) this.audioEl.play();
       else this.audioEl.pause();
     },
     next() {
       if (this.queue.length === 0) return;
-      ensureAudioSession(this.audioEl);
       if (this.shuffle) {
         this.index = Math.floor(Math.random() * this.queue.length);
       } else {
@@ -313,7 +250,6 @@ export const usePlayerStore = defineStore('player', {
     },
     prev() {
       if (this.queue.length === 0) return;
-      ensureAudioSession(this.audioEl);
       if (this.audioEl?.currentTime > 3) {
         this.audioEl.currentTime = 0;
         return;
@@ -632,20 +568,7 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
-      // Lock-screen play: audio is routed through the AudioContext
-      // (via MediaElementAudioSource set up on first user-gesture
-      // play action), so the system audio session stays owned by
-      // Web Audio across pause/play cycles. ensureAudioSession()
-      // here just resumes the context if iOS suspended it during
-      // the lock period; the audioEl.play() then routes through
-      // Web Audio to the speakers like any other play.
-      try {
-        ms.setActionHandler('play', () => {
-          if (!this.audioEl) return;
-          ensureAudioSession(this.audioEl);
-          this.audioEl.play().catch(() => {});
-        });
-      } catch {}
+      try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
       try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}

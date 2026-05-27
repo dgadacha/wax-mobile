@@ -79,15 +79,7 @@ const navTitle = computed(() => {
     case 'settings': return 'Réglages';
     case 'artist':   return view.selectedArtist || 'Artiste';
     case 'album':    return 'Album';
-    case 'playlist': {
-      // Virtual playlists (Favoris / Hors-ligne) aren't in playlists.items;
-      // map their id to a human name so the nav-bar title fades in correctly
-      // on scroll like a real playlist.
-      const id = view.selectedPlaylistId;
-      if (id === 'favorites') return 'Favoris';
-      if (id === 'offline') return 'Hors-ligne';
-      return playlists.items.find(p => p.id === id)?.name || 'Playlist';
-    }
+    case 'playlist': return playlists.items.find(p => p.id === view.selectedPlaylistId)?.name || 'Playlist';
     case 'mix':      return 'Mix';
     case 'wrapped':  return 'Ta sélection';
     default:         return 'Wax';
@@ -255,20 +247,6 @@ onMounted(async () => {
     view.switchTo('home');
   }
   setTimeout(() => player.setupMediaSession(), 0);
-
-  // Best-effort portrait lock for the web/PWA path. Real lock is
-  // baked into Info.plist + AndroidManifest by setup-native.mjs for
-  // the Capacitor native build; this is just the cherry on top for
-  // installed PWAs on browsers that implement the Screen Orientation
-  // API (Chrome Android, recent Edge). iOS Safari ignores it
-  // silently — no harm done. Must run after a user gesture in some
-  // browsers, but in practice Chrome on Android accepts it at boot
-  // when the page is in standalone display-mode.
-  try {
-    if (screen?.orientation?.lock) {
-      screen.orientation.lock('portrait').catch(() => {});
-    }
-  } catch {}
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && modalState.visible) closeModal();

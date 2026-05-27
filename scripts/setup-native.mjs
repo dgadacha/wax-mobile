@@ -95,34 +95,6 @@ import MediaPlayer`,
     ),
 );
 
-// iOS portrait-only orientation lock. Capacitor's default Info.plist
-// lists portrait + both landscapes. Replace each <array> block (iPhone
-// + iPad variants) with portrait-only. The sentinel checks for the
-// LandscapeLeft string — once it's gone the patch becomes a no-op.
-patchFile(
-  path.join(ROOT, 'ios/App/App/Info.plist'),
-  'iOS portrait-only orientation',
-  // Sentinel: we know the patch has run when Landscape entries are
-  // absent. Inverted check via a small wrapper below.
-  '<!-- wax:portrait-only -->',
-  (s) => s
-    .replace(
-      /<key>UISupportedInterfaceOrientations<\/key>\s*<array>[\s\S]*?<\/array>/,
-      `<!-- wax:portrait-only -->
-\t<key>UISupportedInterfaceOrientations</key>
-\t<array>
-\t\t<string>UIInterfaceOrientationPortrait</string>
-\t</array>`,
-    )
-    .replace(
-      /<key>UISupportedInterfaceOrientations~ipad<\/key>\s*<array>[\s\S]*?<\/array>/,
-      `<key>UISupportedInterfaceOrientations~ipad</key>
-\t<array>
-\t\t<string>UIInterfaceOrientationPortrait</string>
-\t</array>`,
-    ),
-);
-
 // ── Android ─────────────────────────────────────────────────────────
 patchFile(
   path.join(ROOT, 'android/app/src/main/AndroidManifest.xml'),
@@ -137,18 +109,6 @@ patchFile(
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 </manifest>`,
-  ),
-);
-
-// Android portrait-only orientation lock. Adds `android:screenOrientation="portrait"`
-// to the main <activity>. Sentinel is the attribute itself.
-patchFile(
-  path.join(ROOT, 'android/app/src/main/AndroidManifest.xml'),
-  'Android portrait-only orientation',
-  'android:screenOrientation="portrait"',
-  (s) => s.replace(
-    /<activity\s+([^>]*?android:name="\.MainActivity"[^>]*?)>/,
-    (match, attrs) => `<activity\n            android:screenOrientation="portrait"\n            ${attrs.trim()}>`,
   ),
 );
 

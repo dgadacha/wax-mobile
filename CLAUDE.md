@@ -87,18 +87,6 @@ Chaque requête porte `X-Wax-Profile: <id>` → le serveur route vers `library/u
 3. **Gestion des redirects** : `fetchAndProxy(url, hopsLeft=5)` suit les redirections 302 côté serveur (YouTube CDN renvoie parfois des `redirector.googlevideo.com` qui ne forwarded pas de `Location` au navigateur).
 4. Le header `Range` est forwardé pour le streaming partiel (206).
 
-## Préchargement next + fast swap
-
-Pour éviter le gap de 1-3 s entre deux titres (résolution URL + buffer), `player.js` précharge systématiquement le prochain track dans `audioEl2` ~1.5 s après que la lecture devient stable (`playing` event → `_schedulePreloadNext()`). `_preloadNext()` résout l'URL via `resolvePlayUrl(track)` (gère blob URL offline + stream URL online), set `audioEl2.src` + `audioEl2.load()` avec `preload='auto'` pour forcer le téléchargement.
-
-Au `next()` manuel ou auto-end : si `_preloadedFor === targetIdx`, on appelle `_swapToPreloaded(fadeMs)` qui **swap les refs** `audioEl ↔ audioEl2` et crossfade RAF entre les volumes (300 ms sur next manuel, `prefs.crossfadeDuration` si crossfade activé). L'élément qui était inactif (préchargé) devient actif, l'ancien actif devient inactif et est faded out puis quiesced.
-
-**Le piège** : `bindAudio` attache les listeners aux **deux** éléments via `_attachAudioListeners`, et chaque handler filtre via `if (e.currentTarget !== this.audioEl) return;`. C'est ce qui permet au swap de fonctionner sans réattacher de listeners — après swap, `this.audioEl` pointe sur le nouvel élément actif, et les listeners (présents sur les deux) ignorent les events de l'inactif. Ne pas changer cette signature sans réfléchir.
-
-Désactivé en mode `shuffle` (cible aléatoire imprédictible) et `repeat='one'` (déjà chargé). Invalidé sur `loadAndPlay`, `stop`, `addToQueue`, `removeQueueAt`, `reorderQueue` (et reprogrammé 500 ms plus tard si en lecture).
-
-Gestion blob URLs en 3 slots : `_lastBlobUrl` (actif), `_preloadedBlobUrl` (préchargé), `_swapOutgoingBlob` (sortant pendant un swap fade — tracé en state pour être revoqué même si le swap est interrompu par un `loadAndPlay` mid-fade).
-
 ## Offline mode (PWA)
 
 Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
