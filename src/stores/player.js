@@ -138,11 +138,19 @@ export const usePlayerStore = defineStore('player', {
       const id = state.queue[state.index];
       if (!id) return false;
       const lib = useLibraryStore();
+      // Heart icon must reflect "is in Favoris" (liked !== false), not
+      // "is in library at all". Playlist-only tracks have liked:false
+      // and used to falsely render as favorites because the previous
+      // check was just `lib.tracks.some(t => t.id === id)`.
+      let libTrack;
       if (isStreamId(id)) {
         const stream = useStreamsStore().get(id);
-        return !!stream && lib.tracks.some((t) => t.ytId === stream.ytId);
+        if (!stream) return false;
+        libTrack = lib.tracks.find((t) => t.ytId === stream.ytId);
+      } else {
+        libTrack = lib.findById(id);
       }
-      return lib.tracks.some((t) => t.id === id);
+      return !!libTrack && libTrack.liked !== false;
     },
   },
   actions: {
