@@ -9,6 +9,32 @@ import { usePlayerStore } from './player';
 import { usePlaylistsStore } from './playlists';
 import { useStreamsStore } from './streams';
 
+// localStorage snapshot of library tracks. Keyed per-profile so a
+// profile switch doesn't show someone else's library while offline.
+// We keep this in sync with the in-memory store on every mutation that
+// changes the tracks list — fetch, add, remove, _setLiked, etc. — so
+// a cold boot offline can restore the full library even when the
+// service-worker NetworkFirst cache for /api/library got evicted.
+const SNAPSHOT_KEY = 'wax:library-snapshot';
+function snapshotKey() {
+  let pid = 'default';
+  try { pid = localStorage.getItem('wax:active-profile') || 'default'; } catch {}
+  return `${SNAPSHOT_KEY}:${pid}`;
+}
+function loadSnapshot() {
+  try {
+    const raw = localStorage.getItem(snapshotKey());
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return Array.isArray(data?.tracks) ? data.tracks : null;
+  } catch { return null; }
+}
+function saveSnapshot(tracks) {
+  try {
+    localStorage.setItem(snapshotKey(), JSON.stringify({ tracks, savedAt: Date.now() }));
+  } catch {}
+}
+
 export const useLibraryStore = defineStore('library', {
   state: () => ({
     tracks: [],
@@ -114,10 +140,33 @@ export const useLibraryStore = defineStore('library', {
         : this.findById(track.id);
       return !!lib && lib.liked !== false;
     },
+    // Hydrate from localStorage snapshot synchronously. Called before
+    // fetch() at boot so the UI has SOMETHING to render even when both
+    // the network AND the SW NetworkFirst cache are unavailable.
+    restoreSnapshot() {
+      const snap = loadSnapshot();
+      if (snap && this.tracks.length === 0) {
+        this.tracks = snap;
+        this.loading = false;
+      }
+    },
+    persistSnapshot() {
+      saveSnapshot(this.tracks);
+    },
     async fetch() {
       try {
         const { tracks } = await api('/api/library');
         this.tracks = tracks || [];
+        this.persistSnapshot();
+      } catch (e) {
+        // Network down OR SW cache miss — try the localStorage
+        // snapshot. If that's also empty (truly cold offline boot
+        // without prior online run), let the empty state win.
+        const snap = loadSnapshot();
+        if (snap && this.tracks.length === 0) this.tracks = snap;
+        // Re-throw so the caller can decide whether to surface a
+        // toast (App.vue silences it when isOnline is already false).
+        throw e;
       } finally {
         this.loading = false;
       }

@@ -35,27 +35,30 @@ export const useAuthStore = defineStore('auth', {
       } catch {}
     },
     async verify() {
+      // Offline short-circuit. There's no point hitting the network
+      // when we can't reach it — and trying then failing leaves the
+      // user staring at a spinner that resolves into a login gate
+      // they can't satisfy without internet. Trust the local token:
+      // if present assume it's still valid (a 401 once we're back
+      // online will fire wax:auth-expired); if absent assume the
+      // server is open (best-effort; if it really has a gate the
+      // first protected call will 401 and surface the LoginGate).
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      if (offline) {
+        this.authEnabled = !!this.token;
+        this.checking = false;
+        return;
+      }
       try {
         const r = await api('/api/auth/verify');
         this.authEnabled = !!r?.authEnabled;
       } catch (e) {
-        // Two ways verify can fail:
-        //   1) 401 on an auth-enabled server with a bad/missing token
-        //   2) Network failure (offline)
-        // We can't distinguish them from the thrown Error directly, so
-        // use navigator.onLine: when the browser says we're offline AND
-        // we have a token, assume the token is fine and let the UI
-        // proceed against cached data. The SW's NetworkFirst rule on
-        // /api/auth/verify also covers brief flaps — the cached 200
-        // response satisfies the try-branch even before this fallback
-        // kicks in. Only when we're truly offline with no cached
-        // verify hit do we land here.
-        if (typeof navigator !== 'undefined' && navigator.onLine === false && this.token) {
-          // Stay logged in optimistically — protected calls will 401
-          // later when the network returns and api.js will clear the
-          // token + fire wax:auth-expired, dropping us back to the
-          // login gate. Better than wiping it now and stranding the
-          // user in a "can't login because no network" loop.
+        // Either a 401 on an auth-enabled server with a bad token, or
+        // a network blip the SW cache couldn't cover. If we have a
+        // token, keep it and assume offline-ish — the next protected
+        // call will correct via wax:auth-expired if the token is
+        // truly dead.
+        if (this.token) {
           this.authEnabled = true;
         } else {
           this.authEnabled = true;

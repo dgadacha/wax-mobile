@@ -214,10 +214,22 @@ async function bootstrapAfterAuth() {
   if (bootstrapped) return;
   bootstrapped = true;
 
-  // Fetch profiles first — the gate blocks the rest of the UI until a
-  // profile is active (the user picks or one is remembered + still valid).
+  // Hydrate from localStorage snapshots BEFORE any network call so
+  // the UI has data to render even if every fetch below times out.
+  // Each store's fetch() also re-applies the snapshot on catch as a
+  // belt-and-suspenders fallback, but doing it eagerly here means the
+  // first paint after auth is instant regardless of cache state.
+  library.restoreSnapshot();
+  playlists.restoreSnapshot();
+  // profile.loadActiveFromStorage was already called in onMounted —
+  // it restores the profiles snapshot too.
+
   try { await profile.fetch(); }
-  catch { vantToast({ message: 'Backend injoignable', type: 'fail' }); }
+  catch {
+    // Silenced when offline (banner already says it); the snapshot
+    // restored earlier covers UI rendering for the existing profile.
+    if (isOnline.value) vantToast({ message: 'Backend injoignable', type: 'fail' });
+  }
 
   if (profile.needsPicker) {
     // Don't bother fetching library/playlists yet — they'd go through the
@@ -228,11 +240,10 @@ async function bootstrapAfterAuth() {
   try {
     await library.fetch();
   } catch (e) {
-    // Don't toast if we already know we're offline — the banner says it.
     if (isOnline.value) vantToast({ message: 'Backend injoignable', type: 'fail' });
   }
   player.restorePlayerState();
-  playlists.fetch();
+  playlists.fetch().catch(() => {});
   // Online-only side channels — open the album SSE + roll the
   // discover seed only when we have a network. Both reconnect / can
   // be re-triggered automatically when the user comes back online via
@@ -240,10 +251,6 @@ async function bootstrapAfterAuth() {
   if (isOnline.value) {
     library._listenAlbumProgress();
     discover.refresh();
-    // Refill any holes in the SW audio cache for tracks the library
-    // says are offline-ready. Runs in the background — silent unless
-    // a track is gone from the server (in which case warmOfflineCache
-    // drops t.file locally so the UI matches reality).
     library.warmOfflineCache().catch(() => {});
   }
 }
@@ -262,6 +269,22 @@ onMounted(async () => {
 
   window.addEventListener('online', onOnline);
   window.addEventListener('offline', onOffline);
+
+  // Auto-persist library + playlists snapshots on every mutation
+  // (debounced) so the localStorage cache stays in lockstep with
+  // the in-memory state. That way a cold offline boot can restore
+  // the exact data the user saw last time, not just whatever the
+  // last fetch returned.
+  let libT = null;
+  library.$subscribe(() => {
+    if (libT) return;
+    libT = setTimeout(() => { libT = null; library.persistSnapshot(); }, 1500);
+  });
+  let plT = null;
+  playlists.$subscribe(() => {
+    if (plT) return;
+    plT = setTimeout(() => { plT = null; playlists.persistSnapshot(); }, 1500);
+  });
 
   // Hook the hero-scroll listener onto .view-scroll once the DOM is
   // mounted. Passive for buttery scroll perf — we only read scrollTop.

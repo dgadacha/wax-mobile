@@ -8,6 +8,28 @@ import { defineStore } from 'pinia';
 import { api } from '@/lib/api';
 
 const ACTIVE_KEY = 'wax:active-profile';
+const PROFILES_SNAPSHOT_KEY = 'wax:profiles-snapshot';
+
+// localStorage cache of the profiles list — without it, an offline
+// boot wipes profile.profiles, needsPicker flips true, and the
+// ProfileGate shows a useless empty picker that strands the user
+// even though they had a valid active profile from a previous session.
+function loadProfilesSnapshot() {
+  try {
+    const raw = localStorage.getItem(PROFILES_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return Array.isArray(data?.profiles) ? data.profiles : null;
+  } catch { return null; }
+}
+function saveProfilesSnapshot(profiles) {
+  try {
+    localStorage.setItem(
+      PROFILES_SNAPSHOT_KEY,
+      JSON.stringify({ profiles, savedAt: Date.now() }),
+    );
+  } catch {}
+}
 
 export const useProfileStore = defineStore('profile', {
   state: () => ({
@@ -23,6 +45,11 @@ export const useProfileStore = defineStore('profile', {
   actions: {
     loadActiveFromStorage() {
       try { this.activeId = localStorage.getItem(ACTIVE_KEY) || null; } catch {}
+      // Restore the profiles snapshot too so the gate has names/colors
+      // to render offline. fetch() will overwrite once the network is
+      // back.
+      const snap = loadProfilesSnapshot();
+      if (snap && this.profiles.length === 0) this.profiles = snap;
     },
     saveActive() {
       try {
@@ -35,12 +62,19 @@ export const useProfileStore = defineStore('profile', {
       try {
         const { profiles } = await api('/api/profiles');
         this.profiles = profiles || [];
+        saveProfilesSnapshot(this.profiles);
         // If our remembered profile no longer exists (deleted on another
         // device, fresh server, etc.), drop it so the gate shows.
         if (this.activeId && !this.profiles.find((p) => p.id === this.activeId)) {
           this.activeId = null;
           this.saveActive();
         }
+      } catch (e) {
+        // Offline / network failure — the snapshot loaded in
+        // loadActiveFromStorage already populated this.profiles so the
+        // active profile still resolves. Re-throw so the caller can
+        // toast (App.vue silences when navigator.onLine === false).
+        throw e;
       } finally { this.loading = false; }
     },
     pick(id) {

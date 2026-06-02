@@ -83,30 +83,30 @@ export default defineConfig(({ mode }) => {
           // plugin per-rule.)
           runtimeCaching: [
             {
-              // SSE endpoints — explicit NetworkOnly so Workbox doesn't
-              // buffer the text/event-stream response and break the
-              // chunked delivery. Without this rule the SW's default
-              // fetch handler can wrap the streaming Response in a way
-              // that the EventSource sees no events until the server
-              // closes the connection — exactly what makes "download
-              // does nothing" look like a server problem when it's the
-              // SW that's swallowing the stream.
-              //
-              // Also covers /api/auth/* — login MUST always reach the
-              // network (caching credentials would be a footgun), and
-              // verify must reflect the live token state. A stale
-              // cached {authEnabled:false} from a pre-auth deploy
-              // would otherwise convince the client there's no gate
-              // even when the server now enforces one, hiding the
-              // LoginGate while every other call 401s in the
-              // background. auth.js handles offline tolerance via the
-              // optimistic-keep-token fallback when navigator.onLine
-              // is false, so we don't lose offline support.
+              // SSE endpoints + /api/auth/login — NetworkOnly so Workbox
+              // doesn't buffer text/event-stream responses (breaks
+              // chunked delivery) and never serves a cached login
+              // response.
               urlPattern: ({ url }) =>
                 url.pathname.startsWith('/api/jobs/') ||
                 url.pathname === '/api/album-progress' ||
-                url.pathname.startsWith('/api/auth/'),
+                url.pathname === '/api/auth/login',
               handler: 'NetworkOnly',
+            },
+            {
+              // /api/auth/verify — NetworkFirst so an offline reload
+              // gets a cached verdict instead of hanging. Short cache
+              // age (1 day) so a server-side auth flip propagates
+              // quickly once online. auth.js also short-circuits when
+              // navigator.onLine is false, so this is mostly for the
+              // "online but stalled connection" case.
+              urlPattern: ({ url }) => url.pathname === '/api/auth/verify',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'wax-auth-verify',
+                networkTimeoutSeconds: 2,
+                expiration: { maxEntries: 4, maxAgeSeconds: 60 * 60 * 24 },
+              },
             },
             {
               // Profile-scoped data endpoints — NetworkFirst so the UI

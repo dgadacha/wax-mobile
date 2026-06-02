@@ -5,6 +5,29 @@ import { showToast } from '@/lib/toast';
 import { confirmModal, promptModal } from '@/lib/modal';
 import { t } from '@/lib/i18n';
 
+// Per-profile localStorage snapshot — same role as library.js's,
+// guarantees the playlists card grid renders offline even if the
+// SW NetworkFirst cache is cold.
+const SNAPSHOT_KEY = 'wax:playlists-snapshot';
+function snapshotKey() {
+  let pid = 'default';
+  try { pid = localStorage.getItem('wax:active-profile') || 'default'; } catch {}
+  return `${SNAPSHOT_KEY}:${pid}`;
+}
+function loadSnapshot() {
+  try {
+    const raw = localStorage.getItem(snapshotKey());
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return Array.isArray(data?.items) ? data.items : null;
+  } catch { return null; }
+}
+function saveSnapshot(items) {
+  try {
+    localStorage.setItem(snapshotKey(), JSON.stringify({ items, savedAt: Date.now() }));
+  } catch {}
+}
+
 export const usePlaylistsStore = defineStore('playlists', {
   state: () => ({
     items: [],
@@ -14,10 +37,25 @@ export const usePlaylistsStore = defineStore('playlists', {
     findById: (state) => (id) => state.items.find((p) => p.id === id) || null,
   },
   actions: {
+    restoreSnapshot() {
+      const snap = loadSnapshot();
+      if (snap && this.items.length === 0) {
+        this.items = snap;
+        this.loading = false;
+      }
+    },
+    persistSnapshot() {
+      saveSnapshot(this.items);
+    },
     async fetch() {
       try {
         const { playlists } = await api('/api/playlists');
         this.items = playlists || [];
+        this.persistSnapshot();
+      } catch (e) {
+        const snap = loadSnapshot();
+        if (snap && this.items.length === 0) this.items = snap;
+        throw e;
       } finally {
         this.loading = false;
       }
