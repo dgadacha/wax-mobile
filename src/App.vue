@@ -258,6 +258,14 @@ async function bootstrapAfterAuth() {
 onMounted(async () => {
   prefs.load();
   profile.loadActiveFromStorage();
+  // Restore localStorage snapshots SYNCHRONOUSLY at boot, before the
+  // first await. That way Vue's first render sees the full library +
+  // playlists (offline-cached version) immediately — no flicker
+  // through "loading…" / empty states, and no risk of a component
+  // throwing on unexpected empty data while the async bootstrap is
+  // still in flight.
+  try { library.restoreSnapshot(); } catch (e) { console.warn('[boot] library snapshot', e); }
+  try { playlists.restoreSnapshot(); } catch (e) { console.warn('[boot] playlists snapshot', e); }
   if (view.name === 'download' || view.name == null) {
     view.switchTo('home');
   }
@@ -319,9 +327,18 @@ onMounted(async () => {
   // answers 200 either way and tells us whether the gate is active. If
   // it's not, loggedIn flips to true regardless of token presence and
   // bootstrap runs immediately.
-  auth.loadToken();
-  await auth.verify();
-  if (auth.loggedIn) await bootstrapAfterAuth();
+  //
+  // Wrapped in try/catch so a thrown error during boot (network blip
+  // before our offline short-circuit kicks in, JSON parse failure on a
+  // weird SW response, etc.) doesn't blank the page. The snapshots
+  // restored at the top already gave Vue something to render.
+  try {
+    auth.loadToken();
+    await auth.verify();
+    if (auth.loggedIn) await bootstrapAfterAuth();
+  } catch (e) {
+    console.error('[boot] failed', e);
+  }
 
   // Check onboarding AFTER auth so a fresh-install user lands on
   // the login gate first, then sees the 3-screen intro post-login.
