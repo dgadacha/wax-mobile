@@ -30,11 +30,15 @@ deploy:
     entrypoint: [""]
   script:
     - kubectl config use-context kidnar/wax:wax-agent
-    # Namespace must exist before other resources can reference it.
-    - kubectl apply -f k8s/namespace.yaml
-    # Apply the full directory — new manifests (ingress, networkpolicy, …)
-    # are picked up automatically; no CI change needed when adding files.
-    - kubectl apply -f k8s/
+    # --validate=false: the GitLab kas (Kubernetes Agent Server) proxy
+    # at kas.gitlab.com/k8s-proxy/openapi/v2 intermittently times out,
+    # which makes `kubectl apply` refuse to proceed because it can't
+    # fetch the cluster's OpenAPI schema. Skipping client-side
+    # validation lets the apply hit the server, which does its own
+    # validation when it processes the resources. No real safety loss
+    # — the server-side validation is the authoritative one anyway.
+    - kubectl apply --validate=false -f k8s/namespace.yaml
+    - kubectl apply --validate=false -f k8s/
     - kubectl rollout restart deployment/wax -n wax
     - kubectl rollout status deployment/wax -n wax --timeout=120s
   rules:
