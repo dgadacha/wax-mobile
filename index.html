@@ -20,15 +20,102 @@
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <title>Wax</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <!-- Google Fonts loaded NON-blocking (`media="print"` then swap to
+       `all` on load). Was previously a plain <link rel="stylesheet">,
+       which renders-blocks the initial paint — fine online but causes a
+       blank page when the device is offline, because the browser waits
+       on fonts.googleapis.com indefinitely (or until its long fetch
+       timeout) before showing anything. The fonts arrive asynchronously
+       now, the system fallback (declared in mobile.css's font stacks)
+       paints immediately, and Wax loads even with no network.
+       <noscript> covers the rare no-JS case. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
-    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
     rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
+    media="print"
+    onload="this.media='all';this.onload=null;"
   />
+  <noscript>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
+    />
+  </noscript>
+  <!-- Inline pre-mount placeholder + watchdog. Without these, a slow or
+       failing JS load (offline + SW cache evicted, chunk corrupted on
+       disk, etc.) leaves <div id="app"> empty and the page reads as
+       100% blank to the user. The placeholder paints a centered logo
+       + spinner inline (zero JS, zero network); Vue's `app.mount` wipes
+       it once the real UI takes over. The watchdog flips to an error
+       message + reload button if mount hasn't happened in 8 s, which
+       is the only escape hatch when the JS bundle is unrecoverable. -->
+  <style>
+    html, body { margin: 0; padding: 0; background: #0d0f14; color: #f3f4f6; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+    #app:empty::before {
+      content: "";
+      position: fixed; inset: 0;
+      display: grid; place-items: center;
+      background: #0d0f14;
+    }
+    .wax-boot {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 24px;
+      background: #0d0f14;
+      color: rgba(255,255,255,0.6);
+      font-size: 14px;
+      text-align: center;
+      padding: 24px;
+    }
+    .wax-boot-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #7c5cff;
+      border-radius: 50%;
+      animation: wax-spin 0.9s linear infinite;
+    }
+    @keyframes wax-spin { to { transform: rotate(360deg); } }
+    .wax-boot-action {
+      background: #7c5cff; color: #fff;
+      border: 0; border-radius: 10px;
+      padding: 12px 24px; font-size: 14px; font-weight: 600;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <div class="wax-boot" id="wax-boot">
+      <div class="wax-boot-spinner"></div>
+      <div id="wax-boot-msg">Chargement…</div>
+    </div>
+  </div>
+  <script>
+    // 8 s watchdog: if Vue hasn't replaced #app's contents, surface a
+    // reload affordance so the user isn't trapped on a perpetual spinner.
+    (function () {
+      var t = setTimeout(function () {
+        var boot = document.getElementById('wax-boot');
+        if (!boot) return;
+        boot.innerHTML =
+          '<div style="font-size:18px;color:#f3f4f6;font-weight:600;">L’app ne s’est pas chargée</div>' +
+          '<div style="max-width:280px;color:rgba(255,255,255,0.55);">Vérifie ta connexion ou rouvre l’application.</div>' +
+          '<button class="wax-boot-action" onclick="location.reload()">Réessayer</button>';
+      }, 8000);
+      // Vue's mount removes #wax-boot — observe its removal to cancel.
+      var obs = new MutationObserver(function () {
+        if (!document.getElementById('wax-boot')) {
+          clearTimeout(t);
+          obs.disconnect();
+        }
+      });
+      obs.observe(document.getElementById('app'), { childList: true, subtree: true });
+    })();
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
