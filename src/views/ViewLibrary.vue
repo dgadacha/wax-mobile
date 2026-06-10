@@ -3,13 +3,14 @@ import { computed, ref, watch, onMounted } from 'vue';
 import { showConfirmDialog } from 'vant';
 import {
   ListMusic, Disc3, User, Heart, Plus, ChevronRight, LayoutGrid,
-  Download as DownloadIcon, ArrowDownAZ,
+  Download as DownloadIcon, ArrowDownAZ, LayoutList, Search,
 } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
 import { useMixStore } from '@/stores/mix';
+import { useProfileStore } from '@/stores/profile';
 import { fmtDuration, parseTrackTitle, normalizeArtistKey, gradientFromString } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
@@ -24,6 +25,35 @@ const lib = useLibraryStore();
 const playlists = usePlaylistsStore();
 const player = usePlayerStore();
 const view = useViewStore();
+const profile = useProfileStore();
+
+// Initial used in the avatar circle when there's an active profile.
+const profileInitial = computed(() => {
+  const name = profile.activeProfile?.name || '';
+  return name.trim().charAt(0).toUpperCase() || '?';
+});
+function openProfilePicker() {
+  haptics.light();
+  profile.openPicker();
+}
+
+// View mode for the card list — list (default, denser, Spotify-style)
+// vs. grid (2 columns, larger covers). Persisted so it survives reloads.
+const VIEW_MODE_KEY = 'wax:lib-view-mode';
+const viewMode = ref('list'); // 'list' | 'grid'
+onMounted(() => {
+  try {
+    const saved = localStorage.getItem(VIEW_MODE_KEY);
+    if (saved === 'list' || saved === 'grid') viewMode.value = saved;
+  } catch {}
+});
+watch(viewMode, (v) => {
+  try { localStorage.setItem(VIEW_MODE_KEY, v); } catch {}
+});
+function toggleViewMode() {
+  haptics.selection();
+  viewMode.value = viewMode.value === 'list' ? 'grid' : 'list';
+}
 
 const FILTERS = [
   { id: 'playlists', label: 'Playlists' },
@@ -338,33 +368,68 @@ function cardIcon(card) {
     @refresh="onRefresh"
   >
   <div class="library-view">
-    <div class="lib-toolbar">
+    <!-- Big page header: profile avatar (tap → open picker) on the left,
+         display title in the middle, "+" on the right to create a new
+         playlist. Universal modern mobile music app pattern. -->
+    <header class="lib-header">
+      <button
+        class="lib-avatar"
+        :style="profile.activeProfile ? { background: profile.activeProfile.color } : null"
+        aria-label="Changer de profil"
+        @click="openProfilePicker"
+      >
+        {{ profileInitial }}
+      </button>
+      <h1 class="lib-title">Bibliothèque</h1>
+      <button class="lib-action" aria-label="Nouvelle playlist" @click="playlists.create()">
+        <Plus :size="22" :stroke-width="2.2" color="var(--text)" />
+      </button>
+    </header>
+
+    <!-- Filter chips: outlined pill style, horizontally scrollable. -->
+    <div class="lib-chips">
+      <button
+        v-for="f in FILTERS"
+        :key="f.id"
+        class="chip"
+        :class="{ active: filter === f.id }"
+        @click="filter = f.id"
+      >
+        {{ f.label }}
+      </button>
+    </div>
+
+    <!-- Slim search bar under the chips. Filters cards by name when on
+         card modes; filters across the whole library (not just favs) when
+         on track mode — see `trackItems` computed. -->
+    <div class="lib-search-row">
       <van-search
         v-model="search"
         placeholder="Rechercher dans ta bibliothèque"
         shape="round"
         clearable
       />
-      <div class="lib-chips">
-        <button
-          v-for="f in FILTERS"
-          :key="f.id"
-          class="chip"
-          :class="{ active: filter === f.id }"
-          @click="filter = f.id"
-        >
-          {{ f.label }}
-        </button>
-      </div>
     </div>
 
-    <!-- Sort selector — only meaningful for track lists, so we hide it
-         on the card grids (playlists / albums / artists already have
-         their own natural ordering). -->
-    <div v-if="showingTracks && filteredTracks.length > 0" class="lib-sort-row">
-      <button class="lib-sort-btn" @click="pickSort">
+    <!-- Sort + view-mode row. Sort label only when sort actually applies
+         (track mode); the list/grid toggle always shows for cards. -->
+    <div
+      v-if="(showingTracks && filteredTracks.length > 0) || (!showingTracks && filteredCards.length > 0)"
+      class="lib-sort-row"
+    >
+      <button v-if="showingTracks" class="lib-sort-btn" @click="pickSort">
         <ArrowDownAZ :size="16" :stroke-width="2" color="var(--text-muted)" />
         <span>{{ sortLabel }}</span>
+      </button>
+      <span v-else />
+      <button
+        v-if="!showingTracks"
+        class="lib-view-toggle"
+        :aria-label="viewMode === 'list' ? 'Vue grille' : 'Vue liste'"
+        @click="toggleViewMode"
+      >
+        <LayoutGrid v-if="viewMode === 'list'" :size="18" :stroke-width="2" color="var(--text)" />
+        <LayoutList v-else :size="18" :stroke-width="2" color="var(--text)" />
       </button>
     </div>
 
@@ -420,7 +485,7 @@ function cardIcon(card) {
         <div class="hint">Ta bibliothèque apparaîtra ici dès que tu ajouteras des titres.</div>
       </div>
 
-      <div v-else class="card-list">
+      <div v-else class="card-list" :class="{ 'is-grid': viewMode === 'grid' }">
         <div
           v-for="c in filteredCards"
           :key="`${c.kind}-${c.id}`"
@@ -450,43 +515,57 @@ function cardIcon(card) {
 <style scoped>
 .library-view { min-height: 100%; }
 
-.lib-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  background: var(--bg);
-  padding-bottom: 6px;
-}
-.lib-toolbar :deep(.van-search) {
-  background: var(--bg);
-  padding: 8px 12px 4px;
-}
-.lib-toolbar :deep(.van-search__content) { background: var(--card); }
-
-.lib-sort-row {
+/* === Header === Big display title with circular profile avatar + plus
+ * action. Same layout vocabulary as every modern mobile music app —
+ * the avatar gates profile switching, the title roots the page, the
+ * action affords the primary creation gesture. */
+.lib-header {
   display: flex;
-  justify-content: flex-end;
-  padding: 0 var(--sp-4) var(--sp-2);
-}
-.lib-sort-btn {
-  background: transparent;
-  border: 0;
-  display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
-  color: var(--text-muted);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--r-1);
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-4) var(--sp-3);
 }
-.lib-sort-btn:active { background: var(--card-hover); }
+.lib-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font: 700 15px/1 var(--font-body);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.lib-avatar:active { transform: scale(0.93); }
+.lib-title {
+  flex: 1 1 auto;
+  margin: 0;
+  font: var(--t-display-xl);
+  letter-spacing: var(--ls-display);
+  color: var(--text);
+}
+.lib-action {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.lib-action:active { background: rgba(255,255,255,0.06); }
 
+/* === Filter chips === Outlined pill row, horizontally scrollable. The
+ * outlined variant lets the chips breathe and reads as "filter"
+ * affordance rather than "primary action". */
 .lib-chips {
   display: flex;
-  gap: 8px;
-  padding: 4px 12px 10px;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4) var(--sp-3);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -494,50 +573,101 @@ function cardIcon(card) {
 
 .chip {
   flex: 0 0 auto;
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: var(--card);
-  color: var(--text-soft);
-  border: 1px solid var(--border);
-  font-size: 13px;
+  padding: 7px 16px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.15);
+  font: 500 14px/1.2 var(--font-body);
   cursor: pointer;
-  transition: background 120ms, color 120ms, border-color 120ms;
+  transition: background var(--motion-short) var(--ease),
+              color var(--motion-short) var(--ease),
+              border-color var(--motion-short) var(--ease);
 }
+.chip:active { transform: scale(0.96); }
 .chip.active {
   background: var(--accent);
   color: var(--bg);
   border-color: var(--accent);
-  font-weight: 600;
+  font-weight: 700;
 }
 
+/* === Search === slim, less prominent than before. Lives below the
+ * chips so the chips dominate the visual hierarchy at the top of the
+ * page. */
+.lib-search-row :deep(.van-search) {
+  background: var(--bg);
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+.lib-search-row :deep(.van-search__content) {
+  background: var(--card);
+  border-radius: var(--r-2);
+}
+
+/* === Sort + view toggle row === Sort label left (track mode only),
+ * grid/list toggle right (cards mode only). */
+.lib-sort-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-1) var(--sp-4) var(--sp-2);
+}
+.lib-sort-btn {
+  background: transparent;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-1) var(--sp-1) 0;
+  color: var(--text);
+  font: var(--t-meta);
+  cursor: pointer;
+  border-radius: var(--r-1);
+}
+.lib-sort-btn:active { color: var(--text-muted); }
+.lib-view-toggle {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--r-1);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.lib-view-toggle:active { background: rgba(255,255,255,0.08); }
+
+/* === Action rows + ghost button === unchanged behavior, refined look. */
 .lib-action-row { padding: 4px 0; }
 .ghost-row {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
   background: transparent;
   border: 0;
   color: var(--text);
-  font-size: 15px;
+  font: var(--t-subtitle);
   cursor: pointer;
 }
 .ghost-row:active { background: var(--card-hover); }
 
-.card-list { padding-bottom: 16px; }
+/* === Card list (default) === single column, denser, cover + 2-line meta.
+ * Circular cover for artists, rounded-square for everything else. */
+.card-list { padding: 0 0 var(--sp-4); }
 .lib-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 14px;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
 }
 .lib-card:active { background: var(--card-hover); }
 .lib-card-cover {
   width: 56px;
   height: 56px;
-  border-radius: 6px;
+  border-radius: var(--r-1);
   background: var(--card-hover);
   overflow: hidden;
   flex: 0 0 auto;
@@ -546,6 +676,31 @@ function cardIcon(card) {
 }
 .lib-card-cover.is-circle { border-radius: 50%; }
 .lib-card-cover img { width: 100%; height: 100%; object-fit: cover; }
+
+/* === Card grid === 2-col with bigger covers + meta below. Same .lib-card
+ * children, layout flipped from row to column. */
+.card-list.is-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3) var(--sp-4);
+}
+.card-list.is-grid .lib-card {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border-radius: var(--r-3);
+}
+.card-list.is-grid .lib-card-cover {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--r-2);
+}
+.card-list.is-grid .lib-card-cover.is-circle { border-radius: 50%; }
+.card-list.is-grid .lib-card-meta { width: 100%; }
+.card-list.is-grid :deep(.lucide-chevron-right) { display: none; }
 
 .lib-card-meta { flex: 1 1 auto; min-width: 0; }
 .lib-card-name { font-size: 15px; color: var(--text); font-weight: 500; }

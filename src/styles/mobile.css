@@ -60,6 +60,21 @@
     Roboto, system-ui, sans-serif;
   --font-display: 'Bricolage Grotesque', 'Inter', system-ui, sans-serif;
 
+  /* Modern mobile music app type scale. Generous display sizes at the
+   * top of pages with negative letter-spacing for that tight headline
+   * look; tighter section headers; body that sits between Inter's
+   * weights cleanly. Use the token, not the literal — so we can bump
+   * the whole system in one place later. */
+  --t-display-xl: 700 34px/1.05 var(--font-display);    /* page hero, "Bibliothèque" */
+  --t-display:    700 28px/1.1  var(--font-display);    /* hero titles, playlist names */
+  --t-title:      700 22px/1.2  var(--font-display);    /* section headers */
+  --t-subtitle:   600 17px/1.25 var(--font-body);       /* card names, track titles */
+  --t-body:       500 15px/1.4  var(--font-body);       /* default body */
+  --t-meta:       500 13px/1.35 var(--font-body);       /* sub-meta, captions */
+  --t-eyebrow:    600 11px/1.2  var(--font-body);       /* uppercase tags */
+  --ls-display: -0.5px;   /* tight letter-spacing for display sizes */
+  --ls-eyebrow: 1.4px;    /* tracked-out for eyebrows */
+
   /* Layout */
   --nav-height: 52px;
   --tab-height: 56px;
