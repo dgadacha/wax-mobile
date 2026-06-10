@@ -65,7 +65,8 @@ RUN set -eux \
       python3-pip \
       ffmpeg \
  && pip3 install --no-cache-dir --break-system-packages yt-dlp \
- && ln -sf "$(command -v yt-dlp)" /usr/local/bin/yt-dlp \
+ && YTDLP_PATH="$(command -v yt-dlp)" \
+ && [ "$YTDLP_PATH" = "/usr/local/bin/yt-dlp" ] || ln -sf "$YTDLP_PATH" /usr/local/bin/yt-dlp \
  && apt-get purge -y python3-pip \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* \
