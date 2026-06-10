@@ -38,7 +38,13 @@ function onClear() {
   search.clearAll();
 }
 
-function isLiked(r) { return lib.tracks.some((t) => t.ytId === r.id); }
+// "Liked" means the track is in Favoris (liked !== false) — NOT merely
+// present in the library. Tracks land in the library with liked:false
+// through playlist adds / saved mixes / album imports; the old
+// presence-only check showed those as already-hearted in search.
+function isLiked(r) {
+  return lib.tracks.some((t) => t.ytId === r.id && t.liked !== false);
+}
 
 function playResult(r) {
   haptics.light();
@@ -47,17 +53,10 @@ function playResult(r) {
 
 function toggleLike(r) {
   haptics.medium();
-  if (isLiked(r)) {
-    const existing = lib.tracks.find((t) => t.ytId === r.id);
-    if (existing) lib.remove(existing.id);
-  } else {
-    lib.add({
-      id: r.id, ytId: r.id, title: r.title, uploader: r.uploader,
-      duration: r.duration, thumbnail: r.thumbnail,
-      url: `https://www.youtube.com/watch?v=${r.id}`,
-    }, { silent: true });
-    showToast({ message: 'Ajouté aux favoris', position: 'bottom' });
-  }
+  // toggleFav flips the liked flag (or optimistically adds a favorite).
+  // The old path called lib.remove() on un-heart, which DELETED the row
+  // from the library and yanked it out of every playlist.
+  lib.toggleFav({ ...asTrack(r), isStream: true });
 }
 
 // Ensure a YouTube search result exists in the library (liked:false so
