@@ -39,11 +39,11 @@
 
 ### Une fois installée
 
-- **Accueil** : tes derniers titres + une grille "Pour toi" qui se génère à partir de tes favoris.
-- **Rechercher** : tape un titre, un artiste, ou colle une URL YouTube. Heart pour ajouter aux favoris, tap pour lire.
-- **Bibliothèque** : tes playlists, albums et artistes regroupés. Le bouton "+ Nouvelle playlist" est dans le filtre Playlists.
-- **Réglages** : choisis ton thème, ta couleur d'accent, ton EQ. Exporte/importe ta lib en JSON.
-- **Multi-profil** : depuis Réglages → Profil → Changer, tu peux créer plusieurs profils. Chacun a ses propres favoris et playlists.
+- **Accueil** : tuiles de reprise rapide + carrousels (récemment joués, tes titres du moment, artistes) + "Pour toi" généré depuis tes favoris. La roue dentée en haut ouvre les Réglages, l'étoile ouvre tes stats.
+- **Rechercher** : barre blanche en haut — tape un titre, un artiste, ou colle une URL YouTube. En dessous, les cartes "Parcourir" sautent direct dans tes favoris / albums / artistes.
+- **Bibliothèque** : tes playlists, albums et artistes regroupés derrière des chips (re-tape une chip pour tout réafficher). Le "+" en haut crée une playlist, la loupe filtre.
+- **Réglages** (roue dentée sur l'Accueil) : thème, couleur d'accent, EQ, export/import JSON.
+- **Multi-profil** : depuis Réglages → ligne profil en haut, tu peux créer plusieurs profils. Chacun a ses propres favoris et playlists.
 
 ### Limites de la PWA (Safari iOS)
 
@@ -289,7 +289,7 @@ Un seul conteneur sert le frontend (build Vite baked-in via le `web-builder` sta
 
 Pré-1.0, en chantier actif.
 
-**Fait** : tab bar (Accueil / Rechercher / Bibliothèque / Réglages), Spotify-like library unifiée, profil Netflix "Qui écoute ?", player mini + plein écran avec barre de progression, mix YouTube, action sheets, theme picker 10 themes + couleur d'accent, langue (fr/en), EQ 3-bandes live, backup export/import, pull-to-refresh, haptics, safe areas iOS/Android, PWA installable, lyrics, queue sheet.
+**Fait** : refonte UI/UX complète façon Spotify (v0.19) — tab bar 3 onglets (Accueil / Rechercher / Bibliothèque, Réglages derrière la roue dentée), heros album/playlist avec dégradé tiré de la cover et FAB play, action sheets plein écran avec artwork, player plein écran en dégradé adaptatif avec play blanc, mini player flottant teinté, paroles sur fond coloré, login en deux écrans (Start → formulaire), profils en cercles. Plus : library unifiée, player mini + plein écran, mix YouTube, theme picker 11 thèmes + couleur d'accent, langue (fr/en), EQ 3-bandes live, backup export/import, pull-to-refresh, haptics, safe areas iOS/Android, PWA installable, lyrics synchronisées, queue sheet.
 
 **Reste** : drag-reorder playlists, offline storage device-side via Capacitor filesystem, background audio Android via foreground service, share natif, upload d'avatar profil par caméra. Voir `CLAUDE.md` pour le détail.
 

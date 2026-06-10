@@ -12,6 +12,10 @@
 // theme switch).
 export const THEMES = [
   // ---------- Dark family ----------
+  // Default since the v0.19 Spotify-style overhaul — #121212 surfaces +
+  // signature green. The chrome (tab bar, sheets, hero gradients) is
+  // designed against this palette first; other themes re-tint it.
+  { id: 'spotify',     labelKey: 'theme.spotify',     kind: 'dark',  swatch: ['#121212', '#242424', '#1ED760'] },
   { id: 'dark',        labelKey: 'theme.dark',        kind: 'dark',  swatch: ['#0d0d10', '#28282e', '#A855F7'] },
   { id: 'midnight',    labelKey: 'theme.midnight',    kind: 'dark',  swatch: ['#0a0c14', '#1f2236', '#818cf8'] },
   { id: 'mocha',       labelKey: 'theme.mocha',       kind: 'dark',  swatch: ['#150f0c', '#2a201c', '#F59E0B'] },
@@ -26,7 +30,7 @@ export const THEMES = [
   { id: 'glacier',     labelKey: 'theme.glacier',     kind: 'light', swatch: ['#dde6ee', '#f3f6fa', '#06B6D4'] },
 ];
 
-export const DEFAULT_THEME_ID = 'dawn';
+export const DEFAULT_THEME_ID = 'spotify';
 export const THEME_IDS = THEMES.map((t) => t.id);
 export const themeById = (id) => THEMES.find((t) => t.id === id) || null;
 export const darkThemes = () => THEMES.filter((t) => t.kind === 'dark');

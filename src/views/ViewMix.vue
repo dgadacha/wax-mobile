@@ -36,14 +36,19 @@ const sourceTitle = computed(() => mix.current?.sourceTitle || 'Mix');
 const cover = computed(() => tracks.value[0]?.thumbnail || '');
 const bgGradient = computed(() => gradientFromString(sourceTitle.value));
 
-const subtitle = computed(() => {
+const meta = computed(() => {
   const n = queueIds.value.length;
   if (!n) return '';
-  return `${n} titres · Mix temporaire`;
+  return `Mix temporaire · ${n} titres`;
 });
 
-function playAll() {
+const isCurrentContext = computed(() =>
+  !!player.currentTrack && queueIds.value.includes(player.currentTrack.id),
+);
+const heroPlaying = computed(() => player.playing && isCurrentContext.value);
+function onHeroPlay() {
   if (queueIds.value.length === 0) return;
+  if (isCurrentContext.value) { player.togglePlay(); return; }
   player.queue = [...queueIds.value];
   player.index = 0;
   player.loadAndPlay();
@@ -63,14 +68,14 @@ function save() {
     <MobileHero
       :cover="cover"
       :bg-gradient="bgGradient"
-      eyebrow="Mix"
       :title="`Mix : ${sourceTitle}`"
-      :subtitle="subtitle"
-      @play="playAll"
+      :meta="meta"
+      :playing="heroPlaying"
+      @play="onHeroPlay"
     >
       <template #actions>
         <button class="hero-icon-btn save" aria-label="Sauvegarder" @click="save">
-          <Bookmark :size="16" :stroke-width="2.2" color="var(--bg)" />
+          <Bookmark :size="16" :stroke-width="2.2" color="currentColor" />
           <span>Sauvegarder</span>
         </button>
       </template>
@@ -91,27 +96,30 @@ function save() {
       />
     </div>
   </div>
-  <div v-else class="empty-state">
+  <div v-else class="empty-state mix-empty">
     <Sparkles class="icon" :size="48" :stroke-width="1.5" />
     <div class="label">Aucun mix en cours</div>
-    <div class="hint">Lance un mix depuis le menu « … » d'un titre.</div>
+    <div class="hint">Lance un mix depuis le menu « ⋮ » d'un titre.</div>
   </div>
 </template>
 
 <style scoped>
 .mix-view { min-height: 100%; padding-bottom: 16px; }
+/* No-mix empty state has no hero — clear the floating nav-bar. */
+.mix-empty { padding-top: calc(var(--safe-top) + 96px); }
 .hero-icon-btn.save {
-  background: var(--accent);
-  color: var(--bg);
+  background: transparent;
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 7px 14px;
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  border: 0;
+  font: 700 13px/1.2 var(--font-body);
   width: auto;
   height: auto;
+  cursor: pointer;
 }
+.hero-icon-btn.save:active { border-color: #fff; }
 </style>

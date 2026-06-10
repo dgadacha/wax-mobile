@@ -16,7 +16,7 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Wax" />
-  <meta name="theme-color" content="#0d0f14" />
+  <meta name="theme-color" content="#121212" />
   <link rel="icon" type="image/png" href="/favicon.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <title>Wax</title>
@@ -33,14 +33,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
     rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
     media="print"
     onload="this.media='all';this.onload=null;"
   />
   <noscript>
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@1,400;1,500;1,600;1,700&display=swap"
     />
   </noscript>
   <!-- Inline pre-mount placeholder + watchdog. Without these, a slow or
@@ -52,20 +52,20 @@
        message + reload button if mount hasn't happened in 8 s, which
        is the only escape hatch when the JS bundle is unrecoverable. -->
   <style>
-    html, body { margin: 0; padding: 0; background: #0d0f14; color: #f3f4f6; }
+    html, body { margin: 0; padding: 0; background: #121212; color: #f3f4f6; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
     #app:empty::before {
       content: "";
       position: fixed; inset: 0;
       display: grid; place-items: center;
-      background: #0d0f14;
+      background: #121212;
     }
     .wax-boot {
       position: fixed; inset: 0;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
       gap: 24px;
-      background: #0d0f14;
+      background: #121212;
       color: rgba(255,255,255,0.6);
       font-size: 14px;
       text-align: center;
@@ -74,13 +74,13 @@
     .wax-boot-spinner {
       width: 32px; height: 32px;
       border: 3px solid rgba(255,255,255,0.15);
-      border-top-color: #7c5cff;
+      border-top-color: #1ED760;
       border-radius: 50%;
       animation: wax-spin 0.9s linear infinite;
     }
     @keyframes wax-spin { to { transform: rotate(360deg); } }
     .wax-boot-action {
-      background: #7c5cff; color: #fff;
+      background: #1ED760; color: #000;
       border: 0; border-radius: 10px;
       padding: 12px 24px; font-size: 14px; font-weight: 600;
       cursor: pointer;

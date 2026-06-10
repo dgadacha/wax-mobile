@@ -8,6 +8,7 @@ const LOCALE_IDS = SUPPORTED_LOCALES.map((l) => l.id);
 // User-pickable accent palette. Each entry drives every `--accent*` CSS var
 // once `applyAccent(hex)` runs. Mobile shell picks from this in Settings.
 export const ACCENT_SWATCHES = [
+  { id: 'green',   label: 'Vert',    hex: '#1ED760' },
   { id: 'violet',  label: 'Violet',  hex: '#7c5cff' },
   { id: 'sky',     label: 'Ciel',    hex: '#3aa8ff' },
   { id: 'emerald', label: 'Émeraude', hex: '#36c997' },
@@ -157,6 +158,15 @@ export const usePrefsStore = defineStore('prefs', {
         if (typeof p.downloadsWifiOnly === 'boolean') {
           this.downloadsWifiOnly = p.downloadsWifiOnly;
         }
+        // One-time migration to the v0.19 Spotify-style redesign: land
+        // every existing install on the new default theme + green accent
+        // once. The flag is stamped by save(), so any later theme/accent
+        // pick sticks normally.
+        if (!p.uiSpotifyMigrated) {
+          this.themeId = DEFAULT_THEME_ID;
+          this.accentColor = '#1ED760';
+          this.save();
+        }
       } catch {}
       this.applyTheme();
       applyAccent(this.accentColor);
@@ -176,6 +186,7 @@ export const usePrefsStore = defineStore('prefs', {
           downloadQuality: this.downloadQuality,
           downloadsWifiOnly: this.downloadsWifiOnly,
           mobileLocaleMigrated: true,
+          uiSpotifyMigrated: true,
         }));
       } catch {}
     },

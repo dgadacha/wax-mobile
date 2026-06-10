@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref, onMounted, watch } from 'vue';
-import { Search as SearchIcon, Sparkles, Clock, X } from 'lucide-vue-next';
+import {
+  Sparkles, Clock, X, Heart, ListMusic, Disc3,
+  User, ArrowDownCircle, Plus, ListPlus, ListEnd, Mic2,
+} from 'lucide-vue-next';
 import { useSearchStore, makeSearchHandler } from '@/stores/search';
 import { useLibraryStore } from '@/stores/library';
 import { useStreamsStore } from '@/stores/streams';
@@ -9,6 +12,7 @@ import { useMixStore } from '@/stores/mix';
 import { useViewStore } from '@/stores/view';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { parseTrackTitle } from '@/lib/format';
+import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import { showToast } from 'vant';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
@@ -57,9 +61,7 @@ function toggleLike(r) {
 }
 
 // Ensure a YouTube search result exists in the library (liked:false so
-// it doesn't pollute Favoris) and return its library id. Used as the
-// pre-step for "add to playlist" / "queue" — playlists need library ids,
-// not stream ids.
+// it doesn't pollute Favoris) and return its library id.
 async function ensureInLibrary(r) {
   const existing = lib.tracks.find((t) => t.ytId === r.id);
   if (existing) return existing.id;
@@ -72,23 +74,19 @@ async function ensureInLibrary(r) {
 }
 
 async function addToPlaylistFlow(r) {
-  // Cascade a second action sheet listing the user's playlists. Vant
-  // ActionSheet scrolls when there are many actions, so a long playlist
-  // list still works on mobile.
   const actions = [
-    { name: '＋ Nouvelle playlist', color: 'var(--accent)' },
-    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id })),
+    { name: 'Nouvelle playlist', icon: Plus, color: 'var(--accent)' },
+    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id, icon: ListMusic })),
   ];
-  // Wait a tick so the previous sheet's close animation completes before
-  // the next one slides in — otherwise Vant glitches.
+  // Wait a tick so the previous sheet's close animation completes.
   await new Promise((res) => setTimeout(res, 220));
   let pick;
-  try { pick = await sheet.open(actions); } catch { return; }
+  try {
+    pick = await sheet.open(actions, { title: 'Ajouter à une playlist', subtitle: r.title });
+  } catch { return; }
   const trackId = await ensureInLibrary(r);
   if (!trackId) { showToast({ message: 'Impossible d\'ajouter', position: 'bottom' }); return; }
   if (pick.index === 0) {
-    // Create a new playlist (uses legacy promptModal under the hood)
-    // then add the track.
     const pl = await playlists.create();
     if (pl) await playlists.addTrack(pl.id, trackId);
   } else {
@@ -100,13 +98,16 @@ async function addToPlaylistFlow(r) {
 
 async function onMore(r) {
   try {
-    const { index } = await sheet.open([
-      { name: isLiked(r) ? 'Retirer des favoris' : 'Ajouter aux favoris' },
-      { name: 'Ajouter à une playlist' },
-      { name: 'Lancer un mix basé sur ce titre' },
-      { name: 'Ajouter à la file' },
-      { name: 'Ouvrir l’artiste' },
-    ]);
+    const { index } = await sheet.open(
+      [
+        { name: isLiked(r) ? 'Retirer des favoris' : 'Ajouter aux favoris', icon: Heart },
+        { name: 'Ajouter à une playlist', icon: ListPlus },
+        { name: 'Lancer un mix basé sur ce titre', icon: Sparkles },
+        { name: 'Ajouter à la file', icon: ListEnd },
+        { name: 'Ouvrir l’artiste', icon: Mic2 },
+      ],
+      { cover: r.thumbnail, title: r.title, subtitle: r.uploader },
+    );
     if (index === 0) toggleLike(r);
     else if (index === 1) addToPlaylistFlow(r);
     else if (index === 2) {
@@ -131,11 +132,50 @@ async function onMore(r) {
 const results = computed(() => search.results || []);
 const hasResults = computed(() => !!(search.results && search.results.length));
 
+// ── Browse cards ─────────────────────────────────────────────────
+// Spotify's "Parcourir tout" colored tiles, fed with the user's own
+// library: each card jumps to a corner of the app and wears the first
+// matching cover, tilted in the bottom-right corner.
+const offlineTracks = computed(() => lib.tracks.filter((t) => !!t.file));
+function goLibrary(filter) {
+  haptics.light();
+  view.libraryFilter = filter;
+  view.switchTo('library');
+}
+const browseCards = computed(() => [
+  {
+    id: 'favorites', label: 'Favoris', color: '#8d67ab',
+    cover: lib.favorites[0]?.thumbnail || '',
+    go: () => view.switchTo('playlist', 'favorites'), icon: Heart,
+  },
+  {
+    id: 'offline', label: 'Hors-ligne', color: '#27856a',
+    cover: offlineTracks.value[0]?.thumbnail || '',
+    go: () => view.switchTo('playlist', 'offline'), icon: ArrowDownCircle,
+  },
+  {
+    id: 'playlists', label: 'Playlists', color: '#e8115b',
+    cover: lib.findById(playlists.items[0]?.trackIds?.[0])?.thumbnail || '',
+    go: () => goLibrary('playlists'), icon: ListMusic,
+  },
+  {
+    id: 'albums', label: 'Albums', color: '#e13300',
+    cover: lib.albums[0]?.coverUrl || lib.albums[0]?.tracks?.[0]?.thumbnail || '',
+    go: () => goLibrary('albums'), icon: Disc3,
+  },
+  {
+    id: 'artists', label: 'Artistes', color: '#537aa1',
+    cover: lib.tracks[0]?.thumbnail || '',
+    go: () => goLibrary('artists'), icon: User,
+  },
+  {
+    id: 'wrapped', label: 'Ta sélection', color: '#509bf5',
+    cover: '',
+    go: () => view.switchTo('wrapped'), icon: Sparkles,
+  },
+]);
+
 // ── Search history ──────────────────────────────────────────────
-// Persist the last 10 non-URL queries. Shown as tappable chips when
-// the input is empty, so the user can quickly re-fire a previous
-// search without re-typing. URLs are excluded (re-pasting them is
-// fast anyway, and they'd clutter the list with long strings).
 const HISTORY_KEY = 'wax:search-history';
 const HISTORY_MAX = 10;
 const history = ref([]);
@@ -151,7 +191,6 @@ onMounted(() => {
 function pushToHistory(q) {
   const trimmed = (q || '').trim();
   if (!trimmed || trimmed.length < 2) return;
-  // Skip URLs (paste workflow doesn't benefit from history).
   if (/^https?:\/\//i.test(trimmed)) return;
   const next = [trimmed, ...history.value.filter((h) => h.toLowerCase() !== trimmed.toLowerCase())]
     .slice(0, HISTORY_MAX);
@@ -171,9 +210,6 @@ function rerunSearch(q) {
   search.inputValue = q;
   onUrlChange();
 }
-// When a search completes successfully (status flips to a non-loading
-// state with results), persist the query. We watch `search.status`
-// + `hasResults` to capture only "the search actually worked".
 watch(
   () => [search.status, hasResults.value],
   ([status, ok]) => {
@@ -198,11 +234,16 @@ function asTrack(r) {
 
 <template>
   <div class="search-view">
+    <div class="search-head">
+      <h1>Rechercher</h1>
+    </div>
+
+    <!-- White search field — Spotify's high-contrast search bar. -->
     <div class="search-bar">
       <van-search
         :model-value="search.inputValue"
         placeholder="Titre, artiste, ou URL YouTube"
-        shape="round"
+        shape="square"
         clearable
         @update:model-value="onSearchInput"
         @clear="onClear"
@@ -248,22 +289,40 @@ function asTrack(r) {
             class="search-history-row"
             @click="rerunSearch(q)"
           >
-            <Clock :size="16" :stroke-width="2" color="var(--text-muted)" />
+            <div class="search-history-thumb">
+              <Clock :size="18" :stroke-width="2" color="var(--text-muted)" />
+            </div>
             <span class="search-history-q">{{ q }}</span>
             <button
               class="search-history-x"
               :aria-label="`Retirer ${q}`"
               @click.stop="removeFromHistory(q)"
             >
-              <X :size="16" :stroke-width="2" color="var(--text-muted)" />
+              <X :size="18" :stroke-width="2" color="var(--text-muted)" />
             </button>
           </div>
         </div>
       </div>
-      <div v-else class="empty-state">
-        <SearchIcon class="icon" :size="48" :stroke-width="1.5" />
-        <div class="label">Recherche un titre, un artiste,</div>
-        <div class="hint">ou colle une URL YouTube</div>
+
+      <!-- Browse tiles — colored cards with a tilted cover, Spotify's
+           "Browse all" grid, mapped onto the user's own library. -->
+      <div class="browse">
+        <div class="browse-title">Parcourir</div>
+        <div class="browse-grid">
+          <button
+            v-for="c in browseCards"
+            :key="c.id"
+            class="browse-card"
+            :style="{ background: c.color }"
+            @click="c.go"
+          >
+            <span class="browse-label">{{ c.label }}</span>
+            <div class="browse-art">
+              <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
+              <component v-else :is="c.icon" :size="34" :stroke-width="1.6" color="rgba(255,255,255,0.85)" />
+            </div>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -272,23 +331,49 @@ function asTrack(r) {
 
 <style scoped>
 .search-view { min-height: 100%; }
-.search-bar :deep(.van-search) {
-  background: var(--bg);
-  padding: 8px 12px;
+
+.search-head {
+  padding: 10px 16px 4px;
 }
-.search-bar :deep(.van-search__content) { background: var(--card); }
+.search-head h1 {
+  font: 800 24px/1.1 var(--font-display);
+  letter-spacing: -0.4px;
+  margin: 0;
+  color: var(--text);
+}
+
+/* White search bar — the one deliberately light surface on the page. */
+.search-bar :deep(.van-search) {
+  background: transparent;
+  padding: 10px 16px;
+}
+.search-bar :deep(.van-search__content) {
+  background: #ffffff;
+  border-radius: 8px;
+}
+.search-bar :deep(.van-field__control) {
+  color: #121212;
+  font-weight: 500;
+}
+.search-bar :deep(.van-field__control::placeholder) {
+  color: #5e5e5e;
+  font-weight: 500;
+}
+.search-bar :deep(.van-search__field .van-field__left-icon .van-icon),
+.search-bar :deep(.van-field__clear) {
+  color: #121212;
+}
+
 .search-status.error {
   padding: 20px;
   text-align: center;
   font-size: 14px;
   color: var(--danger);
 }
-.results { background: var(--bg); }
-.empty-state .icon { color: var(--text-muted); margin-bottom: 12px; }
+.results { background: transparent; padding-top: 4px; }
 .shimmer-list { padding: 4px 0 16px; }
 
-/* Search history — Spotify-style "Recherches récentes" list with a
- * tappable row per query + per-row dismiss + bulk clear. */
+/* Search history — Spotify's "Recent searches" list. */
 .search-history {
   padding: var(--sp-2) 0;
 }
@@ -299,8 +384,7 @@ function asTrack(r) {
   padding: var(--sp-2) var(--sp-4) var(--sp-3);
 }
 .search-history-title {
-  font-size: 15px;
-  font-weight: 700;
+  font: 700 16px/1.2 var(--font-display);
   color: var(--text);
 }
 .search-history-clear {
@@ -308,6 +392,7 @@ function asTrack(r) {
   border: 0;
   color: var(--text-muted);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   padding: var(--sp-1) var(--sp-2);
   border-radius: var(--r-1);
@@ -317,14 +402,23 @@ function asTrack(r) {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
   cursor: pointer;
   transition: background var(--motion-short) var(--ease);
 }
-.search-history-row:active { background: var(--card-hover); }
+.search-history-row:active { background: rgba(255, 255, 255, 0.06); }
+.search-history-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--card);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
 .search-history-q {
   flex: 1 1 auto;
-  font-size: 15px;
+  font: 500 15px/1.3 var(--font-body);
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -338,4 +432,51 @@ function asTrack(r) {
   display: grid;
   place-items: center;
 }
+
+/* Browse tiles */
+.browse { padding: var(--sp-3) var(--sp-4); }
+.browse-title {
+  font: 700 16px/1.2 var(--font-display);
+  color: var(--text);
+  margin-bottom: var(--sp-3);
+}
+.browse-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.browse-card {
+  position: relative;
+  height: 96px;
+  border-radius: 8px;
+  border: 0;
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 12px 14px;
+  color: #fff;
+  isolation: isolate;
+}
+.browse-card:active { filter: brightness(1.1); }
+.browse-label {
+  font: 700 16px/1.2 var(--font-display);
+  letter-spacing: -0.2px;
+  max-width: 70%;
+  display: inline-block;
+}
+.browse-art {
+  position: absolute;
+  right: -14px;
+  bottom: -6px;
+  width: 72px;
+  height: 72px;
+  border-radius: 4px;
+  transform: rotate(25deg);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+  display: grid;
+  place-items: center;
+}
+.browse-art img { width: 100%; height: 100%; object-fit: cover; }
 </style>

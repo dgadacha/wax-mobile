@@ -9,6 +9,10 @@ export const useViewStore = defineStore('view', {
     selectedPlaylistId: null,
     selectedArtist: null, // string (display name) when name === 'artist'
     selectedAlbumKey: null, // album key (deezer:<id> or normalizedArtist::albumName) when name === 'album'
+    // One-shot chip preset for ViewLibrary — set by Search's browse
+    // cards ("Albums" → library with the Albums chip active). The
+    // library view consumes + clears it.
+    libraryFilter: null,
     // Stack of { name, arg } describing where we came from. Pushed by
     // `switchTo`, popped by `back`. Capped soft at 50 entries to avoid
     // unbounded growth on heavy navigation sessions.

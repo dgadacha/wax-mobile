@@ -1,14 +1,19 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import {
-  Play, Pause, SkipBack, SkipForward, Heart, ChevronDown,
-  ListMusic, MessageSquareText, Shuffle, Repeat, Repeat1, X, Gauge,
+  Play, Pause, SkipBack, SkipForward, Heart, ChevronDown, MoreVertical,
+  ListMusic, MicVocal, Shuffle, Repeat, Repeat1, X, Gauge, ListPlus,
+  ListEnd, Sparkles, Mic2, Plus,
 } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
 import { useStreamsStore } from '@/stores/streams';
 import { usePrefsStore } from '@/stores/prefs';
-import { fmtDuration } from '@/lib/format';
+import { usePlaylistsStore } from '@/stores/playlists';
+import { useViewStore } from '@/stores/view';
+import { useMixStore } from '@/stores/mix';
+import { useActionSheetStore } from '@/stores/actionSheet';
+import { fmtDuration, parseTrackTitle } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import { fetchLyrics } from '@/composables/useLyrics';
@@ -17,21 +22,22 @@ import { t } from '@/lib/i18n';
 import MarqueeText from '@/components/MarqueeText.vue';
 import { useVisualizer, setEq } from '@/composables/useVisualizer';
 import { useGestures } from '@/composables/useGestures';
-import { applyAccent, revertAccentToUser } from '@/stores/prefs';
 import { extractDominantColor } from '@/lib/extractColor';
 
 const player = usePlayerStore();
 const lib = useLibraryStore();
 const streams = useStreamsStore();
 const prefs = usePrefsStore();
+const playlists = usePlaylistsStore();
+const view = useViewStore();
+const mix = useMixStore();
+const sheet = useActionSheetStore();
 
 const audioRef = ref(null);
 const audio2Ref = ref(null);
 const fullscreen = ref(false);
 const queueOpen = ref(false);
-// Playback speed bottom-sheet. Lives next to the lyrics overlay
-// inside the fullscreen player so the user can scrub the slider
-// without leaving the listening context.
+// Playback speed bottom-sheet.
 const speedSheetOpen = ref(false);
 const SPEED_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const speedLabel = computed(() =>
@@ -47,10 +53,8 @@ function toggleSpeedSheet() {
   speedSheetOpen.value = !speedSheetOpen.value;
 }
 
-// Lyrics overlay state — slides up over the player content (Spotify
-// style). Owned here instead of a global modal so it can sit inside
-// the fullscreen player popup, react to player.currentTime in real
-// time, and dismiss without bumping the modal z-index stack.
+// Lyrics overlay state — slides up over the player content. Spotify
+// styles this as a solid sheet in the track's dominant color.
 const lyricsOpen = ref(false);
 const lyricsLoading = ref(false);
 const lyricsStatus = ref(''); // '' | 'ok' | 'error' | 'not_found'
@@ -75,7 +79,6 @@ async function toggleLyrics() {
   lyricsTrackId.value = track.id;
   try {
     const data = await fetchLyrics(track);
-    // Bail if the user skipped to another track while we were fetching.
     if (lyricsTrackId.value !== track.id) return;
     lyricsArtist.value = data.artist;
     lyricsTitle.value = data.title;
@@ -100,17 +103,15 @@ async function toggleLyrics() {
 const activeLineIdx = computed(() => {
   if (lyricsSynced.value.length === 0) return -1;
   const lines = lyricsSynced.value;
-  const t = player.currentTime;
+  const ct = player.currentTime;
   let lo = 0, hi = lines.length - 1, best = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (lines[mid].time <= t) { best = mid; lo = mid + 1; }
+    if (lines[mid].time <= ct) { best = mid; lo = mid + 1; }
     else hi = mid - 1;
   }
   return best;
 });
-// Auto-scroll the active line into the container's center as the
-// audio progresses. Smooth scrollBehavior reads as karaoke-natural.
 watch(activeLineIdx, async (idx) => {
   if (idx < 0 || !lyricsOpen.value) return;
   await nextTick();
@@ -124,45 +125,27 @@ watch(activeLineIdx, async (idx) => {
   container.scrollBy({ top: delta, behavior: 'smooth' });
 });
 
-// Close the overlay automatically when the user skips to a new
-// track (otherwise we'd show stale lyrics on top of new audio).
+// Close the overlay automatically when the user skips to a new track.
 watch(() => player.currentTrack?.id, (id, prev) => {
   if (lyricsOpen.value && id !== prev) lyricsOpen.value = false;
 });
 
-// Gesture surfaces inside the fullscreen player.
-//
-//   COVER  — horizontal swipes for prev/next (iPod cover-flow /
-//            Apple Music). Tracks the finger live: the cover
-//            translates with the touch and fades slightly so the
-//            user feels the gesture before commit, then a quick
-//            snap-back tween if uncommitted.
-//   BODY   — vertical swipes: ↓ dismisses the popup, ↑ opens the
-//            queue. The downward drag translates the whole player
-//            so the user gets a "pulling the sheet down" feel.
+// Gesture surfaces inside the fullscreen player — see useGestures.
+//   COVER — horizontal swipes for prev/next with live preview.
+//   BODY  — ↓ dismisses the popup, ↑ opens the queue.
 const npCoverRef = ref(null);
 const npBodyRef = ref(null);
-// Live transform state — bound into :style on the elements below.
-// Reset to defaults via the `coverAnimating` / `bodyAnimating` flag
-// which enables a CSS transition on snap-back / commit only.
 const coverDx = ref(0);
 const coverAnimating = ref(false);
 const bodyDy = ref(0);
 const bodyAnimating = ref(false);
 
 const coverStyle = computed(() => ({
-  // Translate the WHOLE stage — current cover + the two side
-  // covers move together so the prev/next slides into view as the
-  // user drags. No opacity dimming: the user is here to preview
-  // what's coming, fading the strip would defeat the purpose.
   transform: `translate3d(${coverDx.value}px, 0, 0)`,
   transition: coverAnimating.value
     ? 'transform 220ms cubic-bezier(0.4, 0, 0.2, 1)'
     : 'none',
 }));
-// Side covers (prev/next): invisible at rest, fade in linearly with
-// drag distance. Fully opaque once the user has dragged ~120 px, so
-// the preview reaches readable contrast well before commit.
 const sideCoverStyle = computed(() => ({
   opacity: Math.min(1, Math.abs(coverDx.value) / 120),
   transition: coverAnimating.value
@@ -170,13 +153,9 @@ const sideCoverStyle = computed(() => ({
     : 'none',
 }));
 const bodyStyle = computed(() => ({
-  // Only allow downward drag — upward maps to a queue-open commit,
-  // no need for visual tracking on that direction.
   transform: bodyDy.value > 0
     ? `translate3d(0, ${bodyDy.value}px, 0)`
     : 'translate3d(0, 0, 0)',
-  // Slight fade as the user pulls down — visual hint the player is
-  // about to close.
   opacity: bodyDy.value > 0
     ? 1 - Math.min(0.4, bodyDy.value / 600)
     : 1,
@@ -196,23 +175,14 @@ function settleBody() {
   setTimeout(() => { bodyAnimating.value = false; }, 240);
 }
 
-// Cover commit: animate the stage all the way to the side cover's
-// resting position (one cover-width + the 16 px gap), then swap
-// player.next/prev AND reset coverDx to 0 in the same Vue tick so
-// the user never sees a slot-shuffling flicker. Without this trick
-// the moment of player.next() would teleport the cover from the
-// "next" slot at +W+16 to the "current" slot at 0 — a visible jump.
+// Cover commit: animate the stage to the side cover's resting position,
+// then swap player.next/prev AND reset coverDx in the same Vue tick.
 function commitCover(dir) {
   const el = npCoverRef.value;
-  // Stage is the same width as a cover; +16 px matches the gap that
-  // separates the side covers from the current one in CSS.
   const width = (el ? el.offsetWidth : 360) + 16;
   coverAnimating.value = true;
   coverDx.value = dir === 'next' ? -width : width;
   setTimeout(() => {
-    // Atomic: turn off animation, swap track, reset offset. Vue
-    // batches these into one DOM patch so the user sees the new
-    // current cover land at center with no in-between frame.
     coverAnimating.value = false;
     if (dir === 'next') player.next();
     else player.prev();
@@ -225,16 +195,10 @@ useGestures(npCoverRef, {
     if (axis !== 'x') { coverDx.value = 0; return; }
     coverDx.value = dx;
   },
-  // Velocity-based commit (fast swipe, regardless of distance)
   onSwipeLeft: () => { haptics.light(); commitCover('next'); },
   onSwipeRight: () => { haptics.light(); commitCover('prev'); },
   onEnd: ({ committed }) => {
-    if (committed) return; // commitCover already owns the animation
-    // Distance-based commit fallback: a SLOW drag past ~30% of the
-    // cover width still counts. Without this the user had to swipe
-    // fast — a relaxed pull-to-center motion (very common) just
-    // snapped back which felt unresponsive. 30% mirrors Apple
-    // Music's cutoff.
+    if (committed) return;
     const el = npCoverRef.value;
     const width = el ? el.offsetWidth : 360;
     const threshold = width * 0.3;
@@ -246,7 +210,6 @@ useGestures(npCoverRef, {
 useGestures(npBodyRef, {
   onProgress: ({ dy, axis }) => {
     if (axis !== 'y' || dy < 0) { bodyDy.value = 0; return; }
-    // Resist past 200 px so the player doesn't fly off mid-swipe
     bodyDy.value = dy < 200 ? dy : 200 + (dy - 200) * 0.4;
   },
   onSwipeDown: () => { haptics.light(); fullscreen.value = false; },
@@ -256,8 +219,6 @@ useGestures(npBodyRef, {
       settleBody();
       return;
     }
-    // Slow downward drag past ~25% of viewport → dismiss anyway.
-    // Same distance-fallback idea as the cover swipe.
     if (bodyDy.value >= window.innerHeight * 0.25) {
       haptics.light();
       fullscreen.value = false;
@@ -268,11 +229,7 @@ useGestures(npBodyRef, {
 
 const cover = computed(() => apiUrl(player.currentTrack?.thumbnail || ''));
 
-// Side covers for the iPod-coverflow swipe preview. Pulled from the
-// queue at index ± 1 so the user sees what they're about to jump to
-// as they drag horizontally. Empty when the queue boundary is hit
-// (no prev on the first track, no next on the last); the side slot
-// just renders a transparent placeholder in that case.
+// Side covers for the coverflow swipe preview.
 function _coverFor(qIdx) {
   if (qIdx < 0 || qIdx >= player.queue.length) return '';
   const id = player.queue[qIdx];
@@ -282,31 +239,42 @@ function _coverFor(qIdx) {
 const prevCover = computed(() => _coverFor(player.index - 1));
 const nextCover = computed(() => _coverFor(player.index + 1));
 
-// Adaptive accent: each new track's cover gets sampled for its
-// dominant color and pushed into --accent. Reverts to the user-
-// picked accent when playback stops or the track has no cover
-// available. The extraction runs off the main render frame — it's
-// async + canvas-based but with a 40x40 downsample it's <20 ms.
-let _lastAccentTrackId = null;
+// Per-track tint — dominant color of the current cover. Drives the
+// fullscreen gradient, the mini-player card and the lyrics sheet.
+// Deliberately does NOT touch --accent anymore: the app identity
+// (green controls) stays put, only the player's canvas follows the
+// artwork — exactly how Spotify does it.
+const npColor = ref('#404040');
+let _lastTintTrackId = null;
 watch(
   () => player.currentTrack?.id,
   async (trackId) => {
-    if (!trackId) { _lastAccentTrackId = null; revertAccentToUser(); return; }
-    if (trackId === _lastAccentTrackId) return;
-    _lastAccentTrackId = trackId;
+    if (!trackId) { _lastTintTrackId = null; npColor.value = '#404040'; return; }
+    if (trackId === _lastTintTrackId) return;
+    _lastTintTrackId = trackId;
     const url = apiUrl(player.currentTrack?.thumbnail || '');
-    if (!url) { revertAccentToUser(); return; }
+    if (!url) { npColor.value = '#404040'; return; }
     const hex = await extractDominantColor(url);
-    // Guard against a race: another track may have started while we
-    // were extracting. Bail if so — the newer track's effect wins.
-    if (_lastAccentTrackId !== trackId) return;
-    if (hex) applyAccent(hex);
-    else revertAccentToUser();
+    if (_lastTintTrackId !== trackId) return;
+    npColor.value = hex || '#404040';
   },
+  { immediate: true },
 );
 
-// Resolve every queue id to a track (library or stream). The currently
-// playing one gets the accent treatment.
+const npBgStyle = computed(() => ({
+  background: `linear-gradient(180deg,
+    color-mix(in srgb, ${npColor.value} 72%, #2a2a2a) 0%,
+    color-mix(in srgb, ${npColor.value} 38%, var(--bg)) 46%,
+    var(--bg) 88%)`,
+}));
+const miniStyle = computed(() => ({
+  background: `color-mix(in srgb, ${npColor.value} 38%, #1c1c1c)`,
+}));
+const lyricsSheetStyle = computed(() => ({
+  background: `color-mix(in srgb, ${npColor.value} 78%, #3a3a3a)`,
+}));
+
+// Resolve every queue id to a track (library or stream).
 const queueTracks = computed(() => {
   return (player.queue || []).map((id, idx) => {
     const tr = lib.findById(id) || streams.get(id);
@@ -323,12 +291,6 @@ function jumpToQueue(idx) {
   player.index = idx;
   player.loadAndPlay();
 }
-
-function removeFromQueue(idx) {
-  if (idx === player.index) return; // can't drop the current one
-  player.queue.splice(idx, 1);
-  if (idx < player.index) player.index -= 1;
-}
 const title = computed(() => player.currentTrack?.title || '');
 const sub = computed(() => player.currentTrack?.uploader || '');
 const seekPct = computed(() => {
@@ -343,13 +305,6 @@ function toggleLike() {
   setTimeout(() => { likeBouncing.value = false; }, 420);
   const track = player.currentTrack;
   if (!track) return;
-  // toggleFav just flips the `liked` flag (and adds the track to the
-  // library first if it's a stream not yet there). The previous code
-  // called lib.remove(trackId) which actually DELETES the row from
-  // the library AND drops it from every playlist AND stops the
-  // player — tapping the heart on a playlist track would silently
-  // delete it everywhere and the queue collapse would cascade-skip
-  // through the next few tracks.
   lib.toggleFav(track);
 }
 
@@ -357,9 +312,6 @@ function onSeek(pct) {
   player.seekToPct(pct);
 }
 
-// Transport handlers with haptic feedback so the buttons feel alive on
-// device. Direct player.* in the template would still work, but going
-// through these wrappers lets us add the haptic in one place.
 function onTogglePlay() { haptics.light(); player.togglePlay(); }
 function onPrev()       { haptics.light(); player.prev(); }
 function onNext()       { haptics.light(); player.next(); }
@@ -372,14 +324,80 @@ const repeatLabel = computed(() => {
   return 'Pas de répétition';
 });
 
+// "⋮" in the fullscreen header — Spotify's track context sheet, with
+// the cover + gradient header.
+async function openTrackSheet() {
+  const tr = player.currentTrack;
+  if (!tr) return;
+  haptics.light();
+  try {
+    const { index } = await sheet.open(
+      [
+        { name: player.isLikedCurrent ? 'Retirer des favoris' : 'Ajouter aux favoris', icon: Heart },
+        { name: 'Ajouter à une playlist', icon: ListPlus },
+        { name: 'Lancer un mix basé sur ce titre', icon: Sparkles },
+        { name: 'Voir la file d’attente', icon: ListEnd },
+        { name: 'Ouvrir l’artiste', icon: Mic2 },
+      ],
+      { cover: tr.thumbnail, title: tr.title, subtitle: tr.uploader },
+    );
+    if (index === 0) toggleLike();
+    else if (index === 1) addCurrentToPlaylist(tr);
+    else if (index === 2) {
+      fullscreen.value = false;
+      mix.streamFrom(tr, () => view.switchTo('mix'));
+    } else if (index === 3) queueOpen.value = true;
+    else if (index === 4) {
+      const a = parseTrackTitle(tr).artist || tr.uploader;
+      if (a) {
+        fullscreen.value = false;
+        view.switchTo('artist', a);
+      }
+    }
+  } catch { /* dismissed */ }
+}
+
+// Stream tracks aren't in the library yet — add silently first so the
+// playlist gets a real library id.
+async function ensureLibraryId(tr) {
+  if (!tr.isStream) return tr.id;
+  const existing = lib.tracks.find((x) => x.ytId === tr.ytId);
+  if (existing) return existing.id;
+  const added = await lib.add({
+    id: tr.ytId, ytId: tr.ytId, title: tr.title, uploader: tr.uploader,
+    duration: tr.duration, thumbnail: tr.thumbnail,
+    url: `https://www.youtube.com/watch?v=${tr.ytId}`,
+  }, { liked: false, silent: true });
+  return added?.id || lib.tracks.find((x) => x.ytId === tr.ytId)?.id;
+}
+
+async function addCurrentToPlaylist(tr) {
+  const actions = [
+    { name: 'Nouvelle playlist', icon: Plus, color: 'var(--accent)' },
+    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id, icon: ListMusic })),
+  ];
+  await new Promise((res) => setTimeout(res, 220));
+  let pick;
+  try {
+    pick = await sheet.open(actions, { title: 'Ajouter à une playlist', subtitle: tr.title });
+  } catch { return; }
+  const trackId = await ensureLibraryId(tr);
+  if (!trackId) return;
+  if (pick.index === 0) {
+    const pl = await playlists.create();
+    if (pl) await playlists.addTrack(pl.id, trackId);
+  } else {
+    const pl = actions[pick.index];
+    await playlists.addTrack(pl._id, trackId);
+    showToast(`Ajouté à « ${pl.name} »`);
+  }
+}
+
 onMounted(() => {
   player.bindAudio(audioRef.value, audio2Ref.value);
 });
 
-// Audio chain + visualizer + EQ. useVisualizer attaches a
-// source → bass → mid → treble → analyser → destination graph
-// on first play; setEq lets us push prefs.eq values into the
-// BiquadFilter gain nodes live.
+// Audio chain + visualizer + EQ.
 useVisualizer();
 watch(
   () => prefs.eq,
@@ -389,15 +407,15 @@ watch(
 </script>
 
 <template>
-  <!-- Audio elements always mounted so player.bindAudio() has stable refs.
-       Hidden in both mini and fullscreen modes — controls are UI only. -->
+  <!-- Audio elements always mounted so player.bindAudio() has stable refs. -->
   <audio ref="audioRef" preload="metadata" crossorigin="anonymous"></audio>
   <audio ref="audio2Ref" preload="metadata" crossorigin="anonymous"></audio>
 
-  <!-- Mini player: docked above the tab bar when something is playing -->
+  <!-- Mini player: floating rounded card tinted with the track color -->
   <div
     v-if="player.visible"
     class="mini-player"
+    :style="miniStyle"
     @click="fullscreen = true"
   >
     <div class="mp-thumb">
@@ -408,21 +426,19 @@ watch(
       <div class="mp-sub text-ellipsis">{{ sub }}</div>
     </div>
     <div class="mp-actions" @click.stop>
-      <button class="mp-btn" :aria-label="player.playing ? 'Pause' : 'Lire'" @click="player.togglePlay()">
-        <component :is="player.playing ? Pause : Play" :size="22" :stroke-width="2.5" color="var(--text)" :fill="player.playing ? 'var(--text)' : 'var(--text)'" />
+      <button class="mp-btn small" aria-label="J'aime" @click="toggleLike">
+        <Heart
+          :size="20"
+          :stroke-width="2"
+          :color="player.isLikedCurrent ? 'var(--accent)' : 'rgba(255,255,255,0.8)'"
+          :fill="player.isLikedCurrent ? 'var(--accent)' : 'transparent'"
+        />
       </button>
-      <button
-        v-if="player.queue.length > 1"
-        class="mp-btn small"
-        aria-label="Suivant"
-        @click="player.next()"
-      >
-        <SkipForward :size="20" :stroke-width="2.2" color="var(--text-muted)" fill="var(--text-muted)" />
+      <button class="mp-btn" :aria-label="player.playing ? 'Pause' : 'Lire'" @click="player.togglePlay()">
+        <component :is="player.playing ? Pause : Play" :size="24" :stroke-width="0" color="#fff" fill="#fff" />
       </button>
     </div>
-    <!-- Spotify-style thin progress bar pinned at the bottom of the
-         mini-player. Lives on the row itself (not in the actions
-         column) so it spans the full width. -->
+    <!-- Thin progress line pinned at the bottom of the card. -->
     <div class="mp-progress" aria-hidden="true">
       <div class="mp-progress-fill" :style="{ width: seekPct + '%' }" />
     </div>
@@ -438,44 +454,21 @@ watch(
     :lazy-render="false"
     class="np-popup"
   >
-    <div class="np-screen">
-      <!-- Cover-derived background: same image as the album art,
-           massively blurred + dark vignette. Same trick as MobileHero
-           but full-bleed. Gives every track its own ambient color
-           palette without needing a real dominant-color extractor. -->
-      <div
-        v-if="cover"
-        class="np-bg"
-        :style="{ backgroundImage: `url('${cover}')` }"
-      />
-      <div class="np-bg-fade" />
+    <div class="np-screen" :style="npBgStyle">
+      <!-- Top bar: collapse chevron / context label / track menu. -->
+      <div class="np-top">
+        <button class="np-top-btn" aria-label="Fermer" @click="fullscreen = false">
+          <ChevronDown :size="26" :stroke-width="2.2" color="#fff" />
+        </button>
+        <div class="np-top-title">En cours de lecture</div>
+        <button class="np-top-btn" aria-label="Options du titre" @click="openTrackSheet">
+          <MoreVertical :size="22" :stroke-width="2" color="#fff" />
+        </button>
+      </div>
 
-      <!-- Wrapper handles the notch via padding-top so it works even when
-           the popup teleports outside the document flow (env(safe-area-*)
-           on van-nav-bar's internal class is sometimes flaky in fullscreen
-           popups). Don't add safe-area-inset-top on the nav-bar — that
-           would double-pad. -->
-      <van-nav-bar
-        :title="'En cours de lecture'"
-        :border="false"
-        @click-left="fullscreen = false"
-      >
-        <template #left>
-          <ChevronDown :size="26" :stroke-width="2" color="var(--text)" />
-        </template>
-      </van-nav-bar>
       <div ref="npBodyRef" class="np-body" :style="bodyStyle">
-        <!-- Cover stage — the three slots (prev / current / next)
-             move together as the user drags horizontally, so they
-             see exactly what's coming. Side covers are absolutely
-             positioned just off-screen at -100% / +100% so they
-             only become visible when dx pulls them in. -->
+        <!-- Cover stage — prev / current / next slide together on drag. -->
         <div ref="npCoverRef" class="np-cover-stage" :style="coverStyle">
-          <!-- Side covers (prev/next) fade in only during a swipe —
-               opacity scales with |coverDx| via :style so they're
-               invisible at rest, fully opaque once the user has
-               dragged ~120 px. Keeps the static player clean while
-               still previewing what's coming during the gesture. -->
           <div class="np-cover np-cover-side np-cover-prev" :style="sideCoverStyle">
             <img v-if="prevCover" :src="prevCover" alt="" />
           </div>
@@ -486,20 +479,35 @@ watch(
             <img v-if="nextCover" :src="nextCover" alt="" />
           </div>
         </div>
+
+        <!-- Meta row: left-aligned title/artist + heart — Spotify layout. -->
         <div class="np-meta">
-          <MarqueeText class="np-title" :text="title" />
-          <div class="np-sub">{{ sub }}</div>
+          <div class="np-meta-text">
+            <MarqueeText class="np-title" :text="title" />
+            <div class="np-sub text-ellipsis">{{ sub }}</div>
+          </div>
+          <button
+            class="np-like"
+            :class="{ 'is-bouncing': likeBouncing }"
+            aria-label="J'aime"
+            @click="toggleLike"
+          >
+            <Heart :size="24" :stroke-width="2"
+              :color="player.isLikedCurrent ? 'var(--accent)' : 'rgba(255,255,255,0.75)'"
+              :fill="player.isLikedCurrent ? 'var(--accent)' : 'transparent'" />
+          </button>
         </div>
+
         <div class="np-seek">
           <van-slider
             :model-value="seekPct"
             :step="0.1"
             :min="0"
             :max="100"
-            active-color="var(--accent)"
-            inactive-color="var(--card)"
+            active-color="#ffffff"
+            inactive-color="rgba(255, 255, 255, 0.25)"
             bar-height="3px"
-            button-size="14px"
+            button-size="12px"
             @update:model-value="onSeek"
           />
           <div class="np-time">
@@ -507,6 +515,8 @@ watch(
             <span>{{ fmtDuration(player.duration) }}</span>
           </div>
         </div>
+
+        <!-- Transport: shuffle / prev / WHITE play circle / next / repeat. -->
         <div class="np-controls">
           <button
             class="np-ctrl ghost"
@@ -517,17 +527,17 @@ watch(
             <Shuffle
               :size="22"
               :stroke-width="2"
-              :color="player.shuffle ? 'var(--accent)' : 'var(--text-muted)'"
+              :color="player.shuffle ? 'var(--accent)' : 'rgba(255,255,255,0.8)'"
             />
           </button>
           <button class="np-ctrl" aria-label="Précédent" @click="onPrev">
-            <SkipBack :size="30" :stroke-width="2" color="var(--text)" fill="var(--text)" />
+            <SkipBack :size="30" :stroke-width="0" color="#fff" fill="#fff" />
           </button>
           <button class="np-play" @click="onTogglePlay">
-            <component :is="player.playing ? Pause : Play" :size="28" :stroke-width="2.5" color="var(--bg)" fill="var(--bg)" />
+            <component :is="player.playing ? Pause : Play" :size="30" :stroke-width="0" color="#0b0b0b" fill="#0b0b0b" />
           </button>
           <button class="np-ctrl" aria-label="Suivant" @click="onNext">
-            <SkipForward :size="30" :stroke-width="2" color="var(--text)" fill="var(--text)" />
+            <SkipForward :size="30" :stroke-width="0" color="#fff" fill="#fff" />
           </button>
           <button
             class="np-ctrl ghost"
@@ -539,33 +549,13 @@ watch(
               :is="player.repeat === 'one' ? Repeat1 : Repeat"
               :size="22"
               :stroke-width="2"
-              :color="player.repeat !== 'off' ? 'var(--accent)' : 'var(--text-muted)'"
+              :color="player.repeat !== 'off' ? 'var(--accent)' : 'rgba(255,255,255,0.8)'"
             />
           </button>
         </div>
+
+        <!-- Bottom utility row: speed left, lyrics + queue right. -->
         <div class="np-extras">
-          <button
-            class="np-extra np-like"
-            :class="{ 'is-bouncing': likeBouncing }"
-            aria-label="J'aime"
-            @click="toggleLike"
-          >
-            <Heart :size="24" :stroke-width="2"
-              :color="player.isLikedCurrent ? 'var(--accent)' : 'var(--text-muted)'"
-              :fill="player.isLikedCurrent ? 'var(--accent)' : 'transparent'" />
-          </button>
-          <button
-            class="np-extra"
-            :class="{ 'is-active': lyricsOpen }"
-            aria-label="Paroles"
-            @click="toggleLyrics"
-          >
-            <MessageSquareText
-              :size="22"
-              :stroke-width="2"
-              :color="lyricsOpen ? 'var(--accent)' : 'var(--text-muted)'"
-            />
-          </button>
           <button
             class="np-extra np-speed-btn"
             :class="{ 'is-active': player.playbackRate !== 1 }"
@@ -577,20 +567,30 @@ watch(
               v-else
               :size="22"
               :stroke-width="2"
-              color="var(--text-muted)"
+              color="rgba(255,255,255,0.8)"
             />
           </button>
-          <button class="np-extra" aria-label="File d'attente" @click="queueOpen = true">
-            <ListMusic :size="22" :stroke-width="2" color="var(--text-muted)" />
-          </button>
+          <div class="np-extras-right">
+            <button
+              class="np-extra"
+              :class="{ 'is-active': lyricsOpen }"
+              aria-label="Paroles"
+              @click="toggleLyrics"
+            >
+              <MicVocal
+                :size="22"
+                :stroke-width="2"
+                :color="lyricsOpen ? 'var(--accent)' : 'rgba(255,255,255,0.8)'"
+              />
+            </button>
+            <button class="np-extra" aria-label="File d'attente" @click="queueOpen = true">
+              <ListMusic :size="22" :stroke-width="2" color="rgba(255,255,255,0.8)" />
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- Speed bottom-sheet — slides up over the player, contains
-           a continuous slider + 7 preset chips. preservesPitch is
-           false so dragging the slider gives the "slowed/sped up"
-           remix vibe (pitch follows tempo) rather than the time-
-           stretched podcast effect. -->
+      <!-- Speed bottom-sheet -->
       <Transition name="lyrics-slide">
         <div v-if="speedSheetOpen" class="np-speed-sheet" @click.self="speedSheetOpen = false">
           <div class="np-speed-card">
@@ -629,28 +629,21 @@ watch(
         </div>
       </Transition>
 
-      <!-- Lyrics overlay — slides up over the player content,
-           Spotify-style. Lives inside the fullscreen popup so the
-           backdrop / nav-bar / blurred bg stay visible underneath.
-           Karaoke-style active line tracking when lrclib returned
-           LRC, plain-text scroll otherwise. -->
+      <!-- Lyrics overlay — solid sheet in the track's dominant color,
+           bold karaoke lines (Spotify's lyrics screen). -->
       <Transition name="lyrics-slide">
         <div v-if="lyricsOpen" class="np-lyrics" @click.self="lyricsOpen = false">
-          <div class="np-lyrics-sheet">
+          <div class="np-lyrics-sheet" :style="lyricsSheetStyle">
             <header class="np-lyrics-head">
               <div class="np-lyrics-head-text">
                 <div class="np-lyrics-eyebrow">Paroles</div>
-                <!-- MarqueeText handles the overflow case (long
-                     "Artist — Title (feat. X)" combos that used to
-                     push the close button off-screen). Same scroll-
-                     when-overflowing pattern as the player titles. -->
                 <MarqueeText
                   class="np-lyrics-meta"
                   :text="`${lyricsArtist} — ${lyricsTitle}`"
                 />
               </div>
               <button class="np-lyrics-close" aria-label="Fermer" @click="lyricsOpen = false">
-                <X :size="22" :stroke-width="2" color="var(--text)" />
+                <X :size="22" :stroke-width="2" color="#fff" />
               </button>
             </header>
             <div ref="lyricsScrollRef" class="np-lyrics-body">
@@ -666,7 +659,7 @@ watch(
                   v-for="(line, i) in lyricsSynced"
                   :key="i"
                   :data-idx="i"
-                  class="lyrics-line"
+                  class="np-lyric-line"
                   :class="{ active: i === activeLineIdx, past: i < activeLineIdx }"
                 >{{ line.text }}</div>
               </template>
@@ -678,9 +671,7 @@ watch(
     </div>
   </van-popup>
 
-  <!-- Queue sheet — slides up from the bottom of the fullscreen player.
-       Lists every queued track; tap to jump, tap the currently playing
-       one to toggle pause; long-press / X to remove. -->
+  <!-- Queue sheet -->
   <van-popup
     v-model:show="queueOpen"
     position="bottom"
@@ -730,42 +721,42 @@ watch(
 </template>
 
 <style>
-/* mini player — flush with the tab bar (Spotify mobile pattern). Square
- * corners, full width; the bg sits one elevation step above the tab bar
- * (--bg-elev → slightly lighter card mix) so the seam reads as two
- * stacked surfaces. position: relative anchors the .mp-progress bar to
- * the bottom edge. */
+/* Mini player — floating rounded card (positioned by mobile.css),
+ * tinted with the current track's dominant color via inline style. */
 .mini-player {
   position: relative;
   height: var(--mini-height);
-  background: var(--card);
+  border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
+  padding: 8px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
 }
 
 .mp-progress {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 10px;
+  right: 10px;
   bottom: 0;
   height: 2px;
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
 }
 .mp-progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: #fff;
+  border-radius: 999px;
   transition: width 0.25s linear;
 }
 
 .mini-player .mp-thumb {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
+  width: 42px;
+  height: 42px;
+  border-radius: 6px;
   overflow: hidden;
-  background: var(--card-hover);
+  background: rgba(0, 0, 0, 0.3);
   flex: 0 0 auto;
 }
 .mini-player .mp-thumb img { width: 100%; height: 100%; object-fit: cover; }
@@ -775,24 +766,20 @@ watch(
   min-width: 0;
 }
 .mini-player .mp-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text);
-  /* Marquee wrapping — let MarqueeText's inner-span scroll handle
-   * overflow. The ellipsis utility was removed because we now
-   * marquee-scroll instead of cutting with `…`. */
+  font: 600 13px/1.3 var(--font-body);
+  color: #fff;
 }
 .mini-player .mp-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
+  font: 400 12px/1.3 var(--font-body);
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 1px;
 }
 
 .mini-player .mp-actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .mini-player .mp-btn {
   width: 40px;
@@ -804,8 +791,8 @@ watch(
   place-items: center;
   cursor: pointer;
 }
-.mini-player .mp-btn.small { width: 34px; height: 34px; }
-.mini-player .mp-btn:active { background: rgba(255, 255, 255, 0.08); }
+.mini-player .mp-btn.small { width: 36px; height: 36px; }
+.mini-player .mp-btn:active { background: rgba(255, 255, 255, 0.12); }
 
 /* Fullscreen now playing */
 .np-popup { background: var(--bg) !important; }
@@ -815,45 +802,43 @@ watch(
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
   isolation: isolate;
-  /* The blurred .np-bg uses `inset: -60px` to bleed past the edges
-   * before the blur kicks in — without clipping at the screen
-   * boundary, those overflow pixels become draggable content and
-   * iOS treats the popup as horizontally scrollable. Hide the
-   * overflow to keep the player rigid. */
   overflow: hidden;
-  /* Notch is owned here, not by the nested van-nav-bar — see template
-   * comment. Keeps the chevron/title sitting comfortably below the
-   * status bar on iPhone notched devices. */
   padding-top: var(--safe-top);
+  transition: background 600ms ease;
 }
 
-/* Cover-derived ambient background — full-bleed, blurred to a soft
- * color wash, dark-vignetted so foreground text stays readable. The
- * 1.2s transition gives a smooth crossfade when the next track loads
- * even though the underlying image swap is instant. */
-.np-bg {
-  position: absolute;
-  inset: -60px;
-  background-size: cover;
-  background-position: center;
-  filter: blur(60px) saturate(1.4);
-  opacity: 0.55;
-  z-index: -2;
-  transition: background-image 1.2s ease, opacity 1.2s ease;
+/* Top bar */
+.np-top {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 0;
 }
-.np-bg-fade {
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(120% 70% at 50% 0%, transparent 0%, rgba(13, 15, 20, 0.5) 70%, var(--bg) 100%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.35) 60%, var(--bg) 100%);
-  z-index: -1;
+.np-top-btn {
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.np-top-btn:active { background: rgba(255, 255, 255, 0.1); }
+.np-top-title {
+  flex: 1 1 auto;
+  text-align: center;
+  font: 700 13px/1.2 var(--font-body);
+  color: #fff;
+  letter-spacing: 0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Speed bottom-sheet — absolute-positioned, anchored bottom so it
- * comes up like an iOS modal. Tapping the dim backdrop closes. */
+/* Speed bottom-sheet */
 .np-speed-sheet {
   position: absolute;
   inset: 0;
@@ -884,7 +869,7 @@ watch(
 .np-speed-value {
   font-family: var(--font-display);
   font-size: 28px;
-  font-weight: 700;
+  font-weight: 800;
   color: var(--text);
   margin-top: 2px;
 }
@@ -913,15 +898,11 @@ watch(
 }
 .np-speed-chip.active {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .np-speed-chip:active { transform: scale(0.95); }
 
-/* The 1× badge in np-extras when speed != 1× — shows the numeric
- * value as a small pill (compact, accent border) instead of the
- * default Gauge icon, so the user can see at a glance "I'm on
- * 1.25×" without opening the sheet. */
 .np-speed-btn { padding: 0; }
 .np-speed-badge {
   display: inline-flex;
@@ -930,18 +911,15 @@ watch(
   min-width: 36px;
   padding: 4px 8px;
   border-radius: var(--r-pill);
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
   font-size: 11px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
-/* Lyrics overlay — absolute-positioned full-bleed sheet that
- * slides up over the player content (cover, controls, etc.) when
- * the user taps the lyrics button. Backdrop-blur keeps the player's
- * ambient bg visible underneath for continuity. */
+/* Lyrics overlay — solid color sheet, bold karaoke lines. */
 .np-lyrics {
   position: absolute;
   inset: 0;
@@ -955,33 +933,14 @@ watch(
   display: flex;
   flex-direction: column;
   padding-top: var(--safe-top);
-  background: linear-gradient(180deg,
-    rgba(13, 15, 20, 0.92) 0%,
-    rgba(13, 15, 20, 0.96) 60%,
-    rgba(13, 15, 20, 1) 100%);
-  backdrop-filter: blur(40px) saturate(1.2);
-  -webkit-backdrop-filter: blur(40px) saturate(1.2);
 }
 .np-lyrics-head {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-4);
-  border-bottom: 1px solid var(--border);
 }
 .np-lyrics-head-text {
-  /* min-width: 0 is critical: a flex item's default min-width is
-   * `auto` (= its content's intrinsic width), so without this the
-   * artist — title string would push the close button off-screen
-   * on long names like "Chase Atlantic — Consume feat. Goon Des
-   * Garcons". With 0 the child can shrink and the inner clip
-   * + MarqueeText scroll kicks in.
-   *
-   * `width: 0` companion to `flex: 1` — some WebKit versions don't
-   * honor `flex-basis: 0` alone for shrinking decisions; setting
-   * width: 0 forces the row to compute "head-text wants to be
-   * tiny" so the flex algorithm hands it exactly the remaining
-   * space (viewport - close button - padding - gap). */
   flex: 1;
   width: 0;
   min-width: 0;
@@ -991,36 +950,30 @@ watch(
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 1.4px;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.8);
   margin-bottom: 2px;
 }
 .np-lyrics-meta {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  /* Width pinned to 100% of the parent text column so MarqueeText's
-   * internal `scrollWidth > clientWidth` check has a stable
-   * reference (the parent's flex-constrained width, not the
-   * intrinsic span width). */
+  font: 700 14px/1.3 var(--font-body);
+  color: #fff;
   width: 100%;
 }
 .np-lyrics-close {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.18);
   border: 0;
   display: grid;
   place-items: center;
-  /* Hard pin so the title's overflow can NEVER push the close
-   * button out of the viewport. */
   flex: 0 0 36px;
+  cursor: pointer;
 }
-.np-lyrics-close:active { background: rgba(255, 255, 255, 0.18); }
+.np-lyrics-close:active { background: rgba(0, 0, 0, 0.35); }
 .np-lyrics-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: var(--sp-8) var(--sp-2) calc(var(--sp-8) + var(--safe-bottom));
+  padding: var(--sp-6) var(--sp-5) calc(var(--sp-8) + var(--safe-bottom));
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -1028,22 +981,32 @@ watch(
 .np-lyrics-body::-webkit-scrollbar { display: none; }
 .np-lyrics-state {
   text-align: center;
-  color: var(--text);
+  color: #fff;
   font-size: 15px;
   padding: var(--sp-6);
 }
-.np-lyrics-state.muted { color: var(--text-muted); font-style: italic; }
-.np-lyrics-state.error { color: var(--danger); }
+.np-lyrics-state.muted { color: rgba(255, 255, 255, 0.7); font-style: italic; }
+.np-lyrics-state.error { color: #ffd2d2; }
 .np-lyrics-plain {
   white-space: pre-wrap;
-  font: 14px/1.6 var(--font-body);
-  color: var(--text);
-  text-align: center;
+  font: 700 20px/1.5 var(--font-display);
+  color: #fff;
+  text-align: left;
   margin: 0;
-  padding: 0 var(--sp-4);
+  padding: 0 var(--sp-2);
 }
-/* Slide-up enter/leave (the active-line styling lives in mobile.css
- * since the lyrics modal used the same classes — re-used here). */
+/* Karaoke lines — bold, left-aligned, black-dimmed until sung. */
+.np-lyric-line {
+  font: 800 24px/1.35 var(--font-display);
+  letter-spacing: -0.3px;
+  text-align: left;
+  padding: var(--sp-1) 0;
+  color: rgba(0, 0, 0, 0.45);
+  transition: color var(--motion-mid) var(--ease);
+}
+.np-lyric-line.past { color: rgba(255, 255, 255, 0.85); }
+.np-lyric-line.active { color: #ffffff; }
+
 .lyrics-slide-enter-active,
 .lyrics-slide-leave-active {
   transition: transform var(--motion-mid) var(--ease), opacity var(--motion-mid) var(--ease);
@@ -1063,36 +1026,27 @@ watch(
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 32px calc(40px + var(--safe-bottom));
-  gap: 24px;
+  padding: 16px 24px calc(28px + var(--safe-bottom));
+  gap: 22px;
 }
 
-/* Cover stage holds the current cover + an off-screen prev (at
- * -100%) + an off-screen next (at +100%). The whole stage gets
- * translated by coverDx on swipe, so the side covers slide into
- * view as the user drags. */
+/* Cover stage */
 .np-cover-stage {
   position: relative;
-  width: min(80vw, 360px);
+  width: min(85vw, 380px);
   aspect-ratio: 1 / 1;
-  /* Don't clip — the side covers need to peek out as the user
-   * drags. The .np-body that wraps us has overflow:hidden from
-   * .np-screen so they never escape the viewport. */
   overflow: visible;
 }
 .np-cover {
-  width: min(80vw, 360px);
+  width: min(85vw, 380px);
   aspect-ratio: 1 / 1;
-  border-radius: 16px;
+  border-radius: 8px;
   overflow: hidden;
-  background: var(--card);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  background: rgba(0, 0, 0, 0.25);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
 }
 .np-cover img { width: 100%; height: 100%; object-fit: cover; }
 
-/* Side covers — positioned absolutely just off the edge of the
- * stage. A 16 px gap matches Apple Music's coverflow rhythm so
- * the swipe doesn't look like a continuous strip. */
 .np-cover-side {
   position: absolute;
   top: 0;
@@ -1102,26 +1056,51 @@ watch(
 .np-cover-prev { left: calc(-100% - 16px); }
 .np-cover-next { left: calc(100% + 16px); }
 
+/* Meta row — left text, right heart. */
 .np-meta {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
 }
+.np-meta-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .np-meta .np-title {
-  font-size: 19px;
-  font-weight: 700;
-  color: var(--text);
-  /* Overflow handled by MarqueeText (slow horizontal scroll on long
-   * titles). The old text-overflow:ellipsis used to cut "Tsew The
-   * Kid - Quand on danse (lyric…)" at the ellipsis; now the whole
-   * title scrolls into view over a few seconds. */
+  font: 700 20px/1.25 var(--font-display);
+  letter-spacing: -0.3px;
+  color: #fff;
+  text-align: left;
 }
 .np-meta .np-sub {
-  font-size: 14px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font: 400 15px/1.3 var(--font-body);
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 3px;
+  text-align: left;
+}
+.np-like {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  border: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.np-like:active { background: rgba(255, 255, 255, 0.08); }
+@keyframes np-heart-pop {
+  0%   { transform: scale(1); }
+  35%  { transform: scale(1.35); }
+  60%  { transform: scale(0.92); }
+  85%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+.np-like.is-bouncing svg {
+  animation: np-heart-pop 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center;
 }
 
 .np-seek { width: 100%; }
@@ -1130,7 +1109,7 @@ watch(
   justify-content: space-between;
   margin-top: 8px;
   font-size: 11px;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.65);
   font-variant-numeric: tabular-nums;
 }
 
@@ -1139,11 +1118,11 @@ watch(
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  max-width: 320px;
+  max-width: 340px;
 }
 .np-ctrl {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   background: transparent;
   border: 0;
   display: grid;
@@ -1152,36 +1131,41 @@ watch(
   border-radius: 50%;
 }
 .np-ctrl:active { background: rgba(255, 255, 255, 0.08); }
-.np-ctrl.ghost { width: 40px; height: 40px; position: relative; }
-/* Active dot under shuffle / repeat — Apple Music pattern so the toggled
- * state is glanceable even past the icon color shift. */
+.np-ctrl.ghost { width: 44px; height: 44px; position: relative; }
 .np-ctrl.ghost.active::after {
   content: '';
   position: absolute;
-  bottom: 4px;
+  bottom: 5px;
   left: 50%;
   transform: translateX(-50%);
-  width: 3px;
-  height: 3px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--accent);
 }
+/* Spotify's signature WHITE play circle with black glyph. */
 .np-controls .np-play {
   width: 64px;
   height: 64px;
   border-radius: 50%;
-  background: var(--accent);
+  background: #ffffff;
   border: 0;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
+.np-controls .np-play:active { transform: scale(0.94); }
 
 .np-extras {
   display: flex;
-  justify-content: space-around;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
-  max-width: 320px;
+}
+.np-extras-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .np-extra {
   width: 44px;
@@ -1206,7 +1190,7 @@ watch(
 .queue-handle {
   width: 36px;
   height: 4px;
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 999px;
   margin: 10px auto 6px;
 }
@@ -1217,9 +1201,7 @@ watch(
   justify-content: space-between;
 }
 .queue-head h2 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
+  font: 700 18px/1.2 var(--font-display);
   margin: 0;
   color: var(--text);
 }
@@ -1246,19 +1228,19 @@ watch(
 }
 .qrow + .qrow { margin-top: 2px; }
 .qrow:active { background: var(--card-hover); }
-.qrow.current { background: var(--accent-soft); }
+.qrow.current { background: rgba(255, 255, 255, 0.07); }
 .qrow-thumb {
   width: 40px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: 4px;
   overflow: hidden;
   background: var(--card-hover);
   flex: 0 0 auto;
 }
 .qrow-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .qrow-meta { flex: 1 1 auto; min-width: 0; }
-.qrow-title { font-size: 14px; font-weight: 500; color: var(--text); }
-.qrow.current .qrow-title { color: var(--accent-bright); }
+.qrow-title { font: 500 14px/1.3 var(--font-body); color: var(--text); }
+.qrow.current .qrow-title { color: var(--accent); }
 .qrow-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .muted { color: var(--text-muted); }
 .empty-state.small { padding: 30px 16px; text-align: center; }

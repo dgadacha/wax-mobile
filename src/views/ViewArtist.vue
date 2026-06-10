@@ -1,12 +1,16 @@
 <script setup>
 import { computed, ref, watch, onMounted } from 'vue';
+import { ArrowDownCircle, ListPlus, ListEnd, Sparkles, ListMusic, Plus } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { useStreamsStore } from '@/stores/streams';
+import { useMixStore } from '@/stores/mix';
+import { usePlaylistsStore } from '@/stores/playlists';
 import { api, apiUrl } from '@/lib/api';
 import { fmtDuration, gradientFromString, parseTrackTitle, normalizeArtistKey } from '@/lib/format';
 import { showToast } from '@/lib/toast';
+import { useActionSheetStore } from '@/stores/actionSheet';
 import MobileHero from '@/components/MobileHero.vue';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 
@@ -14,6 +18,9 @@ const view = useViewStore();
 const lib = useLibraryStore();
 const player = usePlayerStore();
 const streams = useStreamsStore();
+const mix = useMixStore();
+const playlists = usePlaylistsStore();
+const sheet = useActionSheetStore();
 
 const artistName = computed(() => view.selectedArtist || '');
 const photoOk = ref(true);
@@ -32,10 +39,10 @@ const libQueueIds = computed(() => libraryTracks.value.map((t) => t.id));
 const totalDuration = computed(() => libraryTracks.value.reduce((s, t) => s + (t.duration || 0), 0));
 const bgGradient = computed(() => artistName.value ? gradientFromString(artistName.value) : '');
 
-const subtitle = computed(() => {
+const meta = computed(() => {
   const n = libraryTracks.value.length;
-  if (!n) return 'Aucun titre dans ta bibliothèque';
-  return `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
+  if (!n) return 'Artiste · Aucun titre dans ta bibliothèque';
+  return `Artiste · ${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
 });
 
 const recs = ref([]);
@@ -73,9 +80,14 @@ async function loadRecs(name) {
 
 const recQueueIds = computed(() => recs.value.map((t) => t.id));
 
-function playAll() {
+const isCurrentContext = computed(() =>
+  !!player.currentTrack && libQueueIds.value.includes(player.currentTrack.id),
+);
+const heroPlaying = computed(() => player.playing && isCurrentContext.value);
+function onHeroPlay() {
   if (libQueueIds.value.length === 0) return;
-  player.playFromList(libQueueIds.value[0], libQueueIds.value);
+  if (isCurrentContext.value) player.togglePlay();
+  else player.playFromList(libQueueIds.value[0], libQueueIds.value);
 }
 
 function playLib(t) {
@@ -86,6 +98,43 @@ function playRec(t) {
 }
 
 function isFav(t) { return lib.isFavorite(t); }
+
+async function onTrackMore(t) {
+  try {
+    const { index } = await sheet.open(
+      [
+        { name: t.file ? 'Disponible hors-ligne' : 'Télécharger', icon: ArrowDownCircle, disabled: !!t.file },
+        { name: 'Ajouter à une playlist', icon: ListPlus },
+        { name: 'Lancer un mix basé sur ce titre', icon: Sparkles },
+        { name: 'Ajouter à la file', icon: ListEnd },
+      ],
+      { cover: t.thumbnail, title: t.title, subtitle: t.uploader },
+    );
+    if (index === 0 && !t.file) lib.downloadTrack(t.id);
+    else if (index === 1) addTrackToPlaylistFlow(t);
+    else if (index === 2) mix.streamFrom(t, () => view.switchTo('mix'));
+    else if (index === 3) player.addToQueue(t.id);
+  } catch {}
+}
+
+async function addTrackToPlaylistFlow(t) {
+  const actions = [
+    { name: 'Nouvelle playlist', icon: Plus, color: 'var(--accent)' },
+    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id, icon: ListMusic })),
+  ];
+  await new Promise((res) => setTimeout(res, 220));
+  let pick;
+  try {
+    pick = await sheet.open(actions, { title: 'Ajouter à une playlist', subtitle: t.title });
+  } catch { return; }
+  if (pick.index === 0) {
+    const pl = await playlists.create();
+    if (pl) await playlists.addTrack(pl.id, t.id);
+  } else {
+    const pl = actions[pick.index];
+    await playlists.addTrack(pl._id, t.id);
+  }
+}
 
 async function addAllRecs() {
   for (const r of recs.value) {
@@ -107,15 +156,17 @@ onMounted(() => loadRecs(artistName.value));
 
 <template>
   <div class="artist-view">
+    <!-- Full-bleed photo banner with the name overlaid — Spotify's
+         artist page header. -->
     <MobileHero
       :cover="photoOk ? photoUrl : ''"
       :bg-gradient="bgGradient"
-      shape="circle"
-      eyebrow="Artiste"
+      shape="banner"
       :title="artistName"
-      :subtitle="subtitle"
+      :meta="meta"
       :show-play="libraryTracks.length > 0"
-      @play="playAll"
+      :playing="heroPlaying"
+      @play="onHeroPlay"
     />
     <!-- Hidden probe — `@error` on the hero img isn't exposed; trigger the
          fallback by loading the photo into a hidden <img> first. -->
@@ -127,16 +178,16 @@ onMounted(() => loadRecs(artistName.value));
       </div>
       <div class="track-list">
         <MobileTrackCell
-          v-for="(t, i) in libraryTracks"
+          v-for="t in libraryTracks"
           :key="t.id"
           :track="t"
-          :index="i"
-          variant="index"
+          variant="thumb"
           :is-playing="player.currentTrack && player.currentTrack.id === t.id"
           :is-liked="isFav(t)"
           :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
           @play="playLib(t)"
           @like="lib.toggleFav(t)"
+          @more="onTrackMore(t)"
         />
       </div>
     </section>
@@ -154,13 +205,13 @@ onMounted(() => loadRecs(artistName.value));
       </div>
       <div v-else class="track-list">
         <MobileTrackCell
-          v-for="(t, i) in recs"
+          v-for="t in recs"
           :key="t.id"
           :track="t"
-          :index="i"
           variant="thumb"
           :is-playing="player.currentTrack && player.currentTrack.id === t.id"
           :is-liked="false"
+          :show-more="false"
           @play="playRec(t)"
           @like="lib.add({
             id: t.ytId, ytId: t.ytId, title: t.title, uploader: t.uploader,
@@ -184,20 +235,19 @@ onMounted(() => loadRecs(artistName.value));
   padding: 0 16px 8px;
 }
 .section-head h2 {
-  font-family: var(--font-display);
-  font-size: 18px;
-  font-weight: 700;
+  font: 700 20px/1.2 var(--font-display);
+  letter-spacing: -0.3px;
   margin: 0;
   color: var(--text);
 }
 .link-btn {
   background: transparent;
   border: 0;
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
+  color: var(--text-muted);
+  font: 700 13px/1.2 var(--font-body);
   cursor: pointer;
 }
+.link-btn:active { color: var(--text); }
 .empty-state.small { padding: 20px; }
 .loading { display: flex; justify-content: center; padding: 16px; }
 </style>

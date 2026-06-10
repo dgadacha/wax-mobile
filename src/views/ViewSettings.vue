@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon } from 'lucide-vue-next';
+import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -386,33 +386,21 @@ async function onLogout() {
 
 <template>
   <div class="settings-view">
-    <van-cell-group inset title="Profil">
-      <van-cell
-        :title="profile.activeProfile ? profile.activeProfile.name : 'Aucun profil'"
-        value="Changer"
-        is-link
-        @click="changeProfile"
+    <!-- Profile row — avatar + name + "Changer de profil", Spotify's
+         settings header. -->
+    <button class="profile-row" @click="changeProfile">
+      <div
+        class="profile-avatar"
+        :style="{ background: profile.activeProfile?.color || 'var(--card-hover)' }"
       >
-        <template #icon>
-          <div
-            class="profile-pill"
-            :style="{ background: profile.activeProfile?.color || 'var(--card-hover)' }"
-          >
-            {{ (profile.activeProfile?.name || '?')[0]?.toUpperCase() }}
-          </div>
-        </template>
-      </van-cell>
-      <!-- Logout cell only renders when the server's auth gate is active.
-           Without it, signing out would be a no-op (the next call would
-           still go through). -->
-      <van-cell
-        v-if="auth.authEnabled"
-        title="Déconnexion"
-        value=""
-        is-link
-        @click="onLogout"
-      />
-    </van-cell-group>
+        {{ (profile.activeProfile?.name || '?')[0]?.toUpperCase() }}
+      </div>
+      <div class="profile-meta">
+        <div class="profile-name">{{ profile.activeProfile ? profile.activeProfile.name : 'Aucun profil' }}</div>
+        <div class="profile-hint">Changer de profil</div>
+      </div>
+      <ChevronRight :size="20" :stroke-width="2" color="var(--text-muted)" />
+    </button>
 
     <van-cell-group inset title="Apparence">
       <van-cell title="Thème" :value="darkThemes.find((t) => t.id === prefs.themeId)?.id || lightThemes.find((t) => t.id === prefs.themeId)?.id || '—'" />
@@ -706,35 +694,110 @@ async function onLogout() {
     <van-cell-group inset title="Danger">
       <van-cell title="Tout effacer" is-link @click="onReset" />
     </van-cell-group>
+
+    <!-- Spotify-style outlined logout pill at the very bottom. Only
+         renders when the server's auth gate is active — without it,
+         signing out would be a no-op. -->
+    <div v-if="auth.authEnabled" class="logout-row">
+      <button class="logout-pill" @click="onLogout">
+        <LogOut :size="16" :stroke-width="2.2" />
+        <span>Se déconnecter</span>
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .settings-view {
-  padding-top: 12px;
+  padding-top: 4px;
   padding-bottom: 20px;
 }
+/* Spotify settings: flat list on the page background — bold white
+ * section headers, plain rows, no inset cards. */
 .settings-view :deep(.van-cell-group__title) {
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+  color: var(--text);
+  font: 700 16px/1.2 var(--font-display);
+  text-transform: none;
+  letter-spacing: -0.2px;
+  padding: 20px 16px 6px;
 }
 .settings-view :deep(.van-cell-group--inset) {
-  margin: 12px 12px 16px;
-  border-radius: 12px;
-  background: var(--card);
+  margin: 0 0 8px;
+  border-radius: 0;
+  background: transparent;
   overflow: hidden;
 }
 .settings-view :deep(.van-cell) {
   background: transparent;
   color: var(--text);
+  padding: 13px 16px;
 }
-.settings-view :deep(.van-cell__title) { color: var(--text); }
-.settings-view :deep(.van-cell__value) { color: var(--text-muted); }
+.settings-view :deep(.van-cell::after) { display: none; }
+.settings-view :deep(.van-cell__title) {
+  color: var(--text);
+  font: 500 15px/1.3 var(--font-body);
+}
+.settings-view :deep(.van-cell__value) {
+  color: var(--text-muted);
+  font: 400 13px/1.3 var(--font-body);
+}
 .cell-icon { margin-right: 10px; }
 .spin-anim { animation: spin 1.1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Profile header row */
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+}
+.profile-row:active { background: rgba(255, 255, 255, 0.06); }
+.profile-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 800 22px/1 var(--font-display);
+  color: #fff;
+  flex: 0 0 auto;
+}
+.profile-meta { flex: 1 1 auto; min-width: 0; }
+.profile-name {
+  font: 700 16px/1.2 var(--font-display);
+  color: var(--text);
+}
+.profile-hint {
+  font: 400 13px/1.3 var(--font-body);
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* Logout pill */
+.logout-row {
+  display: flex;
+  justify-content: center;
+  padding: 24px 16px 12px;
+}
+.logout-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 11px 24px;
+  font: 700 14px/1.2 var(--font-display);
+  cursor: pointer;
+}
+.logout-pill:active { border-color: #fff; transform: scale(0.97); }
 
 /* Quality picker chips — three small pills laid out in a row
  * below the cell title. Active one fills with the accent. */
@@ -757,7 +820,7 @@ async function onLogout() {
 }
 .quality-chip.active {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .quality-chip:active { transform: scale(0.97); }
@@ -776,9 +839,10 @@ async function onLogout() {
  * up the group's rounded corners. Padded enough to breathe; the
  * progress bar at the bottom gives an instant read of "how full". */
 .storage-card {
+  margin: 4px 16px 10px;
   padding: var(--sp-3) var(--sp-4) var(--sp-4);
   background: var(--card);
-  border-bottom: 1px solid var(--border);
+  border-radius: 10px;
   cursor: pointer;
 }
 .storage-card-row {
@@ -899,7 +963,6 @@ async function onLogout() {
   overflow-x: auto;
   padding: var(--sp-3) var(--sp-4);
   scrollbar-width: none;
-  border-bottom: 1px solid var(--border);
 }
 .eq-presets::-webkit-scrollbar { display: none; }
 .eq-preset {
@@ -916,7 +979,7 @@ async function onLogout() {
 }
 .eq-preset.active {
   background: var(--accent);
-  color: var(--bg);
+  color: var(--on-accent);
   border-color: var(--accent);
 }
 .eq-preset:active { transform: scale(0.96); }
@@ -928,9 +991,7 @@ async function onLogout() {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
 }
-.eq-row:last-of-type { border-bottom: 0; }
 .eq-label { font-size: 13px; color: var(--text); }
 .eq-value {
   font-size: 12px;

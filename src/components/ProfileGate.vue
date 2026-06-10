@@ -155,11 +155,10 @@ async function deleteProfile(p) {
 .gate {
   position: fixed;
   inset: 0;
-  /* Always a dark gradient (Netflix-style), regardless of the user's
-   * theme. Hardcoded so the gate stays visible/legible whether the
-   * active theme is light (dawn / mint / paper / …) or dark. */
-  background: linear-gradient(180deg, #0a0c11 0%, #15181f 100%);
-  color: #f3f4f6;
+  /* Solid near-black regardless of the user's theme — same canvas as
+   * the login gate, Spotify's profile/artist-picker look. */
+  background: #0b0b0b;
+  color: #ffffff;
   z-index: 100;
   display: grid;
   place-items: center;
@@ -178,10 +177,8 @@ async function deleteProfile(p) {
 }
 
 .gate-title {
-  font-family: var(--font-display);
-  font-size: 28px;
-  font-weight: 700;
-  color: #f3f4f6;
+  font: 800 24px/1.2 var(--font-display);
+  color: #ffffff;
   margin: 0;
   letter-spacing: -0.4px;
 }
@@ -189,7 +186,7 @@ async function deleteProfile(p) {
 .gate-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px 20px;
+  gap: 26px 20px;
   width: 100%;
   justify-items: center;
 }
@@ -205,14 +202,16 @@ async function deleteProfile(p) {
   cursor: pointer;
 }
 
+/* Circular avatars — the "Choose artists" grid from Spotify's
+ * onboarding, repurposed for profiles. */
 .gate-avatar {
-  width: 110px;
-  height: 110px;
-  border-radius: 16px;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
-  font-size: 44px;
-  font-weight: 700;
+  font-size: 42px;
+  font-weight: 800;
   color: #fff;
   font-family: var(--font-display);
   position: relative;
@@ -221,13 +220,13 @@ async function deleteProfile(p) {
 }
 .gate-card:active .gate-avatar { transform: scale(0.95); }
 .gate-avatar.big {
-  width: 130px;
-  height: 130px;
-  border-radius: 18px;
+  width: 124px;
+  height: 124px;
+  border-radius: 50%;
 }
 .gate-avatar.add {
-  background: var(--card);
-  border: 2px dashed var(--border);
+  background: transparent;
+  border: 2px dashed rgba(255, 255, 255, 0.25);
 }
 
 .gate-overlay {
@@ -250,22 +249,20 @@ async function deleteProfile(p) {
 }
 
 .gate-name {
-  font-size: 14px;
-  color: #c8ccd6;
+  font: 700 14px/1.3 var(--font-body);
+  color: #ffffff;
 }
 
 .manage-btn {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #c8ccd6;
-  padding: 10px 22px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  padding: 11px 26px;
   border-radius: 999px;
-  font-size: 13px;
-  font-weight: 500;
+  font: 700 13px/1.2 var(--font-display);
   cursor: pointer;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
 }
+.manage-btn:active { border-color: #fff; transform: scale(0.97); }
 .cancel-btn {
   background: transparent;
   border: 0;
@@ -286,16 +283,16 @@ async function deleteProfile(p) {
 
 .gate-input {
   width: 100%;
-  background: var(--card);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 12px 16px;
-  border-radius: 10px;
-  font-size: 15px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 0;
+  color: #fff;
+  padding: 14px 16px;
+  border-radius: 6px;
+  font: 600 16px/1.3 var(--font-body);
   text-align: center;
   outline: none;
 }
-.gate-input:focus { border-color: var(--accent); }
+.gate-input:focus { background: rgba(255, 255, 255, 0.3); }
 
 .gate-colors {
   display: flex;
@@ -321,15 +318,14 @@ async function deleteProfile(p) {
   gap: 12px;
 }
 .ghost-btn, .primary-btn {
-  padding: 10px 22px;
+  padding: 12px 26px;
   border-radius: 999px;
-  font-size: 14px;
-  font-weight: 500;
+  font: 700 14px/1.2 var(--font-display);
   cursor: pointer;
   border: 0;
 }
-.ghost-btn { background: var(--card); color: var(--text); }
-.primary-btn { background: var(--accent); color: var(--bg); }
+.ghost-btn { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.3); }
+.primary-btn { background: var(--accent); color: #0b0b0b; }
 .primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .gate-fade-enter-active, .gate-fade-leave-active {

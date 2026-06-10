@@ -1,36 +1,67 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
-import { Play } from 'lucide-vue-next';
+// Spotify-style hero for detail views (album / playlist / artist / mix).
+//
+// Layouts:
+//   square / circle — cover centered on a vertical gradient pulled from
+//     the artwork's dominant color, then a LEFT-aligned text block
+//     (title / subtitle / meta) and an action row whose right edge is
+//     the green play FAB. The floating nav-bar overlays the top.
+//   banner — full-bleed artist photo with the name overlaid at the
+//     bottom (Spotify artist page). Subtitle/meta/actions flow below.
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
+import { Play, Pause } from 'lucide-vue-next';
 import { apiUrl } from '@/lib/api';
+import { extractDominantColor } from '@/lib/extractColor';
 
 const props = defineProps({
-  // Big square cover (album art, playlist gradient, artist photo).
   cover: { type: String, default: '' },
-  // Circular variant for artist heroes.
-  shape: { type: String, default: 'square' }, // 'square' | 'circle'
+  shape: { type: String, default: 'square' }, // 'square' | 'circle' | 'banner'
   // Fallback color when no cover is loaded.
   bgGradient: { type: String, default: '' },
-  // Tag shown above the title (Album / Playlist / Artiste / Mix).
-  eyebrow: { type: String, default: '' },
   title: { type: String, default: '' },
-  // Either a string or a slot — pass plain text or use #subtitle.
+  // Strong secondary line (artist / owner). Slot #subtitle overrides.
   subtitle: { type: String, default: '' },
+  // Muted meta line ("Album · 2000 · 12 titres").
+  meta: { type: String, default: '' },
   // Display the round play FAB (true for almost every hero).
   showPlay: { type: Boolean, default: true },
+  // When true the FAB shows a pause glyph (this context is playing).
+  playing: { type: Boolean, default: false },
   playLabel: { type: String, default: 'Lire' },
 });
 
-const emit = defineEmits(['play', 'more']);
+const emit = defineEmits(['play']);
 
-const fallbackStyle = computed(() =>
-  props.bgGradient ? { background: props.bgGradient } : null,
-);
 const coverSrc = computed(() => apiUrl(props.cover));
+const isBanner = computed(() => props.shape === 'banner');
 
-// Scroll-driven progress 0..1 for the Spotify-style shrink-as-you-
-// scroll hero. We hand-listen on .view-scroll (the only scroll
-// container in the app) instead of using IntersectionObserver because
-// we need a smooth continuous value, not a discrete in/out signal.
+// Dominant color → hero gradient. Falls back to the string-hash
+// gradient (bgGradient prop) when there's no artwork to sample.
+const tint = ref('');
+watch(
+  () => coverSrc.value,
+  async (src) => {
+    tint.value = '';
+    if (!src) return;
+    const hex = await extractDominantColor(src);
+    if (hex) tint.value = hex;
+  },
+  { immediate: true },
+);
+const gradientStyle = computed(() => {
+  if (tint.value) {
+    return {
+      background: `linear-gradient(180deg,
+        color-mix(in srgb, ${tint.value} 62%, #202020) 0%,
+        color-mix(in srgb, ${tint.value} 30%, var(--bg)) 60%,
+        var(--bg) 100%)`,
+    };
+  }
+  if (props.bgGradient) return { background: props.bgGradient };
+  return { background: 'linear-gradient(180deg, #2e2e2e 0%, var(--bg) 100%)' };
+});
+
+// Scroll-driven progress 0..1 for the shrink-as-you-scroll hero.
 const scrollProgress = ref(0);
 let scrollEl = null;
 const FADE_DISTANCE = 220; // px to fade out by
@@ -42,15 +73,9 @@ function onScroll() {
 }
 
 onMounted(() => {
-  // .view-scroll is the only scrolling element in the shell. The hero
-  // can be inside any sub-view (album / playlist / artist), but they
-  // all render into the same scroll container.
   scrollEl = document.querySelector('.app-shell .view-scroll');
   if (scrollEl) {
     scrollEl.addEventListener('scroll', onScroll, { passive: true });
-    // Reset progress when remounting — sub-views are v-if'd, so a
-    // hero appearing for the first time should start un-scrolled
-    // regardless of where the previous view was.
     scrollEl.scrollTop = 0;
     scrollProgress.value = 0;
   }
@@ -59,46 +84,42 @@ onBeforeUnmount(() => {
   if (scrollEl) scrollEl.removeEventListener('scroll', onScroll);
 });
 
-// Transform the cover + title block as the user scrolls. Cover shrinks
-// and fades; title slides up + fades. The compositor handles both via
-// transform/opacity → no layout thrash on scroll.
 const coverStyle = computed(() => {
   const p = scrollProgress.value;
-  const scale = 1 - p * 0.4; // 1 → 0.6
+  const scale = 1 - p * 0.35; // 1 → 0.65
   return {
     transform: `scale(${scale})`,
     opacity: 1 - p * 1.2,
   };
 });
-const titleStyle = computed(() => {
+const bannerImgStyle = computed(() => {
   const p = scrollProgress.value;
-  return {
-    transform: `translateY(${-p * 30}px)`,
-    opacity: 1 - p * 1.6,
-  };
-});
-const bgStyle = computed(() => {
-  const p = scrollProgress.value;
-  return { opacity: 0.45 * (1 - p * 0.6) };
+  return { opacity: 1 - p * 1.1, transform: `translateY(${p * 36}px)` };
 });
 </script>
 
 <template>
-  <header class="mh">
-    <!-- Blurred backdrop: same image as the cover, scaled up + blurred, with a
-         dark vignette fading to the page bg. Gives the immersive
-         Spotify/Deezer feel without needing a separate banner asset. -->
-    <div
-      class="mh-bg"
-      :style="[
-        cover ? { backgroundImage: `url('${coverSrc}')` } : fallbackStyle,
-        bgStyle,
-      ]"
-    />
-    <div class="mh-fade" />
+  <header class="mh" :class="[`shape-${shape}`]">
+    <!-- Gradient backdrop (square/circle) — dominant color → page bg. -->
+    <div v-if="!isBanner" class="mh-bg" :style="gradientStyle" />
+
+    <!-- Banner photo (artist) — bleeds under the status bar + nav. -->
+    <div v-if="isBanner" class="mh-banner">
+      <img
+        v-if="cover"
+        class="mh-banner-img"
+        :src="coverSrc"
+        alt=""
+        loading="eager"
+        :style="bannerImgStyle"
+      />
+      <div v-else class="mh-banner-fallback" :style="gradientStyle" />
+      <div class="mh-banner-scrim" />
+      <h1 class="mh-banner-title">{{ title }}</h1>
+    </div>
 
     <div class="mh-body">
-      <div class="mh-cover-wrap" :class="`shape-${shape}`" :style="coverStyle">
+      <div v-if="!isBanner" class="mh-cover-wrap" :style="coverStyle">
         <img
           v-if="cover"
           class="mh-cover"
@@ -106,21 +127,29 @@ const bgStyle = computed(() => {
           alt=""
           loading="eager"
         />
-        <div v-else class="mh-cover mh-cover-fallback" :style="fallbackStyle" />
+        <div v-else class="mh-cover mh-cover-fallback" :style="bgGradient ? { background: bgGradient } : null" />
       </div>
 
-      <div class="mh-text" :style="titleStyle">
-        <div v-if="eyebrow" class="mh-eyebrow">{{ eyebrow }}</div>
-        <h1 class="mh-title">{{ title }}</h1>
+      <div class="mh-text">
+        <h1 v-if="!isBanner" class="mh-title">{{ title }}</h1>
         <div v-if="subtitle || $slots.subtitle" class="mh-sub">
           <slot name="subtitle">{{ subtitle }}</slot>
         </div>
+        <div v-if="meta" class="mh-meta">{{ meta }}</div>
       </div>
 
       <div v-if="$slots.actions || showPlay" class="mh-actions">
-        <slot name="actions" />
+        <div class="mh-actions-left">
+          <slot name="actions" />
+        </div>
         <button v-if="showPlay" class="mh-play" :aria-label="playLabel" @click="emit('play')">
-          <Play :size="24" :stroke-width="2.5" color="var(--bg)" fill="var(--bg)" />
+          <component
+            :is="playing ? Pause : Play"
+            :size="26"
+            :stroke-width="0"
+            fill="var(--on-accent)"
+            color="var(--on-accent)"
+          />
         </button>
       </div>
     </div>
@@ -130,27 +159,16 @@ const bgStyle = computed(() => {
 <style scoped>
 .mh {
   position: relative;
-  padding: 16px 16px 20px;
   isolation: isolate;
   overflow: hidden;
+  /* The floating nav-bar overlays the hero — clear it. */
+  padding: calc(var(--safe-top) + 64px) 16px 8px;
 }
+.mh.shape-banner { padding: 0 0 8px; }
 
 .mh-bg {
   position: absolute;
-  inset: -40px;
-  background-size: cover;
-  background-position: center;
-  filter: blur(40px) saturate(1.2);
-  opacity: 0.45;
-  z-index: -2;
-}
-
-.mh-fade {
-  position: absolute;
   inset: 0;
-  background:
-    radial-gradient(120% 80% at 50% 0%, transparent 0%, var(--bg) 90%),
-    linear-gradient(180deg, rgba(13, 15, 20, 0.2) 0%, var(--bg) 100%);
   z-index: -1;
 }
 
@@ -158,30 +176,20 @@ const bgStyle = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 8px;
 }
+.shape-banner .mh-body { padding: 0 16px; }
 
 .mh-cover-wrap {
-  width: min(60vw, 240px);
+  width: min(58vw, 236px);
   aspect-ratio: 1 / 1;
-  margin-bottom: 16px;
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.55);
+  margin-bottom: 20px;
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.55);
   transform-origin: center top;
-  transition: transform 0s, opacity 0s;
   will-change: transform, opacity;
+  border-radius: 6px;
+  overflow: hidden;
 }
-/* Eyebrow + title + subtitle grouped so the scroll-driven transform
- * affects them as one block. Centered to match the original layout
- * (the parent was already a flex column centering its children). */
-.mh-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 100%;
-  will-change: transform, opacity;
-}
-.mh-cover-wrap.shape-square { border-radius: 8px; overflow: hidden; }
-.mh-cover-wrap.shape-circle { border-radius: 50%; overflow: hidden; }
+.shape-circle .mh-cover-wrap { border-radius: 50%; }
 
 .mh-cover {
   width: 100%;
@@ -191,45 +199,87 @@ const bgStyle = computed(() => {
 }
 .mh-cover-fallback { background: var(--card-hover); }
 
-.mh-eyebrow {
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 1.4px;
-  color: var(--text-muted);
-  margin-bottom: 6px;
+/* Banner (artist) — full-bleed photo, name pinned bottom-left. */
+.mh-banner {
+  position: relative;
+  height: min(42vh, 340px);
+  margin-bottom: 14px;
+  overflow: hidden;
 }
-
-.mh-title {
-  font-family: var(--font-display);
-  font-size: 26px;
-  font-weight: 700;
+.mh-banner-img,
+.mh-banner-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  will-change: transform, opacity;
+}
+.mh-banner-scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg,
+    rgba(0, 0, 0, 0.25) 0%,
+    rgba(0, 0, 0, 0) 35%,
+    rgba(18, 18, 18, 0.25) 70%,
+    var(--bg) 100%);
+}
+.mh-banner-title {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 4px;
   margin: 0;
-  text-align: center;
-  color: var(--text);
-  line-height: 1.15;
-  /* Long titles wrap rather than truncate — keeps the page readable. */
-  max-width: 100%;
+  font: 800 44px/1.05 var(--font-display);
+  letter-spacing: -1px;
+  color: #fff;
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.45);
   word-break: break-word;
 }
 
+/* Left-aligned text block — Spotify album/playlist layout. */
+.mh-text {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.mh-title {
+  font: 800 24px/1.15 var(--font-display);
+  letter-spacing: -0.4px;
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
 .mh-sub {
-  font-size: 13px;
-  color: var(--text-muted);
+  font: 700 13px/1.4 var(--font-body);
+  color: var(--text);
   margin-top: 8px;
-  text-align: center;
-  line-height: 1.4;
+}
+.mh-meta {
+  font: 400 13px/1.4 var(--font-body);
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
 .mh-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 18px;
   width: 100%;
-  justify-content: flex-end;
+  margin-top: 10px;
+  min-height: 56px;
 }
-
+.mh-actions-left {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Pull the icon row toward the edge so bare icons align with the
+   * text block (Spotify uses borderless icons here). */
+  margin-left: -8px;
+}
 .mh-play {
+  flex: 0 0 auto;
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -237,5 +287,8 @@ const bgStyle = computed(() => {
   border: 0;
   display: grid;
   place-items: center;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+.mh-play:active { transform: scale(0.94); }
 </style>

@@ -1,7 +1,10 @@
 <script setup>
 import { computed } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Plus, MoreHorizontal, ListMusic } from 'lucide-vue-next';
+import {
+  Plus, MoreVertical, ListMusic, ArrowDownCircle, ListPlus, ListEnd,
+  Sparkles, Mic2, Trash2, Pencil, Download as DownloadIcon, Eraser,
+} from 'lucide-vue-next';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
 const sheet = useActionSheetStore();
@@ -24,13 +27,10 @@ const mix = useMixStore();
 
 // Virtual playlists — Favoris and Hors-ligne route through this view
 // (via view.switchTo('playlist', 'favorites' | 'offline')) so they get
-// the exact same hero / back arrow / scroll behavior as a real
-// playlist. We synthesize a playlist-shaped object on the fly and
-// flag it `isVirtual` so the action menus can hide rename/delete and
-// swap "Retirer de la playlist" for the right semantic per kind.
+// the exact same hero / back arrow / scroll behavior as a real playlist.
 const VIRTUAL = {
-  favorites: { id: 'favorites', name: 'Favoris',    eyebrow: 'Bibliothèque', isVirtual: true, kind: 'favorites' },
-  offline:   { id: 'offline',   name: 'Hors-ligne', eyebrow: 'Bibliothèque', isVirtual: true, kind: 'offline' },
+  favorites: { id: 'favorites', name: 'Favoris',    isVirtual: true, kind: 'favorites' },
+  offline:   { id: 'offline',   name: 'Hors-ligne', isVirtual: true, kind: 'offline' },
 };
 const virtual = computed(() => VIRTUAL[view.selectedPlaylistId] || null);
 
@@ -58,7 +58,6 @@ const totalDuration = computed(() => tracks.value.reduce((s, t) => s + (t.durati
 
 const coverUrl = computed(() => tracks.value[0]?.thumbnail || '');
 const bgGradient = computed(() => playlist.value ? gradientFromString(playlist.value.name) : '');
-const eyebrow = computed(() => virtual.value?.eyebrow || 'Playlist');
 
 const emptyLabel = computed(() => {
   if (virtual.value?.kind === 'favorites') return 'Aucun favori';
@@ -70,14 +69,11 @@ const emptyHint = computed(() => {
     return 'Coche un titre depuis la recherche pour le retrouver ici.';
   }
   if (virtual.value?.kind === 'offline') {
-    return 'Télécharge un titre depuis l’action sheet « … » pour le retrouver ici.';
+    return 'Télécharge un titre depuis le menu « ⋮ » pour le retrouver ici.';
   }
   return 'Ajoute des titres depuis tes favoris ou la recherche.';
 });
 
-// "Tout télécharger" doesn't have its own batch state — we derive it
-// from libraryDownloads on the playlist tracks. While at least one is
-// in flight, surface "Téléchargement X/Y" in the hero subtitle.
 const inFlightCount = computed(() => {
   if (!playlist.value) return 0;
   let n = 0;
@@ -89,24 +85,29 @@ const inFlightCount = computed(() => {
 const downloadedCount = computed(() =>
   tracks.value.filter((t) => !!t.file).length,
 );
-const subtitle = computed(() => {
+const meta = computed(() => {
   if (!playlist.value) return '';
   const n = tracks.value.length;
   if (n === 0) return 'Playlist vide';
   const base = `${n} titre${n > 1 ? 's' : ''} · ${fmtDuration(totalDuration.value)}`;
   if (inFlightCount.value > 0) {
-    // Show both axes so "0/50" doesn't read as "nothing's happening"
-    // during the long wait between click and the first finished MP3.
-    return `${base}  ·  ${downloadedCount.value}/${n} hors-ligne · ${inFlightCount.value} en file`;
+    return `${base} · ${downloadedCount.value}/${n} hors-ligne · ${inFlightCount.value} en file`;
   }
-  if (downloadedCount.value === n) return `${base}  ·  Tout hors-ligne`;
-  if (downloadedCount.value > 0) return `${base}  ·  ${downloadedCount.value}/${n} hors-ligne`;
+  if (downloadedCount.value === n) return `${base} · Tout hors-ligne`;
+  if (downloadedCount.value > 0) return `${base} · ${downloadedCount.value}/${n} hors-ligne`;
   return base;
 });
 
-function playAll() {
+// Hero FAB: pause glyph + toggle when this playlist is the live
+// context, otherwise (re)start the whole list — Spotify behavior.
+const isCurrentContext = computed(() =>
+  !!player.currentTrack && queueIds.value.includes(player.currentTrack.id),
+);
+const heroPlaying = computed(() => player.playing && isCurrentContext.value);
+function onHeroPlay() {
   if (queueIds.value.length === 0) return;
-  player.playFromList(queueIds.value[0], queueIds.value);
+  if (isCurrentContext.value) player.togglePlay();
+  else player.playFromList(queueIds.value[0], queueIds.value);
 }
 
 function playTrack(t) {
@@ -117,14 +118,17 @@ function isLiked(t) { return lib.isFavorite(t); }
 
 async function onMore() {
   if (!playlist.value) return;
-  // Virtual playlists (Favoris / Hors-ligne) skip rename / delete /
-  // bulk-add — those only make sense for user-created playlists.
+  const header = {
+    cover: coverUrl.value,
+    title: playlist.value.name,
+    subtitle: meta.value,
+  };
   if (virtual.value) {
     try {
       const items = virtual.value.kind === 'offline'
-        ? [{ name: 'Nettoyer les orphelins' }]
-        : [{ name: 'Tout télécharger' }];
-      const { index } = await sheet.open(items);
+        ? [{ name: 'Nettoyer les orphelins', icon: Eraser }]
+        : [{ name: 'Tout télécharger', icon: DownloadIcon }];
+      const { index } = await sheet.open(items, header);
       if (virtual.value.kind === 'offline') {
         if (index === 0) {
           const removed = await lib.purgeOrphans();
@@ -143,11 +147,11 @@ async function onMore() {
   }
   try {
     const { index } = await sheet.open([
-      { name: 'Ajouter des titres' },
-      { name: 'Tout télécharger' },
-      { name: 'Renommer' },
-      { name: 'Supprimer la playlist', color: 'var(--danger)' },
-    ]);
+      { name: 'Ajouter des titres', icon: ListPlus },
+      { name: 'Tout télécharger', icon: DownloadIcon },
+      { name: 'Renommer', icon: Pencil },
+      { name: 'Supprimer la playlist', icon: Trash2, color: 'var(--danger)' },
+    ], header);
     if (index === 0) addTracks();
     else if (index === 1) downloadAll();
     else if (index === 2) playlists.rename(playlist.value.id);
@@ -155,24 +159,25 @@ async function onMore() {
   } catch { /* dismissed */ }
 }
 
-// Track-level action sheet. Same options across every track context
-// (favoris, hors-ligne, playlist, playlist-from-mix) so there's only
-// one menu to learn — only the trailing danger action's label is
-// contextual (Retirer de la playlist / des favoris / du cache).
+// Track-level action sheet — same options across every track context,
+// only the trailing danger action's label is contextual.
 async function onTrackMore(t) {
   if (!playlist.value) return;
   let dangerLabel = 'Retirer de la playlist';
   if (virtual.value?.kind === 'favorites') dangerLabel = 'Retirer des favoris';
   else if (virtual.value?.kind === 'offline') dangerLabel = 'Supprimer du cache';
   try {
-    const { index } = await sheet.open([
-      { name: t.file ? 'Disponible hors-ligne ✓' : 'Télécharger', disabled: !!t.file },
-      { name: 'Ajouter à une playlist' },
-      { name: 'Lancer un mix basé sur ce titre' },
-      { name: 'Ajouter à la file' },
-      { name: 'Ouvrir l’artiste' },
-      { name: dangerLabel, color: 'var(--danger)' },
-    ]);
+    const { index } = await sheet.open(
+      [
+        { name: t.file ? 'Disponible hors-ligne' : 'Télécharger', icon: ArrowDownCircle, disabled: !!t.file },
+        { name: 'Ajouter à une playlist', icon: ListPlus },
+        { name: 'Lancer un mix basé sur ce titre', icon: Sparkles },
+        { name: 'Ajouter à la file', icon: ListEnd },
+        { name: 'Ouvrir l’artiste', icon: Mic2 },
+        { name: dangerLabel, icon: Trash2, color: 'var(--danger)' },
+      ],
+      { cover: t.thumbnail, title: t.title, subtitle: t.uploader },
+    );
     if (index === 0 && !t.file) lib.downloadTrack(t.id);
     else if (index === 1) addTrackToPlaylistFlow(t);
     else if (index === 2) mix.streamFrom(t, () => view.switchTo('mix'));
@@ -188,16 +193,16 @@ async function onTrackMore(t) {
   } catch {}
 }
 
-// Per-track add to a playlist (vs the bulk "Ajouter des titres" on
-// the hero, which is whole-list). Mirrors ViewLibrary.addToPlaylistFlow.
 async function addTrackToPlaylistFlow(t) {
   const actions = [
-    { name: '＋ Nouvelle playlist', color: 'var(--accent)' },
-    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id })),
+    { name: 'Nouvelle playlist', icon: Plus, color: 'var(--accent)' },
+    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id, icon: ListMusic })),
   ];
   await new Promise((res) => setTimeout(res, 220));
   let pick;
-  try { pick = await sheet.open(actions); } catch { return; }
+  try {
+    pick = await sheet.open(actions, { title: 'Ajouter à une playlist', subtitle: t.title });
+  } catch { return; }
   if (pick.index === 0) {
     const pl = await playlists.create();
     if (pl) await playlists.addTrack(pl.id, t.id);
@@ -236,9 +241,6 @@ async function downloadAll() {
     showToast({ message: 'Déjà tout hors-ligne', position: 'bottom' });
     return;
   }
-  // Confirm to the user that the request landed — the pool throttles
-  // to 4 simultaneous SSE connections so the first ready event can take
-  // ~30 s, plenty of time to make the page look broken otherwise.
   showToast({
     message: `${todo.length} titre${todo.length > 1 ? 's' : ''} en file de téléchargement`,
     position: 'bottom',
@@ -256,7 +258,7 @@ async function deleteThis() {
       cancelButtonText: 'Annuler',
       confirmButtonColor: 'var(--danger)',
     });
-    await playlists.remove.call(playlists, playlist.value.id); // legacy uses its own modal
+    await playlists.remove.call(playlists, playlist.value.id);
   } catch {}
 }
 </script>
@@ -266,24 +268,33 @@ async function deleteThis() {
     <MobileHero
       :cover="coverUrl"
       :bg-gradient="bgGradient"
-      :eyebrow="eyebrow"
       :title="playlist.name"
-      :subtitle="subtitle"
-      @play="playAll"
+      :meta="meta"
+      :playing="heroPlaying"
+      @play="onHeroPlay"
     >
       <template #actions>
-        <!-- "+" hidden for virtual Favoris/Hors-ligne — they're
-             auto-populated, not user-curated. -->
+        <button
+          class="hero-icon-btn"
+          :aria-label="downloadedCount === tracks.length && tracks.length > 0 ? 'Tout hors-ligne' : 'Tout télécharger'"
+          @click="downloadAll"
+        >
+          <ArrowDownCircle
+            :size="24"
+            :stroke-width="1.8"
+            :color="downloadedCount === tracks.length && tracks.length > 0 ? 'var(--accent)' : 'var(--text-muted)'"
+          />
+        </button>
         <button
           v-if="!virtual"
           class="hero-icon-btn"
-          aria-label="Ajouter"
+          aria-label="Ajouter des titres"
           @click="addTracks"
         >
-          <Plus :size="20" :stroke-width="2.2" color="var(--text)" />
+          <Plus :size="24" :stroke-width="1.8" color="var(--text-muted)" />
         </button>
         <button class="hero-icon-btn" aria-label="Plus" @click="onMore">
-          <MoreHorizontal :size="20" :stroke-width="2.2" color="var(--text)" />
+          <MoreVertical :size="24" :stroke-width="1.8" color="var(--text-muted)" />
         </button>
       </template>
     </MobileHero>
@@ -296,11 +307,10 @@ async function deleteThis() {
 
     <div v-else class="track-list">
       <MobileTrackCell
-        v-for="(t, i) in tracks"
+        v-for="t in tracks"
         :key="t.id"
         :track="t"
-        :index="i"
-        variant="index"
+        variant="thumb"
         :is-playing="player.currentTrack && player.currentTrack.id === t.id"
         :is-liked="isLiked(t)"
         :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
@@ -316,13 +326,14 @@ async function deleteThis() {
 <style scoped>
 .playlist-view { min-height: 100%; padding-bottom: 16px; }
 .hero-icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: transparent;
   border: 0;
   display: grid;
   place-items: center;
+  cursor: pointer;
 }
-.hero-icon-btn:active { background: rgba(255, 255, 255, 0.16); }
+.hero-icon-btn:active { opacity: 0.6; }
 </style>

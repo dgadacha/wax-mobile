@@ -5,7 +5,7 @@ Ce fichier est pour **toi, Claude futur**. Lis-le en premier à chaque session s
 ## TL;DR — c'est quoi ?
 
 **Wax** est une app musicale web/mobile :
-- **Frontend** — Vue 3 + Vite + Pinia + **Vant** (UI kit mobile) + **Lucide** icons. Multi-profil style Netflix. **Login obligatoire** avant le choix du profil. PWA offline-capable avec service worker Workbox.
+- **Frontend** — Vue 3 + Vite + Pinia + **Vant** (UI kit mobile) + **Lucide** icons. **UI/UX calquée sur Spotify iOS** depuis la v0.19 : palette #121212 + vert #1ED760 (thème `spotify` par défaut), police Figtree, tab bar 3 onglets, heros en dégradé tiré de la cover, action sheets plein écran avec artwork. Multi-profil (picker en cercles). **Login obligatoire** avant le choix du profil. PWA offline-capable avec service worker Workbox.
 - **Backend** — `server.cjs` (Express) qui appelle `yt-dlp` + `ffmpeg`. Stockage par profil (`library/users/<id>/`). Audio MP3 partagé entre profils.
 - **Déployé** sur Kubernetes (namespace `wax`, ingress `wax.maiz.local`) via GitLab CI, image Docker dans le registry GitLab (`registry.gitlab.com/kidnar/wax:latest`).
 
@@ -60,7 +60,7 @@ Runtime deps : `yt-dlp`, `ffmpeg`. Override avec `WAX_YT_DLP` / `WAX_FFMPEG`.
 
 ### Frontend
 - **`src/stores/auth.js`** — `{token, authEnabled, checking}`. Getter `loggedIn = !authEnabled || !!token` (pas de gate → tout le monde est connecté). `verify()` probe `/api/auth/verify`, lit `authEnabled`, efface le token sur 401. Token stocké dans `localStorage['wax:auth-token']`. Une 401 sur n'importe quel endpoint dispatch `wax:auth-expired` et réaffiche la gate.
-- **`src/components/LoginGate.vue`** — overlay plein écran (dark gradient). Spinner pendant `auth.checking`, `<WifiOff>` + "Pas de connexion" quand offline sans token, formulaire email/password sinon.
+- **`src/components/LoginGate.vue`** — overlay plein écran en 2 étapes façon Spotify : écran "Start" (halo coloré + logo + tagline + pill verte "Se connecter") → formulaire (top bar "Connexion" + chevron retour, labels gras "Ton e-mail ?"/"Ton mot de passe ?", inputs gris pleins, pill blanche). Spinner pendant `auth.checking`, `<WifiOff>` + "Pas de connexion" quand offline sans token.
 - **`src/lib/api.js`** — envoie `Authorization: Bearer <token>` sur chaque requête. `apiUrlWithProfile()` ajoute `?profile=<id>&_token=<token>` pour les EventSource (SSE ne peut pas envoyer de headers).
 - **`App.vue`** — `bootstrapAfterAuth()` : `profile.fetch()` → si `needsPicker` → stop → `ProfileGate`. Sinon `library.fetch()`, `playlists.fetch()`, `player.restorePlayerState()`, etc. Watch sur `auth.loggedIn` déclenche `bootstrapAfterAuth()` quand le user se connecte.
 
@@ -76,7 +76,7 @@ Chaque requête porte `X-Wax-Profile: <id>` → le serveur route vers `library/u
 
 - **Profil par défaut** (`id: 'default'`) auto-créé au premier boot. Migration auto depuis l'ancien `library/library.json` racine.
 - **Store** : `src/stores/profile.js` — id actif persisté dans `localStorage['wax:active-profile']`. `api.js` lit la même clé directement.
-- **`<ProfileGate />`** — overlay "Qui écoute ?" quand `profile.needsPicker`. Création inline (nom + couleur parmi `ACCENT_SWATCHES`), renommage / suppression (sauf `default`). Logout (si auth activée) dans les réglages.
+- **`<ProfileGate />`** — overlay "Qui écoute ?" quand `profile.needsPicker`. Avatars **circulaires** (grille style "Choose artists" de Spotify). Création inline (nom + couleur parmi `ACCENT_SWATCHES`), renommage / suppression (sauf `default`). Logout (si auth activée) en pill au bas des réglages.
 - Switcher de profil → `location.reload()` (re-fetch de tous les stores).
 
 ## Stream audio — proxy YouTube CDN
@@ -102,9 +102,12 @@ Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
 
 `src/composables/useGestures.js` — composable unifié pour swipe horizontal/vertical + long-press, utilisé dans `MobilePlayer.vue` (swipe bas pour fermer le fullscreen, swipe gauche/droite pour changer de track avec preview en coverflow).
 
-## Couleur d'accent adaptative
+## Couleur dominante (tint player + heros + sheets)
 
-`src/lib/extractColor.js` — extrait la couleur dominante d'une cover (canvas pixel sampling) pour adapter l'accent couleur au morceau en cours. Utilisé dans `MobilePlayer.vue` fullscreen.
+`src/lib/extractColor.js` — extrait la couleur dominante d'une cover (canvas pixel sampling). Depuis la v0.19 elle ne touche **plus** `--accent` (le vert reste l'identité) : elle teinte le **canvas** comme Spotify —
+- `MobilePlayer.vue` : dégradé du player fullscreen (`npColor`), fond du mini player flottant, fond coloré du sheet paroles.
+- `MobileHero.vue` : dégradé vertical des heros album/playlist/mix.
+- `ActionSheet.vue` : dégradé du sheet contextuel quand un header `cover` est passé.
 
 ## Lyrics synchronisés
 
@@ -135,31 +138,32 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 **Entry** : `main.js` → Pinia + Vant CSS + `mobile.css` → `App.vue`
 
 **`App.vue`** :
-- `van-nav-bar` en haut (titre avec fade-in au scroll sur les sub-views — pattern Spotify)
+- `van-nav-bar` **uniquement sur les sub-views** (`v-if`). Deux modes : `nav-float` (heros playlist/album/artist/mix — chevron flottant transparent, scrim + titre qui fade-in au scroll via `--wax-nav-bg-opacity` / `--wax-nav-title-opacity`) et solide centré (settings/wrapped). Les onglets top-level n'ont pas de nav — chaque vue rend son propre header, `.view-scroll.no-nav` pad le safe-top.
 - Bannière offline `WifiOff` entre la nav et le scroll
 - `.view-scroll` avec les vues (`v-show` top-level, `v-if` drill-down) + transition `view-push/pop/fade` selon la profondeur de l'historique
-- `<MobilePlayer />` — mini barre + popup plein écran
-- `van-tabbar` 4 onglets (Accueil / Rechercher / Bibliothèque / Réglages)
+- `<MobilePlayer />` — mini player flottant + popup plein écran
+- `van-tabbar` **3 onglets** (Accueil / Rechercher / Bibliothèque) — actif **blanc** (pas accent), fond noir frosted. Réglages = sub-view de `home` (roue dentée sur l'Accueil), `wrapped` aussi. `SUBVIEW_PARENT` + `HERO_SUBVIEWS` pilotent tab actif + mode de nav.
 - `<ModalRoot />` — modales impératives legacy
 - `<LoginGate />` (z-index 200) / `<ProfileGate />` (z-index 100)
-- `<van-action-sheet>` singleton
+- `<ActionSheet />` singleton custom (voir Conventions)
 
 **`src/views/`** :
-- `ViewHome.vue` — Salutation (Bonjour/Bonsoir), grille 2-col récemment écoutés + "Pour toi" (store `discover`)
-- `ViewSearch.vue` — `van-search` + résultats. Tap → stream, ♥ → favoris. Choix de qualité (128/192/320k) au téléchargement.
-- `ViewLibrary.vue` — Biblio unifiée Spotify-style. Chips Tout/Playlists/Albums/Artistes/Titres
-- `ViewPlaylist.vue` — `<MobileHero>` + tracklist + action sheets
-- `ViewAlbum.vue` — `<MobileHero>` + tracklist Deezer + library-match
-- `ViewArtist.vue` — `<MobileHero shape="circle">` + tracks biblio + recommandés
-- `ViewMix.vue` — `<MobileHero>` + tracklist mix YouTube
-- `ViewSettings.vue` — Profil, Apparence (22 thèmes + accent), Langue, EQ, Stockage offline (usage + clear cache + repair), Bibliothèque (counts + album rescan), Sauvegarde (export/import JSON), Danger (reset)
+- `ViewHome.vue` — Salutation grasse + icônes (Sparkles → wrapped, Settings → réglages), tuiles 2-col de reprise rapide, carrousels horizontaux (récemment joués / top joués / top artistes en cercles / "Pour toi" du store `discover`)
+- `ViewSearch.vue` — Titre "Rechercher" + **barre blanche** (van-search restylée), grille "Parcourir" de cartes colorées avec cover inclinée (→ favoris/hors-ligne/chips library via `view.libraryFilter`/wrapped), recherches récentes, résultats. Tap → stream, ♥ → favoris.
+- `ViewLibrary.vue` — Header avatar + "Ta bibliothèque" + loupe (toggle recherche) + "+". Chips Playlists/Artistes/Albums/Titres (toggle : re-tap = désélection → tout). Tuile Favoris en dégradé indigo, Hors-ligne en vert. Rows 64px sans chevron.
+- `ViewPlaylist.vue` — `<MobileHero>` (FAB pause si contexte courant) + tracklist `thumb` + action sheets avec header cover
+- `ViewAlbum.vue` — `<MobileHero>` + tracklist Deezer **variant `plain`** (ni index ni thumb, comme Spotify) + library-match
+- `ViewArtist.vue` — `<MobileHero shape="banner">` (photo full-bleed, nom overlay) + tracks biblio + recommandés
+- `ViewMix.vue` — `<MobileHero>` + tracklist mix YouTube, bouton Sauvegarder outline
+- `ViewSettings.vue` — **sub-view de home** (roue dentée). Ligne profil en tête (avatar + Changer de profil), sections plates à headers gras (plus de cartes inset), Apparence (11 thèmes + accent), Langue, EQ, Lecture, Bibliothèque, Hors-ligne, Sauvegarde, Danger, pill "Se déconnecter" en bas
 
 **`src/components/`** :
-- `LoginGate.vue` — auth gate (z-index 200, state offline)
-- `ProfileGate.vue` — gate "Qui écoute ?"
-- `MobileHero.vue` — hero réutilisable (cover blurée, FAB play, slot actions)
-- `MobileTrackCell.vue` — ligne de track (`thumb` ou `index` variant) avec animation heart-pop sur like
-- `MobilePlayer.vue` — héberge les 2 `<audio>`, mini player + popup fullscreen. Swipe bas = fermer, swipe gauche/droite = prev/next avec preview coverflow. Couleur d'accent adaptative depuis la cover. Lyrics synchronisés.
+- `LoginGate.vue` — auth gate 2 écrans Start → formulaire (z-index 200, state offline)
+- `ProfileGate.vue` — gate "Qui écoute ?" en cercles
+- `ActionSheet.vue` — sheet contextuel plein écran style Spotify : dégradé depuis la couleur dominante du header.cover, bloc cover+titre+artiste, rows à icônes, "Fermer" centré. Bindé sur le store actionSheet.
+- `MobileHero.vue` — hero détail. Props : `cover`, `shape` (`square`/`circle`/`banner`), `title`, `subtitle` (ligne grasse), `meta` (ligne muted), `playing` (FAB play↔pause), slot `#actions` (icônes à gauche du FAB). Dégradé = couleur dominante extraite de la cover, fallback `bgGradient`. Banner = photo full-bleed + nom overlay (artistes).
+- `MobileTrackCell.vue` — ligne de track (`thumb` / `index` / `plain`) : titre 16px, badge vert hors-ligne inline dans le sous-titre, barres d'égaliseur animées (figées en pause) sur le titre en cours, heart-pop sur like
+- `MobilePlayer.vue` — héberge les 2 `<audio>`, mini player **flottant arrondi teinté** (couleur dominante) + popup fullscreen en **dégradé plein** (plus de blur) : top bar chevron/"En cours de lecture"/⋮ (ouvre le sheet track), meta alignée à gauche + cœur, **play blanc 64px glyphe noir**, extras (vitesse / paroles / file). Paroles = sheet **fond coloré** lignes grasses. Swipe bas = fermer, swipe gauche/droite = prev/next avec preview coverflow.
 - `ModalRoot.vue`, `BulkAddBody.vue`, `AddToPlaylistBody.vue` — modales legacy encore utilisées
 
 **`src/composables/`** :
@@ -176,7 +180,7 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 - `format.js`, `icons.js`, `themes.js`, `i18n.js`, `modal.js`, `toast.js`, `backup.js`
 
 **`src/styles/`** :
-- `mobile.css` — palette "Midnight" (dark), vars Vant, layout primitives, transitions view-push/pop/fade
+- `mobile.css` — palette Spotify-like par défaut (#121212 / #1ED760 / `--on-accent` noir pour le texte sur accent), police Figtree, vars Vant (tabbar active **blanche**), nav float/solid, mini player flottant, layout primitives, transitions view-push/pop/fade. Le thème `spotify` est le défaut (`lib/themes.js`) — `prefs.load()` migre une fois les installs existants via le flag `uiSpotifyMigrated`.
 
 ## Flux clés
 
@@ -198,7 +202,7 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 ## Conventions
 
 - **Vant** : auto-import via `unplugin-vue-components`. Pour les APIs impératives (`showToast`, `showConfirmDialog`), importer depuis `'vant'`.
-- **Action sheet singleton** : `useActionSheetStore().open([...])` — ne pas monter de `<van-action-sheet>` par vue (bug de double-mount avec `v-show`).
+- **Action sheet singleton** : `useActionSheetStore().open(actions, header?)` → promesse `{index, name}`. Actions `{name, icon? (composant Lucide, markRaw géré par le store), color?, disabled?}` ; header `{cover?, title?, subtitle?}` déclenche le bloc artwork + dégradé. Rendu par `<ActionSheet />` monté une seule fois dans App.vue — ne pas monter de sheet par vue.
 - **Safe areas** : `--safe-top` / `--safe-bottom` dans `mobile.css`. Tout élément fixe en a besoin.
 - **Composition API + `<script setup>`** uniquement.
 - **Pas de commentaires** sauf si le WHY est non-obvieux.

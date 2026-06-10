@@ -2,8 +2,9 @@
 import { onMounted, computed, watch, ref, nextTick } from 'vue';
 import { showToast as vantToast } from 'vant';
 
-import { House, Search, Library, Settings, ChevronLeft, WifiOff } from 'lucide-vue-next';
+import { House, Search, Library, ChevronLeft, WifiOff } from 'lucide-vue-next';
 import MobilePlayer from './components/MobilePlayer.vue';
+import ActionSheet from './components/ActionSheet.vue';
 import ModalRoot from './components/ModalRoot.vue';
 import ProfileGate from './components/ProfileGate.vue';
 import LoginGate from './components/LoginGate.vue';
@@ -26,7 +27,6 @@ import { usePlayerStore } from './stores/player';
 import { usePrefsStore } from './stores/prefs';
 import { useDiscoverStore } from './stores/discover';
 import { useProfileStore } from './stores/profile';
-import { useActionSheetStore } from './stores/actionSheet';
 import { useAuthStore } from './stores/auth';
 import { haptics } from './lib/haptics';
 import { closeModal, modalState } from './lib/modal';
@@ -38,16 +38,14 @@ const player = usePlayerStore();
 const prefs = usePrefsStore();
 const discover = useDiscoverStore();
 const profile = useProfileStore();
-const actionSheet = useActionSheetStore();
 const auth = useAuthStore();
 
-// Top-level tab routes. Detail views (playlist, album, artist, mix) are
-// pushed on top of these and the active tab is whatever spawned them.
+// Top-level tab routes — Spotify's 3-tab layout. Settings is reached via
+// the gear icon on Home (and pushed as a sub-view), not a tab.
 const TABS = [
   { id: 'home',     label: 'Accueil',      icon: House },
   { id: 'download', label: 'Rechercher',   icon: Search },
   { id: 'library',  label: 'Bibliothèque', icon: Library },
-  { id: 'settings', label: 'Réglages',     icon: Settings },
 ];
 
 // Sub-views inherit their parent tab so the tab bar highlights stay coherent
@@ -57,8 +55,14 @@ const SUBVIEW_PARENT = {
   album:    'library',
   artist:   'library',
   mix:      'download',
-  wrapped:  'settings',
+  settings: 'home',
+  wrapped:  'home',
 };
+
+// Hero sub-views get the floating transparent nav-bar (chevron over the
+// gradient, scrim fades in on scroll). Flat sub-views (settings, wrapped)
+// keep a solid bar with a centered title — Spotify's Settings layout.
+const HERO_SUBVIEWS = new Set(['playlist', 'album', 'artist', 'mix']);
 
 const activeTab = computed({
   get: () => SUBVIEW_PARENT[view.name] || view.name,
@@ -70,6 +74,7 @@ const activeTab = computed({
 });
 
 const isSubview = computed(() => !!SUBVIEW_PARENT[view.name]);
+const isHeroSubview = computed(() => HERO_SUBVIEWS.has(view.name));
 
 const navTitle = computed(() => {
   switch (view.name) {
@@ -107,11 +112,19 @@ const heroScrollProgress = ref(0);
 // scrolls off so the two never compete for attention.
 const showNavTitle = computed(() => isSubview.value);
 const navTitleStyle = computed(() => {
-  if (!isSubview.value) return { opacity: 1 };
+  // Flat sub-views (settings / wrapped) show their title immediately —
+  // there's no hero to compete with.
+  if (!isHeroSubview.value) return { opacity: 1 };
   // Stay invisible until the user has scrolled past 50% of the hero,
   // then ramp to fully visible by 90%. Mirrors Apple Music / Spotify.
   const t = Math.max(0, Math.min(1, (heroScrollProgress.value - 0.5) / 0.4));
   return { opacity: t };
+});
+// Scrim behind the floating nav — solidifies a bit earlier than the
+// title so the chevron never floats on unreadable artwork.
+const navBgOpacity = computed(() => {
+  if (!isHeroSubview.value) return 1;
+  return Math.max(0, Math.min(1, (heroScrollProgress.value - 0.35) / 0.45));
 });
 
 watch(() => player.playing, (playing) => {
@@ -364,15 +377,20 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
          the view content slide under the notch. Letting it flow naturally
          keeps everything aligned with no extra math. -->
     <van-nav-bar
+      v-if="isSubview"
       class="nav-bar"
+      :class="{ 'nav-float': isHeroSubview }"
       :title="showNavTitle ? navTitle : ''"
       :border="false"
-      :style="{ '--wax-nav-title-opacity': navTitleStyle.opacity }"
+      :style="{
+        '--wax-nav-title-opacity': navTitleStyle.opacity,
+        '--wax-nav-bg-opacity': navBgOpacity,
+      }"
       safe-area-inset-top
       @click-left="view.back()"
     >
-      <template v-if="isSubview" #left>
-        <ChevronLeft :size="26" :stroke-width="2" color="var(--text)" />
+      <template #left>
+        <ChevronLeft :size="26" :stroke-width="2.4" color="var(--text)" />
       </template>
     </van-nav-bar>
 
@@ -385,11 +403,10 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
       <span>Mode hors ligne</span>
     </div>
 
-    <div class="view-scroll">
+    <div class="view-scroll" :class="{ 'no-nav': !isSubview }">
       <ViewHome     v-show="view.name === 'home'" />
       <ViewSearch   v-show="view.name === 'download'" />
       <ViewLibrary  v-show="view.name === 'library'" />
-      <ViewSettings v-show="view.name === 'settings'" />
       <!-- Sub-views slide in from the right on push, slide out left on
            back. Wrapped in <Transition> so each mount/unmount animates;
            the v-if's stay one-at-a-time (only one sub-view exists at
@@ -399,6 +416,7 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
         <ViewAlbum    v-else-if="view.name === 'album'"    key="album" />
         <ViewArtist   v-else-if="view.name === 'artist'"   key="artist" />
         <ViewMix      v-else-if="view.name === 'mix'"      key="mix" />
+        <ViewSettings v-else-if="view.name === 'settings'" key="settings" />
         <ViewWrapped  v-else-if="view.name === 'wrapped'"  key="wrapped" />
       </Transition>
     </div>
@@ -410,7 +428,7 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
       class="tab-bar"
       :border="false"
       safe-area-inset-bottom
-      active-color="var(--accent)"
+      active-color="var(--text)"
       inactive-color="var(--text-muted)"
     >
       <van-tabbar-item v-for="tab in TABS" :key="tab.id" :name="tab.id">
@@ -431,18 +449,9 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
       @done="onOnboardingDone"
     />
 
-    <!-- Singleton action sheet (see stores/actionSheet.js). Mounting it
-         here instead of per-view avoids the "two views stack two sheets in
-         the body teleport" bug. safe-area-inset-bottom keeps the cancel
-         button above the iPhone home indicator. -->
-    <van-action-sheet
-      v-model:show="actionSheet.visible"
-      :actions="actionSheet.actions"
-      cancel-text="Annuler"
-      close-on-click-action
-      safe-area-inset-bottom
-      @select="actionSheet.onSelect"
-      @cancel="actionSheet.onCancel"
-    />
+    <!-- Singleton action sheet (see stores/actionSheet.js). Custom
+         Spotify-style fullscreen sheet: gradient pulled from the
+         track/playlist cover, icon rows, centered close button. -->
+    <ActionSheet />
   </div>
 </template>

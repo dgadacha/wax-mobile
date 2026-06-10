@@ -1,16 +1,18 @@
 <script setup>
 import { computed, ref } from 'vue';
-import { Heart, MoreHorizontal, Play, Check, Download as DownloadIcon } from 'lucide-vue-next';
+import { Heart, MoreVertical, Download as DownloadIcon, ArrowDownCircle } from 'lucide-vue-next';
+import { usePlayerStore } from '@/stores/player';
 import { fmtDuration } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 
 const props = defineProps({
   track: { type: Object, required: true },
-  // Show the leading numeric index (Spotify-style for albums / playlists).
+  // Leading numeric index (kept for contexts that want it explicitly).
   index: { type: Number, default: 0 },
   showIndex: { type: Boolean, default: false },
-  // 'thumb' shows the cover art instead of the index.
-  variant: { type: String, default: 'thumb' }, // 'thumb' | 'index'
+  // 'thumb' shows the cover art, 'index' the track number, 'plain'
+  // nothing on the left — Spotify's album tracklist layout.
+  variant: { type: String, default: 'thumb' }, // 'thumb' | 'index' | 'plain'
   isPlaying: { type: Boolean, default: false },
   isLiked: { type: Boolean, default: false },
   // Show the heart icon on the right (omit on rows where like makes no sense).
@@ -22,10 +24,14 @@ const props = defineProps({
   // Visual desaturation for unmatched album rows.
   muted: { type: Boolean, default: false },
   // 0..100 when a download is in flight for this track; null otherwise.
-  // Drives the circular progress ring shown in place of the offline
-  // indicator while the MP3 is being fetched server-side.
+  // Drives the circular progress ring shown while the MP3 is being
+  // fetched server-side.
   downloadProgress: { type: Number, default: null },
 });
+
+// Global play state so the now-playing equalizer bars freeze on pause
+// instead of lying about audio that isn't running.
+const player = usePlayerStore();
 
 // SVG ring geometry: r=8 → circumference = 2πr ≈ 50.27. Stroke-dashoffset
 // goes from full circumference (0%) to 0 (100%).
@@ -49,8 +55,6 @@ function onCellClick() { emit('play'); }
 
 // Heart-tap pop animation. The class is added on click and removed
 // 420 ms later — long enough for the CSS keyframe to play out once.
-// Spotify/Apple Music both do a short scale bounce on like; reads
-// as "I registered your choice" instantly.
 const likeBouncing = ref(false);
 function onLikeClick() {
   likeBouncing.value = true;
@@ -71,7 +75,6 @@ function onLikeClick() {
   >
     <div v-if="variant === 'index' || showIndex" class="mtc-index">
       <van-loading v-if="loading" size="14" color="var(--accent)" />
-      <Play v-else-if="isPlaying" :size="14" :stroke-width="2.5" color="var(--accent)" fill="var(--accent)" />
       <span v-else>{{ index + 1 }}</span>
     </div>
 
@@ -80,21 +83,36 @@ function onLikeClick() {
     </div>
 
     <div class="meta">
-      <div class="title">{{ track.title }}</div>
-      <div class="sub">{{ sub }}</div>
+      <div class="title-row">
+        <!-- Spotify's animated now-playing bars — green, frozen on pause. -->
+        <span
+          v-if="isPlaying"
+          class="mtc-eq"
+          :class="{ paused: !player.playing }"
+          aria-hidden="true"
+        >
+          <i /><i /><i />
+        </span>
+        <van-loading v-else-if="loading && variant === 'plain'" size="13" color="var(--accent)" />
+        <span class="title">{{ track.title }}</span>
+      </div>
+      <div class="sub">
+        <span
+          v-if="track.file && downloadProgress == null"
+          class="mtc-off"
+          title="Disponible hors-ligne"
+          aria-label="Disponible hors-ligne"
+        >
+          <ArrowDownCircle :size="13" :stroke-width="2.4" />
+        </span>
+        <span class="sub-text">{{ sub }}</span>
+      </div>
     </div>
 
     <div class="actions" @click.stop>
-      <!-- Offline / download status. Four states:
-           - Queued or just-started (downloadProgress === 0) → indeterminate
-             spinner. yt-dlp can take 5-10s to emit its first progress
-             line, and the queue can hold a track at 0% even longer; a
-             dead ring at 0% looks indistinguishable from "nothing
-             happening", so spin instead.
-           - In flight with real progress (0 < downloadProgress < 100) →
-             circular progress ring around a Download icon, accent color.
-           - Downloaded (track.file) → solid Download chip, accent.
-           - Otherwise → nothing rendered. -->
+      <!-- Download in flight: indeterminate spinner while queued (yt-dlp
+           can take a while before the first progress line), then a
+           progress ring once real numbers arrive. -->
       <div
         v-if="downloadProgress != null && downloadProgress <= 0"
         class="mtc-dl mtc-dl-spin"
@@ -120,14 +138,6 @@ function onLikeClick() {
         </svg>
         <DownloadIcon class="mtc-dl-icon" :size="10" :stroke-width="2.5" color="var(--accent)" />
       </div>
-      <div
-        v-else-if="track.file"
-        class="mtc-dl done"
-        title="Disponible hors-ligne"
-        aria-label="Disponible hors-ligne"
-      >
-        <DownloadIcon :size="12" :stroke-width="2.5" color="var(--bg)" />
-      </div>
 
       <button
         v-if="showLike"
@@ -149,7 +159,7 @@ function onLikeClick() {
         aria-label="Plus"
         @click="emit('more')"
       >
-        <MoreHorizontal :size="20" :stroke-width="2" color="var(--text-muted)" />
+        <MoreVertical :size="20" :stroke-width="2" color="var(--text-muted)" />
       </button>
     </div>
   </div>
@@ -161,37 +171,25 @@ function onLikeClick() {
   align-items: center;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--motion-short) var(--ease);
   /* iOS sees the long-press as a text-selection gesture and pops
    * the Copy / Look up / Translate callout under our action sheet.
-   * Disable both the callout AND text selection on rows so the
-   * long-press cleanly maps to "open the menu" with no native UI
-   * fighting for the same touch. */
+   * Disable both so the touch cleanly maps to our handlers. */
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
-/* Tactile feedback on press — slight scale + background tint. iOS
- * fires :active immediately on touchstart, so this gives instant
- * "I registered your tap" feedback before any other handler runs. */
 .mtc:active {
-  background: var(--card-hover);
-  transform: scale(0.985);
-  transition: transform 80ms var(--ease), background 80ms var(--ease);
+  background: rgba(255, 255, 255, 0.06);
 }
-.mtc.is-muted { opacity: 0.55; }
+.mtc.is-muted { opacity: 0.45; }
 
 .mtc-index {
-  /* Fixed wider column + grid centering — guarantees the digit /
-   * play icon / spinner all land at the same x and the next
-   * column (meta) starts at the same offset on every row, even
-   * across single- and double-digit indexes. */
-  width: 32px;
+  width: 28px;
   display: grid;
   place-items: center;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -200,56 +198,61 @@ function onLikeClick() {
 .mtc.is-playing .mtc-index { color: var(--accent); }
 
 .mtc .thumb {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--r-1);
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
   overflow: hidden;
-  background: var(--card-hover);
+  background: var(--card);
   flex: 0 0 auto;
 }
 .mtc .thumb img { width: 100%; height: 100%; object-fit: cover; }
 
 .mtc .meta { flex: 1 1 auto; min-width: 0; }
+.mtc .title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .mtc .title {
-  font-size: 14px;
-  font-weight: 500;
+  font: 500 16px/1.3 var(--font-body);
   color: var(--text);
-  line-height: 1.3;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
-.mtc.is-playing .title { color: var(--accent-bright); }
+.mtc.is-playing .title { color: var(--accent); }
 .mtc .sub {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: 400 13px/1.3 var(--font-body);
   color: var(--text-muted);
   margin-top: 3px;
-  line-height: 1.2;
-  /* Uppercase normalises the visual rhythm — uploader names come
-   * raw from YouTube where channel casing is inconsistent ("TSEW
-   * THE KID", "Lomepal", "lord-fhel"). Forcing uppercase gives
-   * every row the same caps-feel without us having to munge the
-   * source string. */
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
+  min-width: 0;
+}
+.mtc .sub-text {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
-.mtc .off-dot { margin-left: 4px; vertical-align: middle; }
+/* Green "available offline" arrow inline with the subtitle — exactly
+ * where Spotify puts its downloaded badge. */
+.mtc-off {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--accent);
+}
 
 .mtc .actions {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 
-/* Offline/download chip on the right of each row. The "done" variant is
- * a small accent-filled pill with a Download icon — clearly distinct
- * from the per-row ellipsis + heart so users immediately see which
- * tracks they have on the device. The in-flight variant overlays a
- * Download icon on top of a circular progress ring. */
 .mtc-dl {
   position: relative;
   width: 26px;
@@ -262,15 +265,9 @@ function onLikeClick() {
   inset: 0;
   margin: auto;
 }
-.mtc-dl.done {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent);
-}
 .mtc-btn {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   background: transparent;
   border: 0;
   border-radius: 50%;
@@ -280,8 +277,33 @@ function onLikeClick() {
 }
 .mtc-btn:active { background: rgba(255, 255, 255, 0.08); }
 
-/* Heart bounce on like — overshoot scale + settle back. Targets
- * the SVG directly so the button's :active bg stays unaffected. */
+/* Now-playing equalizer bars — 3 bars bouncing at staggered phases,
+ * frozen mid-pose while paused. */
+.mtc-eq {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 14px;
+  height: 13px;
+}
+.mtc-eq i {
+  width: 3px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform-origin: bottom;
+  animation: mtc-eq-bounce 0.9s ease-in-out infinite;
+}
+.mtc-eq i:nth-child(1) { height: 60%; animation-delay: -0.4s; }
+.mtc-eq i:nth-child(2) { height: 100%; animation-delay: -0.1s; }
+.mtc-eq i:nth-child(3) { height: 45%; animation-delay: -0.65s; }
+.mtc-eq.paused i { animation-play-state: paused; }
+@keyframes mtc-eq-bounce {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
+
+/* Heart bounce on like — overshoot scale + settle back. */
 @keyframes heart-pop {
   0%   { transform: scale(1); }
   35%  { transform: scale(1.35); }

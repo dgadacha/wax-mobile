@@ -194,6 +194,7 @@ const messages = {
     'settings.appearance.light': 'Light',
 
     // Theme display names (resolved at render time from THEMES[].labelKey)
+    'theme.spotify': 'Wax',
     'theme.dark': 'Dark',
     'theme.midnight': 'Midnight',
     'theme.mocha': 'Mocha',
@@ -506,6 +507,7 @@ const messages = {
     'settings.appearance.light': 'Clairs',
 
     // Theme display names (resolved at render time from THEMES[].labelKey)
+    'theme.spotify': 'Wax',
     'theme.dark': 'Sombre',
     'theme.midnight': 'Minuit',
     'theme.mocha': 'Moka',

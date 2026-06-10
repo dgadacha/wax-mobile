@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
-import { MoreHorizontal } from 'lucide-vue-next';
+import { MoreVertical, ListPlus, Mic2 } from 'lucide-vue-next';
 import { useActionSheetStore } from '@/stores/actionSheet';
 
 const sheet = useActionSheetStore();
@@ -97,20 +97,26 @@ const totalDuration = computed(() => {
   return album.value.libTracks.reduce((s, t) => s + (t.duration || 0), 0);
 });
 
-const subtitle = computed(() => {
+const meta = computed(() => {
   if (!album.value) return '';
   const year = album.value.releaseDate ? album.value.releaseDate.slice(0, 4) : '';
   const count = albumEntries.value.length || album.value.libTracks.length;
-  const parts = [];
+  const parts = ['Album'];
   if (year) parts.push(year);
   parts.push(`${count} titre${count > 1 ? 's' : ''}`);
   if (totalDuration.value) parts.push(fmtDuration(totalDuration.value));
   return parts.join(' · ');
 });
 
-function playAll() {
+// Hero FAB: toggle pause when this album is already the live context.
+const isCurrentContext = computed(() =>
+  !!player.currentTrack && libQueueIds.value.includes(player.currentTrack.id),
+);
+const heroPlaying = computed(() => player.playing && isCurrentContext.value);
+function onHeroPlay() {
   if (libQueueIds.value.length === 0) return;
-  player.playFromList(libQueueIds.value[0], libQueueIds.value);
+  if (isCurrentContext.value) player.togglePlay();
+  else player.playFromList(libQueueIds.value[0], libQueueIds.value);
 }
 
 function isLibPlaying(libTrack) {
@@ -203,10 +209,13 @@ async function heartEntry(entry, idx) {
 async function onMore() {
   if (!album.value) return;
   try {
-    const { index } = await sheet.open([
-      { name: 'Sauvegarder comme playlist' },
-      { name: 'Ouvrir l’artiste' },
-    ]);
+    const { index } = await sheet.open(
+      [
+        { name: 'Sauvegarder comme playlist', icon: ListPlus },
+        { name: 'Ouvrir l’artiste', icon: Mic2 },
+      ],
+      { cover: coverUrl.value, title: album.value.name, subtitle: album.value.artist },
+    );
     if (index === 0) saveAsPlaylist();
     else if (index === 1) view.switchTo('artist', album.value.artist);
   } catch {}
@@ -258,27 +267,29 @@ async function saveAsPlaylist() {
     <MobileHero
       :cover="coverUrl"
       :bg-gradient="bgGradient"
-      eyebrow="Album"
       :title="album.name"
-      :subtitle="`${album.artist}  ·  ${subtitle}`"
-      @play="playAll"
+      :subtitle="album.artist"
+      :meta="meta"
+      :playing="heroPlaying"
+      @play="onHeroPlay"
     >
       <template #actions>
         <button class="hero-icon-btn" aria-label="Plus" @click="onMore">
-          <MoreHorizontal :size="20" :stroke-width="2.2" color="var(--text)" />
+          <MoreVertical :size="24" :stroke-width="1.8" color="var(--text-muted)" />
         </button>
       </template>
     </MobileHero>
 
     <MobileSkeleton v-if="tracklistLoading && albumEntries.length === 0" variant="row" :count="8" />
 
+    <!-- Spotify album tracklist: no numbers, no thumbs — just title +
+         artist, the playing row in green with the EQ bars. -->
     <div v-else class="track-list">
       <MobileTrackCell
         v-for="(e, i) in albumEntries"
         :key="e.key"
-        :track="e.libTrack || { id: e.key, title: e.title, duration: (e.length || 0) / 1000, thumbnail: coverUrl }"
-        :index="i"
-        variant="index"
+        :track="e.libTrack || { id: e.key, title: e.title, uploader: album.artist, duration: (e.length || 0) / 1000, thumbnail: coverUrl }"
+        variant="plain"
         :is-playing="isLibPlaying(e.libTrack)"
         :is-liked="!!e.libTrack && lib.isFavorite(e.libTrack)"
         :loading="pendingPlay.has(i)"
@@ -295,14 +306,15 @@ async function saveAsPlaylist() {
 <style scoped>
 .album-view { min-height: 100%; padding-bottom: 16px; }
 .hero-icon-btn {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: transparent;
   border: 0;
   display: grid;
   place-items: center;
+  cursor: pointer;
 }
-.hero-icon-btn:active { background: rgba(255, 255, 255, 0.16); }
+.hero-icon-btn:active { opacity: 0.6; }
 .loading { display: flex; justify-content: center; padding: 32px; }
 </style>
