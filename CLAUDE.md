@@ -98,6 +98,17 @@ Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
 - **Bannière offline** dans `App.vue` quand `navigator.onLine` flips false.
 - **SSE channels** (`_listenAlbumProgress`, `discover.refresh`) skipés au boot si offline.
 
+## Enchaînement auto en arrière-plan (lock screen)
+
+**Invariant à NE PAS casser dans `stores/player.js`.** iOS ne laisse passer un `play()` quand l'app est en arrière-plan / écran verrouillé **que** s'il s'exécute dans la **même tâche synchrone** que l'événement `ended`. Un `await` entre les deux (lookup Cache API, mint de blob, ou simplement le fait que `loadAndPlay` soit `async` et suspende) fait rejeter le `play()` → la file meurt sur le lock screen (alors que ça marche au premier plan).
+
+Mécanique :
+- `_prepareNext()` est appelé à la fin de chaque `loadAndPlay` (+ sur `toggleShuffle` / `cycleRepeat` / mutations de file / `restorePlayerState`). Il pré-calcule l'index suivant (`_planned`, le random de shuffle est roulé **une fois** ici) et **pré-résout l'URL de lecture** dans `_preloaded` pendant que le morceau courant joue (blob offline minté à l'avance ; URL directe online/stream).
+- `_onAudioEnded` lit `_planned.idx`, set l'index, et appelle `loadAndPlay` qui prend son **chemin synchrone** (`_preloaded` matche → `audioEl.src = url; play()` sans aucun `await`).
+- `loadAndPlay` n'`await` QUE dans le cas offline-sans-préload (rare). Online, il utilise `trackPlayUrl()` (sync) — plus de `resolvePlayUrl` awaité systématiquement comme avant.
+
+Si tu touches `loadAndPlay` / `_onAudioEnded` / `next`, garde le chemin `ended → play()` 100% synchrone, sinon le bug de lecture en arrière-plan revient.
+
 ## Gestures (swipes + long-press)
 
 `src/composables/useGestures.js` — composable unifié pour swipe horizontal/vertical + long-press, utilisé dans `MobilePlayer.vue` (swipe bas pour fermer le fullscreen, swipe gauche/droite pour changer de track avec preview en coverflow).

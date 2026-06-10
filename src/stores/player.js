@@ -83,6 +83,13 @@ export const usePlayerStore = defineStore('player', {
     saveStateTimer: null,
     stallTimer: null, // armed by 'waiting'/'stalled', cleared on progress or pause
     _lastBlobUrl: null, // last URL.createObjectURL — revoked on next loadAndPlay / stop
+    // Next-track preparation (see _prepareNext). The play URL of the
+    // upcoming track is resolved WHILE the current one plays so the
+    // ended → next() → play() chain stays fully synchronous — iOS
+    // kills any play() issued after an await when the app is
+    // backgrounded / the screen is locked.
+    _planned: null,   // { idx, trackId } — pre-drawn next queue position
+    _preloaded: null, // { trackId, url, isBlob } — resolved play URL for it
     // Sleep timer state. `sleepEndAt` is a Date.now()-style ms timestamp
     // when playback should stop (null = no timer running). The timer
     // itself is stored in `_sleepTimer` so we can cancel/reschedule.
@@ -203,18 +210,45 @@ export const usePlayerStore = defineStore('player', {
       }
       this.visible = true;
       this.loading = true;
-      // Revoke the previous blob URL (if any) before minting a new one.
-      // Blob URLs keep the underlying memory alive until revoked.
-      if (this._lastBlobUrl) {
-        try { URL.revokeObjectURL(this._lastBlobUrl); } catch {}
+      // Resolve the play URL WITHOUT awaiting whenever possible. With
+      // the app backgrounded / screen locked, iOS only lets a fresh
+      // play() through when it runs in the same task as the 'ended'
+      // event — an await (Cache API lookup, blob minting) breaks the
+      // chain and the rejected play() leaves the queue dead. Paths:
+      //   1. URL pre-resolved by _prepareNext while the previous track
+      //      played (covers ended → next()): fully synchronous.
+      //   2. Online: direct URL — synchronous, the element streams it.
+      //   3. Offline with no preload hit: async Cache API lookup (iOS
+      //      audio fetches bypass the SW, the blob: URL is mandatory).
+      const previousBlob = this._lastBlobUrl;
+      let playUrl = null;
+      const pre = this._preloaded;
+      if (pre && pre.trackId === trackId) {
+        this._preloaded = null;
+        playUrl = pre.url;
+        this._lastBlobUrl = pre.isBlob ? pre.url : null;
+      } else if (typeof navigator !== 'undefined' && navigator.onLine === false && track.file) {
+        playUrl = await resolvePlayUrl(track);
+        // Bail out if the track changed under us during the await (the
+        // user spammed next/prev). The newer call will own playback.
+        if (this.queue[this.index] !== trackId) {
+          if (playUrl && playUrl.startsWith('blob:')) {
+            try { URL.revokeObjectURL(playUrl); } catch {}
+          }
+          return;
+        }
+        this._lastBlobUrl = playUrl && playUrl.startsWith('blob:') ? playUrl : null;
+      } else {
+        playUrl = trackPlayUrl(track);
         this._lastBlobUrl = null;
       }
-      const playUrl = await resolvePlayUrl(track);
-      if (playUrl && playUrl.startsWith('blob:')) this._lastBlobUrl = playUrl;
-      // Bail out if the track changed under us during the await (the
-      // user spammed next/prev). The newer call will own playback.
-      if (this.queue[this.index] !== trackId) return;
+      if (!playUrl) { this.loading = false; return; }
       this.audioEl.src = playUrl;
+      // Previous track's blob can be released now that the element
+      // points at the new source.
+      if (previousBlob && previousBlob !== playUrl) {
+        try { URL.revokeObjectURL(previousBlob); } catch {}
+      }
       const prefs = usePrefsStore();
       // Stream prefetch
       if (!track.file && track.ytId) {
@@ -228,19 +262,11 @@ export const usePlayerStore = defineStore('player', {
       try { this.audioEl.webkitPreservesPitch = false; } catch {}
       this.audioEl.playbackRate = this.playbackRate;
       this.audioEl.play().catch(() => { this.loading = false; });
-      // Look-ahead: warm the next streamable track's URL so the queue
-      // transition feels instant. Only prefetches the immediate next.
-      const streamsStore = useStreamsStore();
-      const nextIdx = (this.index + 1) % this.queue.length;
-      if (nextIdx !== this.index) {
-        const nextTrack = findTrack(this.queue[nextIdx]);
-        if (nextTrack && !nextTrack.file && nextTrack.ytId) {
-          streamsStore.prefetch(nextTrack.ytId);
-        }
-      }
       this._updateMediaMetadata(track);
       this.savePlayerState();
       this.playCountedFor = null;
+      // Plan + pre-resolve the upcoming track while this one plays.
+      this._prepareNext();
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
@@ -249,7 +275,13 @@ export const usePlayerStore = defineStore('player', {
     },
     next() {
       if (this.queue.length === 0) return;
-      if (this.shuffle) {
+      // Reuse the pre-rolled next position from _prepareNext when present
+      // so the preloaded play URL matches (keeps the shuffle pick
+      // deterministic between prepare and play). Falls back to live
+      // computation — manual next on the last track still wraps to 0.
+      if (this._planned && this._planned.idx < this.queue.length) {
+        this.index = this._planned.idx;
+      } else if (this.shuffle) {
         this.index = Math.floor(Math.random() * this.queue.length);
       } else {
         this.index = (this.index + 1) % this.queue.length;
@@ -275,14 +307,18 @@ export const usePlayerStore = defineStore('player', {
         this._lastBlobUrl = null;
       }
       this._clearStallWatchdog();
+      this._discardPreloaded();
       this.playing = false;
       this.loading = false;
       this.visible = false;
     },
-    toggleShuffle() { this.shuffle = !this.shuffle; },
+    // Shuffle / repeat change which track comes next — re-resolve the
+    // preloaded URL so the background auto-advance points at the right one.
+    toggleShuffle() { this.shuffle = !this.shuffle; this._prepareNext(); },
     cycleRepeat() {
       const order = ['off', 'all', 'one'];
       this.repeat = order[(order.indexOf(this.repeat) + 1) % order.length];
+      this._prepareNext();
     },
     toggleMute() {
       const prefs = usePrefsStore();
@@ -308,6 +344,8 @@ export const usePlayerStore = defineStore('player', {
       const insertAt = this.queue.length > 0 ? this.index + 1 : 0;
       this.queue.splice(insertAt, 0, trackId);
       showToast(t('toast.added_to_queue'), 'success');
+      // The just-inserted track may now be the upcoming one — re-resolve.
+      this._prepareNext();
     },
     toggleNowPlayingOpen() { this.nowPlayingOpen = !this.nowPlayingOpen; },
     openBigPicture() { this.bigPictureOpen = true; },
@@ -315,6 +353,8 @@ export const usePlayerStore = defineStore('player', {
     toggleBigPicture() { this.bigPictureOpen = !this.bigPictureOpen; },
     removeQueueAt(qIdx) {
       this.queue.splice(qIdx, 1);
+      if (qIdx < this.index) this.index -= 1;
+      this._prepareNext();
     },
     reorderQueue(fromIdx, targetIdx) {
       if (fromIdx <= this.index || fromIdx >= this.queue.length) return;
@@ -322,6 +362,7 @@ export const usePlayerStore = defineStore('player', {
       const [moved] = this.queue.splice(fromIdx, 1);
       const adjusted = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
       this.queue.splice(adjusted, 0, moved);
+      this._prepareNext();
     },
     // ============================================================
     // Crossfade
@@ -518,6 +559,14 @@ export const usePlayerStore = defineStore('player', {
       this._updateMediaPosition();
       this.savePlayerState();
     },
+    // CRITICAL: this must reach audioEl.play() SYNCHRONOUSLY. Backgrounded
+    // / screen locked, iOS only honors a fresh play() if it runs inside
+    // the same task as the 'ended' event. _prepareNext (called from the
+    // previous loadAndPlay) already resolved the next track's play URL
+    // into this._preloaded, so the loadAndPlay below hits its synchronous
+    // fast-path — no await between 'ended' and play(), and the queue keeps
+    // advancing on the lock screen. The old path (next() → awaited
+    // resolvePlayUrl) is exactly what left playback dead in the background.
     _onAudioEnded() {
       if (this.crossfading) return;
       if (this.repeat === 'one') {
@@ -525,11 +574,72 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.play();
         return;
       }
-      if (this.index >= this.queue.length - 1 && this.repeat !== 'all' && !this.shuffle) {
+      const nextIdx = this._planned ? this._planned.idx : this._naturalNextIndex();
+      if (nextIdx < 0 || nextIdx >= this.queue.length) {
         this.playing = false;
         return;
       }
-      this.next();
+      this.index = nextIdx;
+      this.loadAndPlay();
+    },
+    // The queue position that plays after the current track ends
+    // naturally: shuffle picks a random other track, sequential advances
+    // by one, repeat:'all' wraps to 0, otherwise -1 (end → stop). Shuffle's
+    // random is rolled ONCE here (by _prepareNext) and cached in _planned
+    // so the preloaded URL can match the track that'll actually play.
+    _naturalNextIndex() {
+      if (this.queue.length === 0) return -1;
+      if (this.shuffle && this.queue.length > 1) {
+        let n;
+        do { n = Math.floor(Math.random() * this.queue.length); } while (n === this.index);
+        return n;
+      }
+      if (this.index < this.queue.length - 1) return this.index + 1;
+      if (this.repeat === 'all') return 0;
+      return -1;
+    },
+    // While the current track plays, decide + pre-resolve the next one so
+    // the 'ended' → play() chain can stay synchronous (see _onAudioEnded).
+    // Offline cached files get their blob: URL minted now (the Cache API
+    // await can't run inside the locked-screen 'ended' task); online and
+    // stream tracks store their direct URL. Safe to call repeatedly — it
+    // discards any previous plan first.
+    async _prepareNext() {
+      this._discardPreloaded();
+      if (this.index < 0 || this.queue.length === 0) return;
+      if (this.repeat === 'one') return; // same track replays, nothing to preload
+      const nextIdx = this._naturalNextIndex();
+      if (nextIdx < 0 || nextIdx === this.index) return;
+      const nextId = this.queue[nextIdx];
+      const nextTrack = findTrack(nextId);
+      if (!nextTrack) return;
+      this._planned = { idx: nextIdx, trackId: nextId };
+      // Warm the server-side stream URL cache for the upcoming track.
+      if (!nextTrack.file && nextTrack.ytId) {
+        try { useStreamsStore().prefetch(nextTrack.ytId); } catch {}
+      }
+      let url = null;
+      let isBlob = false;
+      if (typeof navigator !== 'undefined' && navigator.onLine === false && nextTrack.file) {
+        url = await resolvePlayUrl(nextTrack);
+        isBlob = !!url && url.startsWith('blob:');
+      } else {
+        url = trackPlayUrl(nextTrack);
+      }
+      // The plan may have been superseded (skip, queue edit) while we
+      // awaited the cache lookup — drop the now-orphan blob.
+      if (!this._planned || this._planned.trackId !== nextId) {
+        if (isBlob && url) { try { URL.revokeObjectURL(url); } catch {} }
+        return;
+      }
+      if (url) this._preloaded = { trackId: nextId, url, isBlob };
+    },
+    _discardPreloaded() {
+      if (this._preloaded?.isBlob && this._preloaded.url) {
+        try { URL.revokeObjectURL(this._preloaded.url); } catch {}
+      }
+      this._preloaded = null;
+      this._planned = null;
     },
     _trackPlayProgress() {
       const trackId = this.queue[this.index];
@@ -688,6 +798,10 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.currentTime = t;
       }, { once: true });
       this._updateMediaMetadata(track);
+      // Pre-resolve the next track now so even the FIRST auto-advance
+      // after a cold restore (track restored paused, resumed later from
+      // the lock screen) hits loadAndPlay's synchronous fast-path.
+      this._prepareNext();
     },
   },
 });
