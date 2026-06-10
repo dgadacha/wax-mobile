@@ -46,18 +46,27 @@ RUN npm ci --omit=dev --no-audit --no-fund
 ############################
 FROM node:20-bookworm-slim AS runtime
 
-# yt-dlp needs python3 + a recent yt-dlp binary; ffmpeg muxes the m4a stream
+# yt-dlp needs python3 + the yt-dlp package; ffmpeg muxes the m4a stream
 # into mp3. ca-certificates so yt-dlp can hit YouTube over TLS.
-RUN apt-get update \
+#
+# yt-dlp comes from PyPI (pip install) rather than the GitHub Releases
+# binary: the GitHub release CDN intermittently times out from the
+# GitLab CI runner pool (curl: (28) SSL connection timeout after 5 min
+# of waiting), and PyPI's infrastructure has been more reliable. As a
+# bonus, the pip install pulls a versioned, signed package and gets
+# auto-upgraded with a simple `pip install -U yt-dlp` later if needed.
+# pipx is overkill here, so we use --break-system-packages (allowed on
+# our single-purpose container image).
+RUN set -eux \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates \
       python3 \
+      python3-pip \
       ffmpeg \
-      curl \
- && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-      -o /usr/local/bin/yt-dlp \
- && chmod +x /usr/local/bin/yt-dlp \
- && apt-get purge -y curl \
+ && pip3 install --no-cache-dir --break-system-packages yt-dlp \
+ && ln -sf "$(command -v yt-dlp)" /usr/local/bin/yt-dlp \
+ && apt-get purge -y python3-pip \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -m -d /home/wax -s /sbin/nologin wax
