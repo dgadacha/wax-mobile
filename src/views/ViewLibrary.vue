@@ -187,11 +187,16 @@ const artistItems = computed(() => {
 });
 
 // ── Tracks ────────────────────────────────────────────────────────
-// `tracks` chip = favorites only. `offline` chip (entered by tapping
-// the Hors-ligne virtual card) = every library track with track.file
-// set, including ones not flagged liked.
+// Without a search query: keep the historical "Titres" semantics =
+// favorites only (the dedicated Favoris sub-page already shows the
+// full list with a hero, so the chip stays a quick filter).
+// With a search query: expand to the entire library so the user can
+// find ANY track they own — playlist-only / mix-saved entries
+// included. The search bar reads "Rechercher dans ta bibliothèque",
+// not "Rechercher dans tes favoris".
 const trackItems = computed(() => {
-  const base = filter.value === 'offline' ? offlineTracks.value : lib.favorites;
+  if (filter.value === 'offline') return sortTracks(offlineTracks.value);
+  const base = search.value.trim() ? lib.tracks : lib.favorites;
   return sortTracks(base);
 });
 

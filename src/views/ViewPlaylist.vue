@@ -9,6 +9,7 @@ import { useViewStore } from '@/stores/view';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { usePlayerStore } from '@/stores/player';
+import { useMixStore } from '@/stores/mix';
 import { gradientFromString, fmtDuration, parseTrackTitle } from '@/lib/format';
 import MobileHero from '@/components/MobileHero.vue';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
@@ -19,6 +20,7 @@ const view = useViewStore();
 const lib = useLibraryStore();
 const playlists = usePlaylistsStore();
 const player = usePlayerStore();
+const mix = useMixStore();
 
 // Virtual playlists — Favoris and Hors-ligne route through this view
 // (via view.switchTo('playlist', 'favorites' | 'offline')) so they get
@@ -153,32 +155,56 @@ async function onMore() {
   } catch { /* dismissed */ }
 }
 
+// Track-level action sheet. Same options across every track context
+// (favoris, hors-ligne, playlist, playlist-from-mix) so there's only
+// one menu to learn — only the trailing danger action's label is
+// contextual (Retirer de la playlist / des favoris / du cache).
 async function onTrackMore(t) {
   if (!playlist.value) return;
-  // Last action depends on the host: virtual favorites → unlike;
-  // virtual offline → drop the local MP3 (keeps the library row);
-  // real playlist → remove from the playlist's trackIds.
   let dangerLabel = 'Retirer de la playlist';
   if (virtual.value?.kind === 'favorites') dangerLabel = 'Retirer des favoris';
   else if (virtual.value?.kind === 'offline') dangerLabel = 'Supprimer du cache';
   try {
     const { index } = await sheet.open([
       { name: t.file ? 'Disponible hors-ligne ✓' : 'Télécharger', disabled: !!t.file },
+      { name: 'Ajouter à une playlist' },
+      { name: 'Lancer un mix basé sur ce titre' },
       { name: 'Ajouter à la file' },
       { name: 'Ouvrir l’artiste' },
       { name: dangerLabel, color: 'var(--danger)' },
     ]);
     if (index === 0 && !t.file) lib.downloadTrack(t.id);
-    else if (index === 1) player.addToQueue(t.id);
-    else if (index === 2) {
+    else if (index === 1) addTrackToPlaylistFlow(t);
+    else if (index === 2) mix.streamFrom(t, () => view.switchTo('mix'));
+    else if (index === 3) player.addToQueue(t.id);
+    else if (index === 4) {
       const a = parseTrackTitle(t).artist || t.uploader;
       if (a) view.switchTo('artist', a);
-    } else if (index === 3) {
+    } else if (index === 5) {
       if (virtual.value?.kind === 'favorites') lib._setLiked(t.id, false);
       else if (virtual.value?.kind === 'offline') lib.removeDownload(t.id);
       else playlists.removeTrack(playlist.value.id, t.id);
     }
   } catch {}
+}
+
+// Per-track add to a playlist (vs the bulk "Ajouter des titres" on
+// the hero, which is whole-list). Mirrors ViewLibrary.addToPlaylistFlow.
+async function addTrackToPlaylistFlow(t) {
+  const actions = [
+    { name: '＋ Nouvelle playlist', color: 'var(--accent)' },
+    ...playlists.items.map((pl) => ({ name: pl.name, _id: pl.id })),
+  ];
+  await new Promise((res) => setTimeout(res, 220));
+  let pick;
+  try { pick = await sheet.open(actions); } catch { return; }
+  if (pick.index === 0) {
+    const pl = await playlists.create();
+    if (pl) await playlists.addTrack(pl.id, t.id);
+  } else {
+    const pl = actions[pick.index];
+    await playlists.addTrack(pl._id, t.id);
+  }
 }
 
 function addTracks() {
