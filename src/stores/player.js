@@ -137,6 +137,14 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl2 = markRaw(el2);
       const prefs = usePrefsStore();
       el.volume = this.muted ? 0 : prefs.volume;
+      // HARD MUTE the spare element, always. iOS resumes EVERY <audio> with
+      // a buffered src when the app returns to the foreground — including
+      // the pre-buffered spare holding the NEXT track, so you'd hear two
+      // songs at once. Keeping the spare `.muted` (independent of the
+      // user-volume which uses `volume`) means it can never make sound; it's
+      // unmuted only when it becomes the active element (in _swapToPreloaded).
+      el.muted = false;
+      el2.muted = true;
       // Listeners go on BOTH elements. The gapless engine pre-buffers the
       // next track into the spare element while the current one plays,
       // then SWAPS which element is "active" (this.audioEl) at the track
@@ -266,6 +274,9 @@ export const usePlayerStore = defineStore('player', {
         useStreamsStore().prefetch(track.ytId);
       }
       this.audioEl.volume = this.muted ? 0 : prefs.volume;
+      // Active element is always unmuted (user-mute goes through volume).
+      // The spare stays hard-muted — see bindAudio / _prepareNext.
+      this.audioEl.muted = false;
       // Restore the user-picked playback rate + pitched mode — audio
       // elements reset BOTH on src change, so without this each new
       // track would silently revert to 1.0× preservesPitch=true.
@@ -650,7 +661,10 @@ export const usePlayerStore = defineStore('player', {
       if (!url) { this._planned = null; return; }
       // Buffer the data into the spare element. preload='auto' + load()
       // make it fetch ahead so the swap at the boundary is instant.
+      // muted:true is mandatory — iOS can auto-resume this buffered element
+      // on foreground; muting guarantees it never adds a second audible song.
       try {
+        this.audioEl2.muted = true;
         this.audioEl2.preload = 'auto';
         this.audioEl2.src = url;
         this.audioEl2.load();
@@ -689,6 +703,9 @@ export const usePlayerStore = defineStore('player', {
       this._planned = null;
       this.loading = true;
       const prefs = usePrefsStore();
+      // Unmute the promoted element (it was the hard-muted spare) so it's
+      // audible now that it's the active track.
+      newActive.muted = false;
       newActive.volume = this.muted ? 0 : prefs.volume;
       try { newActive.preservesPitch = false; } catch {}
       try { newActive.webkitPreservesPitch = false; } catch {}
@@ -696,8 +713,9 @@ export const usePlayerStore = defineStore('player', {
       try { newActive.currentTime = 0; } catch {}
       newActive.play().catch(() => { this.loading = false; });
       // Free the outgoing element + release its blob (after clearing src so
-      // the element isn't pointing at a revoked URL).
-      try { oldActive.pause(); oldActive.removeAttribute('src'); oldActive.load(); } catch {}
+      // the element isn't pointing at a revoked URL). Re-mute it: it's the
+      // spare now until _prepareNext buffers the next track into it.
+      try { oldActive.muted = true; oldActive.pause(); oldActive.removeAttribute('src'); oldActive.load(); } catch {}
       if (outgoingBlob && outgoingBlob !== this._lastBlobUrl) {
         try { URL.revokeObjectURL(outgoingBlob); } catch {}
       }
@@ -869,6 +887,7 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl.src = apiUrl(track.file);
       const prefs = usePrefsStore();
       this.audioEl.volume = this.muted ? 0 : prefs.volume;
+      this.audioEl.muted = false; // active element is never hard-muted (see bindAudio)
       this.audioEl.addEventListener('loadedmetadata', () => {
         const t = Math.min(saved.currentTime || 0, Math.max((this.audioEl.duration || 0) - 1, 0));
         this.audioEl.currentTime = t;
