@@ -157,6 +157,15 @@ export const usePlayerStore = defineStore('player', {
         if (!active()) return;
         this.loading = false;
         this._clearStallWatchdog();
+        // Build the gapless spare ONLY once the active element is genuinely
+        // playing (audio confirmed flowing). The spare must never be a
+        // ready, idle <audio> during a fragile window — fresh play()/resume
+        // session acquisition — or iOS routes the resumed output to it and
+        // the active element advances silently. So: build here (playing),
+        // tear down on pause (_releaseSpare). Net effect: the spare only
+        // lives during steady playback, which is exactly when next/prev +
+        // the boundary swap need it.
+        this._prepareNext();
         // iOS Safari (17/18) only honors the registered MediaSession
         // handler set if you set them AFTER the audio is actively
         // playing. Setting them at app boot / before the first
@@ -220,6 +229,12 @@ export const usePlayerStore = defineStore('player', {
       if (!track || !this.audioEl) return;
       // Switching tracks — drop any stall watchdog from the previous one.
       this._clearStallWatchdog();
+      // Invalidate any spare plan from the PREVIOUS context — a non-
+      // sequential load means the buffered next is no longer the right one.
+      // (The fresh spare rebuilds on this track's 'playing' event.) Without
+      // this, a super-fast next() right after the load could swap to the
+      // stale spare.
+      this._discardPreloaded();
       // Stop any in-flight crossfade
       if (this.crossfading && this.audioEl2) {
         try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); } catch {}
@@ -276,13 +291,26 @@ export const usePlayerStore = defineStore('player', {
       this._updateMediaMetadata(track);
       this.savePlayerState();
       this.playCountedFor = null;
-      // Plan + pre-resolve the upcoming track while this one plays.
-      this._prepareNext();
+      // The gapless spare is built on the 'playing' event (once audio is
+      // confirmed flowing), not here — keeps it out of the play()
+      // session-acquisition window. See the 'playing' listener.
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
-      if (this.audioEl.paused) this.audioEl.play();
-      else this.audioEl.pause();
+      if (this.audioEl.paused) {
+        // Resume — the spare rebuilds itself on the 'playing' event once
+        // audio is confirmed flowing (kept out of the fragile resume task).
+        this.audioEl.play();
+      } else {
+        this.audioEl.pause();
+        // Release the pre-buffered spare while paused. On iOS the second
+        // "ready" <audio> competes for the audio session at the moment
+        // playback resumes — leaving the active element advancing but
+        // silent. Freeing it means resume re-acquires the session with a
+        // single element. Steady-state (both live) is fine; only the
+        // pause→resume transition was affected.
+        this._releaseSpare();
+      }
     },
     next() {
       if (this.queue.length === 0) return;
@@ -326,12 +354,19 @@ export const usePlayerStore = defineStore('player', {
       this.visible = false;
     },
     // Shuffle / repeat change which track comes next — re-resolve the
-    // preloaded URL so the background auto-advance points at the right one.
-    toggleShuffle() { this.shuffle = !this.shuffle; this._prepareNext(); },
+    // preloaded spare so the boundary swap points at the right one. Only
+    // while playing: rebuilding the spare while paused would re-introduce
+    // the idle-ready element that breaks resume (see _releaseSpare).
+    toggleShuffle() {
+      this.shuffle = !this.shuffle;
+      if (this.audioEl && !this.audioEl.paused) this._prepareNext();
+      else this._releaseSpare();
+    },
     cycleRepeat() {
       const order = ['off', 'all', 'one'];
       this.repeat = order[(order.indexOf(this.repeat) + 1) % order.length];
-      this._prepareNext();
+      if (this.audioEl && !this.audioEl.paused) this._prepareNext();
+      else this._releaseSpare();
     },
     toggleMute() {
       const prefs = usePrefsStore();
@@ -357,8 +392,9 @@ export const usePlayerStore = defineStore('player', {
       const insertAt = this.queue.length > 0 ? this.index + 1 : 0;
       this.queue.splice(insertAt, 0, trackId);
       showToast(t('toast.added_to_queue'), 'success');
-      // The just-inserted track may now be the upcoming one — re-resolve.
-      this._prepareNext();
+      // The just-inserted track may now be the upcoming one — re-resolve
+      // the spare (only while playing, see toggleShuffle).
+      if (this.audioEl && !this.audioEl.paused) this._prepareNext();
     },
     toggleNowPlayingOpen() { this.nowPlayingOpen = !this.nowPlayingOpen; },
     openBigPicture() { this.bigPictureOpen = true; },
@@ -367,7 +403,7 @@ export const usePlayerStore = defineStore('player', {
     removeQueueAt(qIdx) {
       this.queue.splice(qIdx, 1);
       if (qIdx < this.index) this.index -= 1;
-      this._prepareNext();
+      if (this.audioEl && !this.audioEl.paused) this._prepareNext();
     },
     reorderQueue(fromIdx, targetIdx) {
       if (fromIdx <= this.index || fromIdx >= this.queue.length) return;
@@ -375,7 +411,7 @@ export const usePlayerStore = defineStore('player', {
       const [moved] = this.queue.splice(fromIdx, 1);
       const adjusted = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
       this.queue.splice(adjusted, 0, moved);
-      this._prepareNext();
+      if (this.audioEl && !this.audioEl.paused) this._prepareNext();
     },
     // ============================================================
     // Crossfade
@@ -706,8 +742,8 @@ export const usePlayerStore = defineStore('player', {
       this._updateMediaMetadata(track);
       this.savePlayerState();
       this.playCountedFor = null;
-      // Buffer the NEW next into the now-free spare element.
-      this._prepareNext();
+      // The NEW next buffers into the now-free spare on the swapped
+      // element's 'playing' event (not here) — see the 'playing' listener.
       return true;
     },
     _discardPreloaded() {
@@ -716,6 +752,15 @@ export const usePlayerStore = defineStore('player', {
       }
       this._preloaded = null;
       this._planned = null;
+    },
+    // Tear the spare element fully down (src emptied) so it stops holding
+    // audio data + competing for the iOS audio session. Called when the
+    // user pauses; the spare is rebuilt by _prepareNext on resume.
+    _releaseSpare() {
+      this._discardPreloaded();
+      if (this.audioEl2) {
+        try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); this.audioEl2.load(); } catch {}
+      }
     },
     _trackPlayProgress() {
       const trackId = this.queue[this.index];
@@ -762,8 +807,12 @@ export const usePlayerStore = defineStore('player', {
       // briefly tap into the app, which makes iOS rebuild the
       // routing on its own. PWA platform limitation, not a code
       // bug.
+      // pause() frees the gapless spare so it can't steal the audio session
+      // when playback resumes (the spare rebuilds on the next 'playing'
+      // event). play() stays a bare synchronous call — iOS needs it in the
+      // handler task. See _releaseSpare / togglePlay.
       try { ms.setActionHandler('play', () => this.audioEl?.play()); } catch {}
-      try { ms.setActionHandler('pause', () => this.audioEl?.pause()); } catch {}
+      try { ms.setActionHandler('pause', () => { this.audioEl?.pause(); this._releaseSpare(); }); } catch {}
       try { ms.setActionHandler('previoustrack', () => this.prev()); } catch {}
       try { ms.setActionHandler('nexttrack', () => this.next()); } catch {}
       // Re-arm seekto so the in-app + Chrome/Android lock-screen
@@ -874,10 +923,10 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.currentTime = t;
       }, { once: true });
       this._updateMediaMetadata(track);
-      // Pre-resolve the next track now so even the FIRST auto-advance
-      // after a cold restore (track restored paused, resumed later from
-      // the lock screen) hits loadAndPlay's synchronous fast-path.
-      this._prepareNext();
+      // Track is restored PAUSED — don't build the gapless spare yet (an
+      // idle-ready spare during the first resume is exactly what breaks
+      // playback). It builds on the first 'playing' event after the user
+      // hits play.
     },
   },
 });
