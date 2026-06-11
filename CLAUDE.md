@@ -104,12 +104,19 @@ Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
 
 **Ce que fait `stores/player.js` (best-effort, maximise les chances).** Double-buffer gapless via les **deux** `<audio>` (`audioEl` actif / `audioEl2` spare) :
 - Les écouteurs sont liés aux **deux** éléments (`_bindListeners`), chacun ignore les events de l'élément qui n'est pas `this.audioEl` (garde `active()`).
-- `_prepareNext()` (appelé en fin de `loadAndPlay` + sur `toggleShuffle`/`cycleRepeat`/mutations de file/`restorePlayerState`) calcule l'index suivant (`_planned`, random shuffle roulé **une fois**) et **bufferise réellement** le morceau suivant dans `audioEl2` (`src` + `load()`). Blob offline minté à l'avance ; URL directe online/stream.
-- `_swapToPreloaded()` **échange les refs** `audioEl`↔`audioEl2` et joue l'élément déjà bufferisé — transition sans fetch, donc sans trou (le trou est ce qui fait tomber la session iOS). Appelé par `_onAudioEnded` ET `next()`.
-- `loadAndPlay` ne sert plus qu'aux sauts **non séquentiels** (tap, `playFromList`, `prev`, restore) : charge sur l'élément actif, online en **sync** (`trackPlayUrl`), offline awaité (blob obligatoire, iOS bypasse le SW).
+- `_prepareNext()` (appelé **eager** en fin de `loadAndPlay` + sur `toggleShuffle`/`cycleRepeat`/mutations de file/`restorePlayerState` + à la fin de `_swapToPreloaded`) calcule l'index suivant (`_planned`, random shuffle roulé **une fois**) et **bufferise réellement** le morceau suivant dans `audioEl2` (`src` + `load()`), en le laissant **`.muted = true`**. Blob offline minté à l'avance ; URL directe online/stream.
+- **Le spare est TOUJOURS `.muted`** (cf. `bindAudio`/`_prepareNext`), démuté seulement quand il devient l'actif (`_swapToPreloaded`). iOS relance **tout** `<audio>` bufferisé au retour au premier plan → sans ça, le spare jouait le morceau suivant **par-dessus** l'actif (2 sons). Le mute est indépendant du user-mute (qui passe par `volume`).
+- `_swapToPreloaded()` **échange les refs** `audioEl`↔`audioEl2`, **démute** le nouvel actif / **re-mute** l'ancien, et joue l'élément déjà bufferisé — transition sans fetch, donc sans trou (le trou fait tomber la session iOS). Appelé par `_onAudioEnded` ET `next()`.
+- `loadAndPlay` ne sert qu'aux sauts **non séquentiels** (tap, `playFromList`, `prev`, restore) : charge sur l'élément actif (toujours démuté), online en **sync** (`trackPlayUrl`), offline awaité (blob obligatoire, iOS bypasse le SW).
 - Crossfade (`crossfadeEnabled`, opt-in) possède `audioEl2` → `_prepareNext`/`_swapToPreloaded` se désactivent dans ce mode (mutuellement exclusifs).
 
-Garde-fous si tu touches à ça : compare `audioEl2.src` **normalisé** (relatif vs absolu) avant de swapper ; swappe les refs **avant** de `pause()` l'ancien (sinon son event `pause` flippe `playing`) ; révoque le blob sortant **après** avoir vidé le `src`. Vérifié en preview : buffer du suivant pendant la lecture, swap synchrone sur `ended`/`next`, ping-pong des 2 éléments sur N pistes, wrap repeat='all', stop en fin de file. Le cas `ended`-pas-déclenché-en-background reste hors de portée (iOS).
+**Garde-fous si tu touches à ça (durement appris) :**
+- ⛔ **Ne déplace PAS la construction du spare sur l'event `playing`** (ni aucune dépendance à un event qui ne fire pas en background). C'est ce qu'a tenté la 0.19.5 → `playing` ne se déclenche pas en PWA iOS backgroundée → spare jamais reconstruit après un swap → **enchaînement background mort**. Reverté. Le `_prepareNext` doit rester **eager** (synchrone après le `play()`).
+- Le spare reste **muté** en permanence ; seul l'actif est démuté.
+- Compare `audioEl2.src` **normalisé** (relatif vs absolu) avant de swapper ; swappe les refs **avant** de `pause()` l'ancien (sinon son event `pause` flippe `playing`) ; révoque le blob sortant **après** avoir vidé le `src`.
+- ⚠️ **Tout fix audio iOS est invérifiable dans la preview Chrome** (session/background/foreground-resume). Vérifie la logique (états des `<audio>`, swaps, mute), ship **minimal + un changement à la fois**, et laisse le user tester sur device avant d'empiler. Cf. mémoire `ios-player-changes-unverifiable`.
+
+Vérifié en preview : spare bufferisé+muté pendant la lecture, swap synchrone sur `ended`/`next` (démute/re-mute), ping-pong des 2 éléments sur N pistes, wrap repeat='all', stop en fin de file, spare forcé à jouer = silencieux. Reste hors de portée (iOS) : `ended` pas déclenché en background, et le pause→reprise écran verrouillé qui peut repartir muet.
 
 ## Gestures (swipes + long-press)
 
@@ -162,12 +169,12 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 
 **`src/views/`** :
 - `ViewHome.vue` — Salutation grasse + icônes (Sparkles → wrapped, Settings → réglages), tuiles 2-col de reprise rapide, carrousels horizontaux (récemment joués / top joués / top artistes en cercles / "Pour toi" du store `discover`)
-- `ViewSearch.vue` — Titre "Rechercher" + **barre blanche** (van-search restylée), grille "Parcourir" de cartes colorées avec cover inclinée (→ favoris/hors-ligne/chips library via `view.libraryFilter`/wrapped), recherches récentes, résultats. Tap → stream, ♥ → favoris.
+- `ViewSearch.vue` — Titre "Rechercher" + **barre blanche** (van-search restylée), grille "Parcourir" de cartes colorées avec cover inclinée (→ favoris/hors-ligne/chips library via `view.libraryFilter`/wrapped), recherches récentes, résultats. Tap → stream, ♥ → favoris. **`isLiked` teste `liked !== false`** (pas la simple présence en biblio) : un titre ajouté via playlist/mix/album est en `liked:false` et NE doit PAS s'afficher coché. `toggleLike` passe par `lib.toggleFav` (flip du flag), jamais `lib.remove` (qui supprimerait le titre partout).
 - `ViewLibrary.vue` — Header avatar + "Ta bibliothèque" + loupe (toggle recherche) + "+". Chips Playlists/Artistes/Albums/Titres (toggle : re-tap = désélection → tout). Tuile Favoris en dégradé indigo, Hors-ligne en vert. Rows 64px sans chevron.
 - `ViewPlaylist.vue` — `<MobileHero>` (FAB pause si contexte courant) + tracklist `thumb` + action sheets avec header cover
 - `ViewAlbum.vue` — `<MobileHero>` + tracklist Deezer **variant `plain`** (ni index ni thumb, comme Spotify) + library-match
 - `ViewArtist.vue` — `<MobileHero shape="banner">` (photo full-bleed, nom overlay) + tracks biblio + recommandés
-- `ViewMix.vue` — `<MobileHero>` + tracklist mix YouTube, bouton Sauvegarder outline
+- `ViewMix.vue` — 3 états : **loading** (`mix.loading`) → hero du `seed` (titre source + cover) + `MobileSkeleton variant="row"` ×8 + meta "Génération du mix…" ; **chargé** (`mix.current`) → `<MobileHero>` + tracklist + bouton Sauvegarder outline ; **vide** → empty state. `mix.streamFrom` bascule la vue AVANT le fetch (navigation immédiate + shimmer), token `_reqId` anti-clobber.
 - `ViewSettings.vue` — **sub-view de home** (roue dentée). Ligne profil en tête (avatar + Changer de profil), sections plates à headers gras (plus de cartes inset), Apparence (11 thèmes + accent), Langue, EQ, Lecture, Bibliothèque, Hors-ligne, Sauvegarde, Danger, pill "Se déconnecter" en bas
 
 **`src/components/`** :
