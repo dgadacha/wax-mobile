@@ -98,16 +98,18 @@ Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
 - **Bannière offline** dans `App.vue` quand `navigator.onLine` flips false.
 - **SSE channels** (`_listenAlbumProgress`, `discover.refresh`) skipés au boot si offline.
 
-## Enchaînement auto en arrière-plan (lock screen)
+## Enchaînement auto en arrière-plan (lock screen) — double-buffer gapless
 
-**Invariant à NE PAS casser dans `stores/player.js`.** iOS ne laisse passer un `play()` quand l'app est en arrière-plan / écran verrouillé **que** s'il s'exécute dans la **même tâche synchrone** que l'événement `ended`. Un `await` entre les deux (lookup Cache API, mint de blob, ou simplement le fait que `loadAndPlay` soit `async` et suspende) fait rejeter le `play()` → la file meurt sur le lock screen (alors que ça marche au premier plan).
+**Le contexte (limitation iOS, pas un bug à nous).** En PWA standalone iOS, WebKit ne déclenche **pas** l'événement `ended` quand l'app est en arrière-plan / écran verrouillé ([#173332](https://bugs.webkit.org/show_bug.cgi?id=173332)), et détruit la session audio en fin de piste — au point que même les boutons du lock screen gèlent ([#261858](https://bugs.webkit.org/show_bug.cgi?id=261858)). Régressé depuis iOS 16. **Aucun fix PWA garanti** ; la seule voie sûre = build natif Capacitor (`UIBackgroundModes: audio` + `AVAudioSession.playback`, déjà câblé via `scripts/setup-native.mjs`).
 
-Mécanique :
-- `_prepareNext()` est appelé à la fin de chaque `loadAndPlay` (+ sur `toggleShuffle` / `cycleRepeat` / mutations de file / `restorePlayerState`). Il pré-calcule l'index suivant (`_planned`, le random de shuffle est roulé **une fois** ici) et **pré-résout l'URL de lecture** dans `_preloaded` pendant que le morceau courant joue (blob offline minté à l'avance ; URL directe online/stream).
-- `_onAudioEnded` lit `_planned.idx`, set l'index, et appelle `loadAndPlay` qui prend son **chemin synchrone** (`_preloaded` matche → `audioEl.src = url; play()` sans aucun `await`).
-- `loadAndPlay` n'`await` QUE dans le cas offline-sans-préload (rare). Online, il utilise `trackPlayUrl()` (sync) — plus de `resolvePlayUrl` awaité systématiquement comme avant.
+**Ce que fait `stores/player.js` (best-effort, maximise les chances).** Double-buffer gapless via les **deux** `<audio>` (`audioEl` actif / `audioEl2` spare) :
+- Les écouteurs sont liés aux **deux** éléments (`_bindListeners`), chacun ignore les events de l'élément qui n'est pas `this.audioEl` (garde `active()`).
+- `_prepareNext()` (appelé en fin de `loadAndPlay` + sur `toggleShuffle`/`cycleRepeat`/mutations de file/`restorePlayerState`) calcule l'index suivant (`_planned`, random shuffle roulé **une fois**) et **bufferise réellement** le morceau suivant dans `audioEl2` (`src` + `load()`). Blob offline minté à l'avance ; URL directe online/stream.
+- `_swapToPreloaded()` **échange les refs** `audioEl`↔`audioEl2` et joue l'élément déjà bufferisé — transition sans fetch, donc sans trou (le trou est ce qui fait tomber la session iOS). Appelé par `_onAudioEnded` ET `next()`.
+- `loadAndPlay` ne sert plus qu'aux sauts **non séquentiels** (tap, `playFromList`, `prev`, restore) : charge sur l'élément actif, online en **sync** (`trackPlayUrl`), offline awaité (blob obligatoire, iOS bypasse le SW).
+- Crossfade (`crossfadeEnabled`, opt-in) possède `audioEl2` → `_prepareNext`/`_swapToPreloaded` se désactivent dans ce mode (mutuellement exclusifs).
 
-Si tu touches `loadAndPlay` / `_onAudioEnded` / `next`, garde le chemin `ended → play()` 100% synchrone, sinon le bug de lecture en arrière-plan revient.
+Garde-fous si tu touches à ça : compare `audioEl2.src` **normalisé** (relatif vs absolu) avant de swapper ; swappe les refs **avant** de `pause()` l'ancien (sinon son event `pause` flippe `playing`) ; révoque le blob sortant **après** avoir vidé le `src`. Vérifié en preview : buffer du suivant pendant la lecture, swap synchrone sur `ended`/`next`, ping-pong des 2 éléments sur N pistes, wrap repeat='all', stop en fin de file. Le cas `ended`-pas-déclenché-en-background reste hors de portée (iOS).
 
 ## Gestures (swipes + long-press)
 

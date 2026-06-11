@@ -137,10 +137,24 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl2 = markRaw(el2);
       const prefs = usePrefsStore();
       el.volume = this.muted ? 0 : prefs.volume;
-      // Wire event listeners
-      el.addEventListener('play', () => this._onAudioPlay());
-      el.addEventListener('pause', () => this._onAudioPause());
+      // Listeners go on BOTH elements. The gapless engine pre-buffers the
+      // next track into the spare element while the current one plays,
+      // then SWAPS which element is "active" (this.audioEl) at the track
+      // boundary — so the next track starts from an already-buffered
+      // element with no fetch gap. A zero-gap transition is the best shot
+      // at keeping iOS's audio session alive on the lock screen (the gap
+      // is what makes iOS tear the session down → dead queue). Each
+      // handler ignores events coming from whichever element is currently
+      // the spare (active() re-checks at event time, so swaps are honored).
+      this._bindListeners(el);
+      this._bindListeners(el2);
+    },
+    _bindListeners(el) {
+      const active = () => el === this.audioEl;
+      el.addEventListener('play', () => { if (active()) this._onAudioPlay(); });
+      el.addEventListener('pause', () => { if (active()) this._onAudioPause(); });
       el.addEventListener('playing', () => {
+        if (!active()) return;
         this.loading = false;
         this._clearStallWatchdog();
         // iOS Safari (17/18) only honors the registered MediaSession
@@ -158,11 +172,13 @@ export const usePlayerStore = defineStore('player', {
       // there forever with no error. Watchdog kicks in after 10 s of
       // silence and skips the track.
       el.addEventListener('waiting', () => {
+        if (!active()) return;
         this.loading = true;
         this._armStallWatchdog();
       });
-      el.addEventListener('stalled', () => this._armStallWatchdog());
+      el.addEventListener('stalled', () => { if (active()) this._armStallWatchdog(); });
       el.addEventListener('error', () => {
+        if (!active()) return; // a spare-element preload error mustn't disrupt playback
         this._clearStallWatchdog();
         this.loading = false;
         const track = findTrack(this.queue[this.index]);
@@ -183,13 +199,14 @@ export const usePlayerStore = defineStore('player', {
         setTimeout(() => { if (this.queue.length > 1) this.next(); }, 3000);
       });
       el.addEventListener('timeupdate', () => {
+        if (!active()) return;
         // Any progress means buffer recovered — disarm any in-flight
         // stall watchdog (covers browsers that don't fire 'playing'
         // after a recover).
         if (this.stallTimer) this._clearStallWatchdog();
         this._onAudioTimeUpdate();
       });
-      el.addEventListener('ended', () => this._onAudioEnded());
+      el.addEventListener('ended', () => { if (active()) this._onAudioEnded(); });
     },
     playFromList(trackId, queue) {
       const idx = queue.indexOf(trackId);
@@ -210,24 +227,18 @@ export const usePlayerStore = defineStore('player', {
       }
       this.visible = true;
       this.loading = true;
-      // Resolve the play URL WITHOUT awaiting whenever possible. With
-      // the app backgrounded / screen locked, iOS only lets a fresh
-      // play() through when it runs in the same task as the 'ended'
-      // event — an await (Cache API lookup, blob minting) breaks the
-      // chain and the rejected play() leaves the queue dead. Paths:
-      //   1. URL pre-resolved by _prepareNext while the previous track
-      //      played (covers ended → next()): fully synchronous.
-      //   2. Online: direct URL — synchronous, the element streams it.
-      //   3. Offline with no preload hit: async Cache API lookup (iOS
-      //      audio fetches bypass the SW, the blob: URL is mandatory).
+      // loadAndPlay handles NON-sequential loads (tap a track, playFromList,
+      // prev, restore-resume) — it loads on the ACTIVE element. The natural
+      // ended → next sequential step goes through _swapToPreloaded instead,
+      // which plays the already-buffered spare element gaplessly. Online we
+      // resolve the URL synchronously (no await) so even the fallback path
+      // — when no preload is ready — gives the queue its best shot in the
+      // background. Offline-with-a-cached-file is the only awaited case (iOS
+      // audio fetches bypass the SW, so the blob: URL from the Cache API is
+      // mandatory).
       const previousBlob = this._lastBlobUrl;
       let playUrl = null;
-      const pre = this._preloaded;
-      if (pre && pre.trackId === trackId) {
-        this._preloaded = null;
-        playUrl = pre.url;
-        this._lastBlobUrl = pre.isBlob ? pre.url : null;
-      } else if (typeof navigator !== 'undefined' && navigator.onLine === false && track.file) {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false && track.file) {
         playUrl = await resolvePlayUrl(track);
         // Bail out if the track changed under us during the await (the
         // user spammed next/prev). The newer call will own playback.
@@ -275,13 +286,11 @@ export const usePlayerStore = defineStore('player', {
     },
     next() {
       if (this.queue.length === 0) return;
-      // Reuse the pre-rolled next position from _prepareNext when present
-      // so the preloaded play URL matches (keeps the shuffle pick
-      // deterministic between prepare and play). Falls back to live
-      // computation — manual next on the last track still wraps to 0.
-      if (this._planned && this._planned.idx < this.queue.length) {
-        this.index = this._planned.idx;
-      } else if (this.shuffle) {
+      // Gapless swap when the pre-buffered spare element holds the planned
+      // next track — instant, no fetch. Falls back to a normal load
+      // otherwise (manual next on the last track still wraps to 0).
+      if (this._swapToPreloaded()) return;
+      if (this.shuffle) {
         this.index = Math.floor(Math.random() * this.queue.length);
       } else {
         this.index = (this.index + 1) % this.queue.length;
@@ -301,6 +310,10 @@ export const usePlayerStore = defineStore('player', {
       if (this.audioEl) {
         this.audioEl.pause();
         this.audioEl.src = '';
+      }
+      // Also clear the spare element holding any buffered next track.
+      if (this.audioEl2) {
+        try { this.audioEl2.pause(); this.audioEl2.removeAttribute('src'); this.audioEl2.load(); } catch {}
       }
       if (this._lastBlobUrl) {
         try { URL.revokeObjectURL(this._lastBlobUrl); } catch {}
@@ -559,14 +572,12 @@ export const usePlayerStore = defineStore('player', {
       this._updateMediaPosition();
       this.savePlayerState();
     },
-    // CRITICAL: this must reach audioEl.play() SYNCHRONOUSLY. Backgrounded
-    // / screen locked, iOS only honors a fresh play() if it runs inside
-    // the same task as the 'ended' event. _prepareNext (called from the
-    // previous loadAndPlay) already resolved the next track's play URL
-    // into this._preloaded, so the loadAndPlay below hits its synchronous
-    // fast-path — no await between 'ended' and play(), and the queue keeps
-    // advancing on the lock screen. The old path (next() → awaited
-    // resolvePlayUrl) is exactly what left playback dead in the background.
+    // Track finished. Promote the pre-buffered spare element (gapless,
+    // synchronous, no fetch) so the audio session has the best chance of
+    // surviving the boundary on the lock screen. Falls back to a normal
+    // load if the preload wasn't ready. NB: WebKit doesn't reliably fire
+    // 'ended' for a backgrounded standalone PWA at all — when it doesn't,
+    // nothing here runs; that part is an iOS limitation, not ours.
     _onAudioEnded() {
       if (this.crossfading) return;
       if (this.repeat === 'one') {
@@ -574,7 +585,8 @@ export const usePlayerStore = defineStore('player', {
         this.audioEl.play();
         return;
       }
-      const nextIdx = this._planned ? this._planned.idx : this._naturalNextIndex();
+      if (this._swapToPreloaded()) return;
+      const nextIdx = this._naturalNextIndex();
       if (nextIdx < 0 || nextIdx >= this.queue.length) {
         this.playing = false;
         return;
@@ -598,16 +610,19 @@ export const usePlayerStore = defineStore('player', {
       if (this.repeat === 'all') return 0;
       return -1;
     },
-    // While the current track plays, decide + pre-resolve the next one so
-    // the 'ended' → play() chain can stay synchronous (see _onAudioEnded).
-    // Offline cached files get their blob: URL minted now (the Cache API
-    // await can't run inside the locked-screen 'ended' task); online and
-    // stream tracks store their direct URL. Safe to call repeatedly — it
-    // discards any previous plan first.
+    // While the current track plays, decide the next one and BUFFER ITS
+    // AUDIO DATA into the spare element (this.audioEl2) so the boundary
+    // transition is gapless — the engine just plays the already-loaded
+    // element instead of fetching from scratch. Offline cached files get
+    // a blob: URL minted from the Cache API (iOS audio bypasses the SW);
+    // online and stream tracks use their direct URL. Safe to call
+    // repeatedly — discards any previous plan first.
     async _prepareNext() {
       this._discardPreloaded();
-      if (this.index < 0 || this.queue.length === 0) return;
+      if (this.index < 0 || this.queue.length === 0 || !this.audioEl2) return;
       if (this.repeat === 'one') return; // same track replays, nothing to preload
+      // Crossfade owns audioEl2 + its own next-track loading; don't fight it.
+      if (usePrefsStore().crossfadeEnabled) return;
       const nextIdx = this._naturalNextIndex();
       if (nextIdx < 0 || nextIdx === this.index) return;
       const nextId = this.queue[nextIdx];
@@ -632,7 +647,68 @@ export const usePlayerStore = defineStore('player', {
         if (isBlob && url) { try { URL.revokeObjectURL(url); } catch {} }
         return;
       }
-      if (url) this._preloaded = { trackId: nextId, url, isBlob };
+      if (!url) { this._planned = null; return; }
+      // Buffer the data into the spare element. preload='auto' + load()
+      // make it fetch ahead so the swap at the boundary is instant.
+      try {
+        this.audioEl2.preload = 'auto';
+        this.audioEl2.src = url;
+        this.audioEl2.load();
+      } catch {}
+      this._preloaded = { trackId: nextId, url, isBlob };
+    },
+    // Promote the pre-buffered spare element to active and play it. Returns
+    // true when it actually swapped (preload matched the planned next),
+    // false when there was nothing ready — the caller then does a normal
+    // load. The element-reference swap means all the `this.audioEl.*` code
+    // keeps targeting whatever is now playing, and the listeners bound to
+    // both elements (see _bindListeners) keep firing for the active one.
+    _swapToPreloaded() {
+      const plan = this._planned;
+      const pre = this._preloaded;
+      if (!plan || !pre || this.crossfading) return false;
+      if (plan.idx < 0 || plan.idx >= this.queue.length) return false;
+      if (this.queue[plan.idx] !== pre.trackId) return false;
+      // Confirm the spare element is actually holding the planned source.
+      // audioEl2.src reads back as a normalized absolute URL, so normalize
+      // pre.url (which may be a relative '/api/...' path) before comparing.
+      const norm = (u) => { try { return new URL(u, location.href).href; } catch { return u; } };
+      if (!this.audioEl2 || norm(this.audioEl2.src || '') !== norm(pre.url)) return false;
+      this._clearStallWatchdog();
+      const newActive = this.audioEl2;
+      const oldActive = this.audioEl;
+      const outgoingBlob = this._lastBlobUrl;
+      // Swap refs FIRST so any event the old element fires while we tear it
+      // down (pause/emptied) is seen as coming from the now-spare element
+      // and ignored by the active()-guarded listeners.
+      this.audioEl = markRaw(newActive);
+      this.audioEl2 = markRaw(oldActive);
+      this.index = plan.idx;
+      this._lastBlobUrl = pre.isBlob ? pre.url : null;
+      this._preloaded = null;
+      this._planned = null;
+      this.loading = true;
+      const prefs = usePrefsStore();
+      newActive.volume = this.muted ? 0 : prefs.volume;
+      try { newActive.preservesPitch = false; } catch {}
+      try { newActive.webkitPreservesPitch = false; } catch {}
+      newActive.playbackRate = this.playbackRate;
+      try { newActive.currentTime = 0; } catch {}
+      newActive.play().catch(() => { this.loading = false; });
+      // Free the outgoing element + release its blob (after clearing src so
+      // the element isn't pointing at a revoked URL).
+      try { oldActive.pause(); oldActive.removeAttribute('src'); oldActive.load(); } catch {}
+      if (outgoingBlob && outgoingBlob !== this._lastBlobUrl) {
+        try { URL.revokeObjectURL(outgoingBlob); } catch {}
+      }
+      const track = findTrack(this.queue[this.index]);
+      if (!track.file && track.ytId) { try { useStreamsStore().prefetch(track.ytId); } catch {} }
+      this._updateMediaMetadata(track);
+      this.savePlayerState();
+      this.playCountedFor = null;
+      // Buffer the NEW next into the now-free spare element.
+      this._prepareNext();
+      return true;
     },
     _discardPreloaded() {
       if (this._preloaded?.isBlob && this._preloaded.url) {
