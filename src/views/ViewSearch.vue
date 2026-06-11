@@ -110,7 +110,7 @@ async function onMore(r) {
     if (index === 0) toggleLike(r);
     else if (index === 1) addToPlaylistFlow(r);
     else if (index === 2) {
-      const pseudo = { ytId: r.id, title: r.title };
+      const pseudo = { ytId: r.id, title: r.title, thumbnail: r.thumbnail };
       mix.streamFrom(pseudo, () => view.switchTo('mix'));
     } else if (index === 3) {
       const streamId = `stream-${r.id}`;

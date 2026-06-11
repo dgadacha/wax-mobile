@@ -9,6 +9,7 @@ import { usePlayerStore } from '@/stores/player';
 import { gradientFromString } from '@/lib/format';
 import MobileHero from '@/components/MobileHero.vue';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
+import MobileSkeleton from '@/components/MobileSkeleton.vue';
 
 const mix = useMixStore();
 const view = useViewStore();
@@ -32,11 +33,16 @@ const tracks = computed(() => {
 });
 
 const queueIds = computed(() => mix.current?.queueIds || []);
-const sourceTitle = computed(() => mix.current?.sourceTitle || 'Mix');
-const cover = computed(() => tracks.value[0]?.thumbnail || '');
+// During generation the hero falls back to the seed track (the title the
+// mix is based on) so the page isn't empty while the radio is built.
+const sourceTitle = computed(() => mix.current?.sourceTitle || mix.seed?.title || 'Mix');
+const cover = computed(() =>
+  mix.current ? (tracks.value[0]?.thumbnail || '') : (mix.seed?.thumbnail || ''),
+);
 const bgGradient = computed(() => gradientFromString(sourceTitle.value));
 
 const meta = computed(() => {
+  if (mix.loading) return 'Génération du mix…';
   const n = queueIds.value.length;
   if (!n) return '';
   return `Mix temporaire · ${n} titres`;
@@ -64,16 +70,17 @@ function save() {
 </script>
 
 <template>
-  <div v-if="mix.current" class="mix-view">
+  <div v-if="mix.current || mix.loading" class="mix-view">
     <MobileHero
       :cover="cover"
       :bg-gradient="bgGradient"
       :title="`Mix : ${sourceTitle}`"
       :meta="meta"
+      :show-play="!mix.loading && tracks.length > 0"
       :playing="heroPlaying"
       @play="onHeroPlay"
     >
-      <template #actions>
+      <template v-if="!mix.loading" #actions>
         <button class="hero-icon-btn save" aria-label="Sauvegarder" @click="save">
           <Bookmark :size="16" :stroke-width="2.2" color="currentColor" />
           <span>Sauvegarder</span>
@@ -81,7 +88,10 @@ function save() {
       </template>
     </MobileHero>
 
-    <div class="track-list">
+    <!-- Shimmer while the server builds the radio. -->
+    <MobileSkeleton v-if="mix.loading" variant="row" :count="8" />
+
+    <div v-else class="track-list">
       <MobileTrackCell
         v-for="(t, i) in tracks"
         :key="t.id"

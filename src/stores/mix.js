@@ -11,6 +11,15 @@ import { usePlaylistsStore } from './playlists';
 export const useMixStore = defineStore('mix', {
   state: () => ({
     current: null, // { sourceTitle, sourceTrack, mixTracks, queueIds }
+    // True while the server builds the radio. ViewMix renders a shimmer
+    // skeleton over the hero seed during this window.
+    loading: false,
+    // The source track shown in the hero WHILE generating (before the mix
+    // tracks land). { title, thumbnail, track }.
+    seed: null,
+    // Monotonic request token — guards against a slow mix resolving after
+    // the user launched a newer one / navigated away.
+    _reqId: 0,
   }),
   actions: {
     async streamFrom(track, onSwitchView) {
@@ -20,11 +29,21 @@ export const useMixStore = defineStore('mix', {
         return;
       }
       const streams = useStreamsStore();
-      showToast(t('toast.mix_generating'));
+      const reqId = ++this._reqId;
+      // Navigate to the mix view immediately and flip on the loading state
+      // so the user lands on the page (hero seed + shimmer track list) right
+      // away, instead of waiting on a toast while the radio is built.
+      this.loading = true;
+      this.current = null;
+      this.seed = { title: track.title, thumbnail: track.thumbnail || '', track };
+      if (onSwitchView) onSwitchView();
       try {
         const { tracks: mixTracks } = await api(`/api/mix/${ytId}`);
+        if (reqId !== this._reqId) return; // superseded by a newer mix
         if (!mixTracks.length) {
           showToast(t('toast.mix_empty'), 'error');
+          this.loading = false;
+          this.seed = null;
           return;
         }
         const queueIds = [];
@@ -48,16 +67,21 @@ export const useMixStore = defineStore('mix', {
           mixTracks,
           queueIds,
         };
-        if (onSwitchView) onSwitchView();
+        this.loading = false;
         // No bulk prefetch — would saturate the yt-dlp queue and slow down
         // the first track the user actually clicks. We rely on player
         // look-ahead (next track in queue) once playback starts.
       } catch (e) {
+        if (reqId !== this._reqId) return;
         showToast(t('toast.mix_error', e.message), 'error');
+        this.loading = false;
+        this.seed = null;
       }
     },
     close() {
       this.current = null;
+      this.loading = false;
+      this.seed = null;
     },
     async save(onSwitchView) {
       if (!this.current) return;
@@ -145,6 +169,8 @@ export const useMixStore = defineStore('mix', {
       }
 
       this.current = null;
+      this.loading = false;
+      this.seed = null;
       if (onSwitchView) onSwitchView(playlist.id);
       showToast(t('toast.mix_saved_n', trackIds.length), 'success');
     },
