@@ -51,6 +51,16 @@ const sub = computed(() => {
   return bits.join(' · ');
 });
 
+// "Available offline" = a genuinely DOWNLOADED library track (file =
+// '/audio/<id>.mp3'). Stream/mix/recommended tracks carry a `file` too —
+// but it's the '/api/stream/<ytId>' endpoint, NOT a downloaded MP3 — so
+// guarding on `track.file` alone falsely badges un-downloaded mix tracks
+// as offline. Exclude streams (isStream flag + the stream path).
+const isOffline = computed(() => {
+  const f = props.track.file;
+  return !!f && !props.track.isStream && !f.includes('/api/stream');
+});
+
 function onCellClick() { emit('play'); }
 
 // Heart-tap pop animation. The class is added on click and removed
@@ -98,7 +108,7 @@ function onLikeClick() {
       </div>
       <div class="sub">
         <span
-          v-if="track.file && downloadProgress == null"
+          v-if="isOffline && downloadProgress == null"
           class="mtc-off"
           title="Disponible hors-ligne"
           aria-label="Disponible hors-ligne"
