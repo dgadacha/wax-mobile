@@ -55,19 +55,19 @@ function toggleViewMode() {
   viewMode.value = viewMode.value === 'list' ? 'grid' : 'list';
 }
 
-// Spotify chip semantics: no chip active = everything mixed together;
-// tapping the active chip again deselects it.
+// Deliberately just two chips — Playlists + Titres. Albums/Artistes used
+// to live here too but cluttered the library; they're still reachable as
+// "Parcourir" cards on the Search tab (which set view.libraryFilter and
+// land here in an album/artist browse mode, no chip highlighted).
 const FILTERS = [
   { id: 'playlists', label: 'Playlists' },
-  { id: 'artists',   label: 'Artistes' },
-  { id: 'albums',    label: 'Albums' },
   { id: 'tracks',    label: 'Titres' },
 ];
 
-const filter = ref(''); // '' = tout
+const filter = ref('playlists'); // 'playlists' | 'tracks' (+ external 'albums'/'artists')
 function tapChip(id) {
   haptics.selection();
-  filter.value = filter.value === id ? '' : id;
+  filter.value = id;
 }
 
 // Browse cards on the Search tab preset a chip before switching here.
@@ -230,33 +230,44 @@ const artistItems = computed(() => {
     }));
 });
 
-// ── Tracks ────────────────────────────────────────────────────────
-const trackItems = computed(() => {
-  const base = search.value.trim() ? lib.tracks : lib.favorites;
-  return sortTracks(base);
-});
+// ── Search (global, across the whole library) ──────────────────────
+// A query searches EVERYTHING regardless of the active chip — typing a
+// song title surfaces it even from the Playlists tab. (The old behaviour
+// only matched tracks when the Titres chip was selected, so songs never
+// showed up otherwise — that was the reported bug.)
+const searching = computed(() => !!search.value.trim());
 
-const filteredCards = computed(() => {
+// Tracks shown in the list: global title/artist match over the WHOLE
+// library when searching, else favorites (the Titres chip). The play
+// queue (playFromList) uses whatever is shown.
+const displayedTracks = computed(() => {
   const q = search.value.trim().toLowerCase();
-  let list = [];
-  if (!filter.value) {
-    list = [...playlistItems.value, ...albumItems.value, ...artistItems.value];
-  } else if (filter.value === 'playlists') list = playlistItems.value;
-  else if (filter.value === 'albums')    list = albumItems.value;
-  else if (filter.value === 'artists')   list = artistItems.value;
   if (q) {
-    list = list.filter((c) => c.name.toLowerCase().includes(q) || (c.subtitle || '').toLowerCase().includes(q));
+    return sortTracks(lib.tracks.filter((t) =>
+      (t.title || '').toLowerCase().includes(q)
+      || (t.uploader || '').toLowerCase().includes(q),
+    ));
   }
-  return list.sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+  return sortTracks(lib.favorites);
 });
 
-const filteredTracks = computed(() => {
+// Playlists matching the query — shown as a section above the tracks.
+const searchPlaylists = computed(() => {
   const q = search.value.trim().toLowerCase();
-  if (!q) return trackItems.value;
-  return trackItems.value.filter((t) =>
-    (t.title || '').toLowerCase().includes(q)
-    || (t.uploader || '').toLowerCase().includes(q),
-  );
+  if (!q) return [];
+  return playlistItems.value
+    .filter((c) => c.name.toLowerCase().includes(q) || (c.subtitle || '').toLowerCase().includes(q))
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+});
+
+// Cards for the non-search filter. Playlists by default; albums/artists
+// only when navigated here from a Search "Parcourir" card.
+const filteredCards = computed(() => {
+  let list;
+  if (filter.value === 'albums') list = albumItems.value;
+  else if (filter.value === 'artists') list = artistItems.value;
+  else list = playlistItems.value;
+  return [...list].sort((a, b) => a.sortKey.localeCompare(b.sortKey));
 });
 
 const showingTracks = computed(() => filter.value === 'tracks');
@@ -270,7 +281,7 @@ function openCard(card) {
 }
 
 function playFavoritesFrom(track) {
-  const ids = filteredTracks.value.map((t) => t.id);
+  const ids = displayedTracks.value.map((t) => t.id);
   player.playFromList(track.id, ids);
 }
 
@@ -384,9 +395,10 @@ function cardIcon(card) {
       />
     </div>
 
-    <!-- Sort + view-mode row. -->
+    <!-- Sort + view-mode row (hidden while searching — search has its own
+         sections). -->
     <div
-      v-if="(showingTracks && filteredTracks.length > 0) || (!showingTracks && filteredCards.length > 0)"
+      v-if="!searching && ((showingTracks && displayedTracks.length > 0) || (!showingTracks && filteredCards.length > 0))"
       class="lib-sort-row"
     >
       <button v-if="showingTracks" class="lib-sort-btn" @click="pickSort">
@@ -405,17 +417,65 @@ function cardIcon(card) {
       </button>
     </div>
 
-    <!-- Tracks (chip Titres) -->
-    <template v-if="showingTracks">
+    <!-- SEARCH MODE: global results across the whole library — matching
+         playlists (cards) then matching tracks (rows), regardless of chip. -->
+    <template v-if="searching">
+      <template v-if="searchPlaylists.length">
+        <div class="lib-results-head">Playlists</div>
+        <div class="card-list">
+          <div
+            v-for="c in searchPlaylists"
+            :key="`${c.kind}-${c.id}`"
+            class="lib-card"
+            @click="openCard(c)"
+          >
+            <div class="lib-card-cover" :style="c.cover ? {} : { background: c.gradient }">
+              <img v-if="c.cover" :src="apiUrl(c.cover)" alt="" loading="lazy" />
+              <component v-else :is="cardIcon(c)" :size="24" :stroke-width="2" color="#ffffff" :fill="c.kind === 'favorites' ? '#ffffff' : 'transparent'" />
+            </div>
+            <div class="lib-card-meta">
+              <div class="lib-card-name text-ellipsis">{{ c.name }}</div>
+              <div class="lib-card-sub text-ellipsis">{{ c.subtitle }}</div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-if="displayedTracks.length">
+        <div class="lib-results-head">Titres</div>
+        <div class="track-list">
+          <MobileTrackCell
+            v-for="t in displayedTracks"
+            :key="t.id"
+            :track="t"
+            :is-playing="player.currentTrack && player.currentTrack.id === t.id"
+            :is-liked="lib.isFavorite(t)"
+            :download-progress="lib.libraryDownloads.get(t.id)?.progress ?? null"
+            @play="playFavoritesFrom(t)"
+            @like="lib.toggleFav(t)"
+            @more="onMore(t)"
+          />
+        </div>
+      </template>
+
+      <div v-if="!searchPlaylists.length && !displayedTracks.length" class="empty-state">
+        <SearchIcon class="icon" :size="48" :stroke-width="1.5" />
+        <div class="label">Aucun résultat</div>
+        <div class="hint">Rien dans ta bibliothèque pour « {{ search }} ».</div>
+      </div>
+    </template>
+
+    <!-- TITRES chip — tes favoris -->
+    <template v-else-if="showingTracks">
       <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
-      <div v-else-if="filteredTracks.length === 0" class="empty-state">
+      <div v-else-if="displayedTracks.length === 0" class="empty-state">
         <Heart class="icon" :size="48" :stroke-width="1.5" />
         <div class="label">Aucun favori</div>
         <div class="hint">Coche un titre depuis la recherche pour le retrouver ici.</div>
       </div>
       <div v-else class="track-list">
         <MobileTrackCell
-          v-for="t in filteredTracks"
+          v-for="t in displayedTracks"
           :key="t.id"
           :track="t"
           :is-playing="player.currentTrack && player.currentTrack.id === t.id"
@@ -428,7 +488,7 @@ function cardIcon(card) {
       </div>
     </template>
 
-    <!-- Cards (playlists / albums / artistes / tout) -->
+    <!-- PLAYLISTS chip (+ albums/artistes en mode browse depuis Search) -->
     <template v-else>
       <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="card" :count="4" />
       <div v-else-if="filteredCards.length === 0" class="empty-state">
@@ -513,6 +573,13 @@ function cardIcon(card) {
   flex: 0 0 auto;
 }
 .lib-action:active { background: rgba(255,255,255,0.06); }
+
+/* Section header inside the search-results list (Playlists / Titres). */
+.lib-results-head {
+  font: 700 16px/1.2 var(--font-display);
+  color: var(--text);
+  padding: 14px 16px 6px;
+}
 
 /* === Filter chips === frosted pills, accent fill when active. */
 .lib-chips {
