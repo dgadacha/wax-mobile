@@ -737,20 +737,46 @@ export const usePlayerStore = defineStore('player', {
     },
     _trackPlayProgress() {
       const trackId = this.queue[this.index];
-      if (!trackId || isStreamId(trackId)) return;
+      if (!trackId) return;
       if (this.audioEl.currentTime > 30 && this.playCountedFor !== trackId) {
         this.playCountedFor = trackId;
-        api(`/api/library/${trackId}/play`, { method: 'POST' })
-          .then(() => {
-            const lib = useLibraryStore();
-            const t = lib.findById(trackId);
-            if (t) {
-              t.playCount = (t.playCount || 0) + 1;
-              t.lastPlayedAt = Date.now();
-            }
-          })
-          .catch(() => {});
+        this._recordPlay(trackId);
       }
+    },
+    // Count a play (the track has been listened to >30s). Library tracks
+    // bump directly. Streamed tracks (search / mix / "Pour toi") are first
+    // folded into the library as liked:false so their stats feed the Home
+    // shelves — the user opted into "everything I listen to counts". The
+    // liked:false flag keeps them out of Favoris.
+    async _recordPlay(trackId) {
+      const lib = useLibraryStore();
+      let libId = trackId;
+      if (isStreamId(trackId)) {
+        const streams = useStreamsStore();
+        const s = streams.get(trackId);
+        if (!s || !s.ytId) return;
+        const existing = lib.tracks.find((tr) => tr.ytId === s.ytId);
+        if (existing) {
+          libId = existing.id;
+        } else {
+          const added = await lib.add({
+            id: s.ytId, ytId: s.ytId, title: s.title, uploader: s.uploader,
+            duration: s.duration, thumbnail: s.thumbnail,
+            url: `https://www.youtube.com/watch?v=${s.ytId}`,
+          }, { liked: false, silent: true });
+          // User may have skipped to another track while the add awaited.
+          if (this.queue[this.index] !== trackId) return;
+          libId = added?.id || lib.tracks.find((tr) => tr.ytId === s.ytId)?.id;
+        }
+        if (!libId) return;
+      }
+      // Optimistic local bump (immediate Home refresh), then persist.
+      const t = lib.findById(libId);
+      if (t) {
+        t.playCount = (t.playCount || 0) + 1;
+        t.lastPlayedAt = Date.now();
+      }
+      api(`/api/library/${libId}/play`, { method: 'POST' }).catch(() => {});
     },
     // ============================================================
     // MediaSession integration
