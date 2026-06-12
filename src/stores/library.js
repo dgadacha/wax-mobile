@@ -387,41 +387,66 @@ export const useLibraryStore = defineStore('library', {
         return result;
       }
 
-      const POOL = 4; // static MP3 fetches multiplex fine over HTTP/2 (kept modest for iOS memory)
+      // GENTLE on purpose. Pre-caching MP3s on iOS Safari is the most
+      // memory/storage-sensitive thing the app does: each file is ~5-12 MB,
+      // and caching dozens in a burst spikes memory + Cache Storage faster
+      // than WebKit reclaims it, which CRASHES the tab (white screen → the
+      // SW reloads → the user's seen "Vérifier le cache" kill the app).
+      // So we go nearly-sequential, breathe between files to let WebKit
+      // flush/GC, and stop before the storage quota overflows (iOS crashes
+      // on overflow rather than throwing).
+      const POOL = 2;
+      const BREATH_MS = 120; // pause after each file so WebKit can reclaim
+      // Hard ceiling per click: never try to cache more than this in one
+      // run, regardless of how big the offline library is. iOS Safari
+      // crashes (not throws) when a burst of cache writes overwhelms it, so
+      // we bound each run and let the user re-tap to continue the rest.
+      const MAX_BYTES_PER_RUN = 150 * 1024 * 1024;
       let idx = 0;
+      let bytesThisRun = 0;
+      let stopped = false; // tripped at the byte ceiling or near the quota
       const store = this;
       let lastReport = 0;
       function report() {
         const done = result.hits + result.fetched + result.failed;
-        // Throttle progress callbacks to once per ~250 ms so we don't
-        // re-render the cell 50 times in a second.
         const now = Date.now();
         if (onProgress && (now - lastReport >= 250 || done === result.total)) {
           lastReport = now;
           onProgress(done, result.total);
         }
       }
+      async function storageHeadroomOk() {
+        try {
+          if (!navigator.storage?.estimate) return true;
+          const { usage, quota } = await navigator.storage.estimate();
+          if (!quota) return true;
+          return usage / quota < 0.9; // keep 10% headroom
+        } catch { return true; }
+      }
       report();
 
       async function worker() {
-        while (idx < missing.length) {
+        while (idx < missing.length && !stopped) {
+          // Bail before overflowing storage — leaves the rest for a later
+          // run (or for the on-play CacheFirst rule) instead of crashing.
+          if (!(await storageHeadroomOk())) { stopped = true; break; }
           const i = idx++;
+          // POOL workers share `idx`; the while-check + idx++ aren't atomic
+          // across the awaits, so a worker can grab an index past the end
+          // when fewer items remain than workers. Guard it.
+          if (i >= missing.length) break;
           const tr = missing[i];
           try {
             const url = apiUrl(tr.file);
             const res = await fetch(url, { cache: 'reload' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            // Write to the cache explicitly. Bypasses any SW
-            // interception issues — works even if the SW isn't
-            // active or the runtime route doesn't match.
-            //
-            // Pass `res` DIRECTLY — never `res.clone()`. Cloning a
-            // Response whose other branch is never read forces the whole
-            // body (a full MP3) to buffer in JS memory; with POOL workers
-            // in flight that OOM-crashes iOS Safari. `cache.put(url, res)`
-            // streams straight to Cache Storage with bounded memory.
+            const len = parseInt(res.headers.get('content-length') || '0', 10) || 8 * 1024 * 1024;
+            // Pass `res` DIRECTLY — never `res.clone()` (cloning buffers the
+            // whole MP3 in JS memory; OOM). `cache.put` streams to storage.
             await cache.put(url, res);
             result.fetched++;
+            bytesThisRun += len;
+            if (bytesThisRun >= MAX_BYTES_PER_RUN) stopped = true; // hit the per-run ceiling
           } catch (e) {
             console.warn('[warmer] failed for', tr.title, e?.message || e);
             result.failed++;
@@ -433,9 +458,16 @@ export const useLibraryStore = defineStore('library', {
             } catch {}
           }
           report();
+          // Breathe: yield the event loop so WebKit can flush the cache
+          // write + reclaim memory before the next big fetch.
+          await new Promise((r) => setTimeout(r, BREATH_MS));
         }
       }
       await Promise.all(Array.from({ length: POOL }, () => worker()));
+      // Files not reached this run (hit the per-run ceiling / storage guard)
+      // — surfaced so the UI can invite a re-tap to continue.
+      result.remaining = Math.max(0, missing.length - idx);
+      if (stopped) console.warn(`[warmer] stopped early — ${result.remaining} left for next run`);
 
       result.cacheEntries = (await cache.keys().catch(() => [])).length;
       console.log('[warmer] done', result);

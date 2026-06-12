@@ -273,6 +273,9 @@ async function repairOfflineCache() {
     const parts = [`${result.cacheEntries} en cache`];
     if (result.fetched > 0) parts.push(`+${result.fetched} pré-téléchargés`);
     if (result.failed > 0) parts.push(`${result.failed} échec${result.failed > 1 ? 's' : ''}`);
+    // The warmer caps each run (iOS memory safety) — tell the user to
+    // re-tap when there's more to do.
+    if (result.remaining > 0) parts.push(`${result.remaining} restant${result.remaining > 1 ? 's' : ''} · re-tape pour continuer`);
     warmingSummary.value = parts.join(' · ');
     showToast({ message: warmingSummary.value, position: 'bottom' });
   } catch (e) {
