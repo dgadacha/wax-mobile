@@ -256,15 +256,24 @@ async function clearAudioCache() {
 // failed silently").
 const warming = ref(false);
 const warmingProgress = ref(''); // e.g. "12/92"
+const warmingDone = ref(0);
+const warmingTotal = ref(0);
 const warmingSummary = ref(''); // last summary like "92 prêts · 0 erreurs"
+const warmingPct = computed(() =>
+  warmingTotal.value > 0 ? Math.round((warmingDone.value / warmingTotal.value) * 100) : 0,
+);
 async function repairOfflineCache() {
   if (warming.value) return;
   warming.value = true;
   warmingProgress.value = '';
+  warmingDone.value = 0;
+  warmingTotal.value = 0;
   warmingSummary.value = '';
   haptics.light();
   try {
     const result = await lib.warmOfflineCache((done, total) => {
+      warmingDone.value = done;
+      warmingTotal.value = total;
       warmingProgress.value = total > 0 ? `${done}/${total}` : '';
     });
     await refreshStorage();
@@ -562,6 +571,13 @@ async function onLogout() {
             :class="{ 'spin-anim': warming }"
           />
         </template>
+        <!-- Visual progress bar while warming — the X/Y text alone is easy
+             to miss, and the gentle warmer takes a while now. -->
+        <template v-if="warming" #label>
+          <div class="warm-bar">
+            <div class="warm-bar-fill" :style="{ width: warmingPct + '%' }" />
+          </div>
+        </template>
       </van-cell>
 
       <van-cell
@@ -812,6 +828,21 @@ async function onLogout() {
   overflow: hidden;
 }
 .storage-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width var(--motion-mid) var(--ease);
+}
+
+/* Warm-cache progress bar — shown under the "Vérification en cours" cell. */
+.warm-bar {
+  margin-top: 8px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--card-hover);
+  overflow: hidden;
+}
+.warm-bar-fill {
   height: 100%;
   background: var(--accent);
   border-radius: 999px;
