@@ -237,9 +237,12 @@ const artistItems = computed(() => {
 // showed up otherwise — that was the reported bug.)
 const searching = computed(() => !!search.value.trim());
 
-// Tracks shown in the list: global title/artist match over the WHOLE
-// library when searching, else favorites (the Titres chip). The play
-// queue (playFromList) uses whatever is shown.
+// Tracks shown in the list. Searching → global title/artist match over the
+// WHOLE library. Else the Titres chip → EVERY track in the library, not just
+// favorites: tracks land here liked:false via playlist/album/mix adds AND
+// via _recordPlay folding played streams in, and the user expects "Titres"
+// to list all of them. (Favoris stays the curated liked subset, reachable
+// via the Favoris tile under Playlists.) The play queue uses whatever shows.
 const displayedTracks = computed(() => {
   const q = search.value.trim().toLowerCase();
   if (q) {
@@ -248,7 +251,7 @@ const displayedTracks = computed(() => {
       || (t.uploader || '').toLowerCase().includes(q),
     ));
   }
-  return sortTracks(lib.favorites);
+  return sortTracks(lib.tracks);
 });
 
 // Playlists matching the query — shown as a section above the tracks.
@@ -305,27 +308,30 @@ async function addToPlaylistFlow(track) {
 }
 
 async function onMore(track) {
+  const isFav = lib.isFavorite(track);
   try {
     const { index } = await sheet.open(
       [
+        { name: isFav ? 'Retirer des favoris' : 'Ajouter aux favoris', icon: Heart },
         { name: track.file ? 'Disponible hors-ligne' : 'Télécharger', icon: ArrowDownCircle, disabled: !!track.file },
         { name: 'Ajouter à une playlist', icon: ListPlus },
         { name: 'Lancer un mix basé sur ce titre', icon: Sparkles },
         { name: 'Ajouter à la file', icon: ListEnd },
         { name: 'Ouvrir l’artiste', icon: Mic2 },
-        { name: 'Retirer des favoris', icon: Trash2, color: 'var(--danger)' },
+        { name: 'Supprimer de la bibliothèque', icon: Trash2, color: 'var(--danger)' },
       ],
       { cover: track.thumbnail, title: track.title, subtitle: track.uploader },
     );
-    if (index === 0 && !track.file) lib.downloadTrack(track.id);
-    else if (index === 1) addToPlaylistFlow(track);
-    else if (index === 2) mix.streamFrom(track, () => view.switchTo('mix'));
-    else if (index === 3) player.addToQueue(track.id);
-    else if (index === 4) {
+    if (index === 0) lib.toggleFav(track);
+    else if (index === 1 && !track.file) lib.downloadTrack(track.id);
+    else if (index === 2) addToPlaylistFlow(track);
+    else if (index === 3) mix.streamFrom(track, () => view.switchTo('mix'));
+    else if (index === 4) player.addToQueue(track.id);
+    else if (index === 5) {
       const parsed = parseTrackTitle(track);
       const name = parsed.artist || track.uploader;
       if (name) view.switchTo('artist', name);
-    } else if (index === 5) {
+    } else if (index === 6) {
       lib.remove(track.id);
     }
   } catch { /* dismissed */ }
@@ -465,13 +471,13 @@ function cardIcon(card) {
       </div>
     </template>
 
-    <!-- TITRES chip — tes favoris -->
+    <!-- TITRES chip — TOUS les titres de la bibliothèque -->
     <template v-else-if="showingTracks">
       <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
       <div v-else-if="displayedTracks.length === 0" class="empty-state">
-        <Heart class="icon" :size="48" :stroke-width="1.5" />
-        <div class="label">Aucun favori</div>
-        <div class="hint">Coche un titre depuis la recherche pour le retrouver ici.</div>
+        <ListMusic class="icon" :size="48" :stroke-width="1.5" />
+        <div class="label">Aucun titre</div>
+        <div class="hint">Écoute ou ajoute un titre et il apparaîtra ici.</div>
       </div>
       <div v-else class="track-list">
         <MobileTrackCell
