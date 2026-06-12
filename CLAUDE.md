@@ -97,6 +97,7 @@ Service worker via `vite-plugin-pwa` + Workbox. Ce qui est offline :
 - **MP3 téléchargés** (`/audio/*.mp3`) — CacheFirst, 500 entrées, 1 an, `rangeRequests: true` pour le seek dans les fichiers cachés.
 - **Bannière offline** dans `App.vue` quand `navigator.onLine` flips false.
 - **SSE channels** (`_listenAlbumProgress`, `discover.refresh`) skipés au boot si offline.
+- **`warmOfflineCache`** (re-fetch des MP3 téléchargés vers le Cache Storage) = **bouton manuel uniquement** (Réglages → Hors-ligne → "Vérifier le cache"). ⛔ Ne le rebranche PAS en auto au boot / sur l'event online : s'il crashe l'onglet (OOM iOS), l'auto-run transforme un crash unique en **boucle de reload infinie** ("un problème récurrent est survenu"). ⛔ Et dans le worker, `cache.put(url, res)` — **jamais `res.clone()`** : cloner une Response dont l'autre branche n'est jamais lue bufferise le MP3 entier en RAM JS → OOM avec POOL workers en vol.
 
 ## Enchaînement auto en arrière-plan (lock screen) — double-buffer gapless
 

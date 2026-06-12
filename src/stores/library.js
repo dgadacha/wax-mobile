@@ -387,7 +387,7 @@ export const useLibraryStore = defineStore('library', {
         return result;
       }
 
-      const POOL = 6; // static MP3 fetches multiplex fine over HTTP/2
+      const POOL = 4; // static MP3 fetches multiplex fine over HTTP/2 (kept modest for iOS memory)
       let idx = 0;
       const store = this;
       let lastReport = 0;
@@ -414,7 +414,13 @@ export const useLibraryStore = defineStore('library', {
             // Write to the cache explicitly. Bypasses any SW
             // interception issues — works even if the SW isn't
             // active or the runtime route doesn't match.
-            await cache.put(url, res.clone());
+            //
+            // Pass `res` DIRECTLY — never `res.clone()`. Cloning a
+            // Response whose other branch is never read forces the whole
+            // body (a full MP3) to buffer in JS memory; with POOL workers
+            // in flight that OOM-crashes iOS Safari. `cache.put(url, res)`
+            // streams straight to Cache Storage with bounded memory.
+            await cache.put(url, res);
             result.fetched++;
           } catch (e) {
             console.warn('[warmer] failed for', tr.title, e?.message || e);

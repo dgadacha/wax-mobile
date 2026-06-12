@@ -261,10 +261,16 @@ async function bootstrapAfterAuth() {
   // discover seed only when we have a network. Both reconnect / can
   // be re-triggered automatically when the user comes back online via
   // the `online` event handler below.
+  //
+  // NB: warmOfflineCache is NO LONGER auto-run here. It's a heavy pass
+  // (re-fetches every downloaded MP3) and if it ever crashes the tab —
+  // e.g. iOS Safari OOM — auto-running it on every boot turned a one-off
+  // crash into an unrecoverable reload loop. It stays available behind
+  // the manual "Vérifier le cache" button (Réglages → Hors-ligne); normal
+  // offline playback still works via the SW CacheFirst rule on play.
   if (isOnline.value) {
     library._listenAlbumProgress();
     discover.refresh();
-    library.warmOfflineCache().catch(() => {});
   }
 }
 
@@ -319,7 +325,8 @@ onMounted(async () => {
   window.addEventListener('online', () => {
     try { library._listenAlbumProgress(); } catch {}
     try { discover.refresh(); } catch {}
-    try { library.warmOfflineCache(); } catch {}
+    // warmOfflineCache intentionally NOT auto-run on reconnect either —
+    // see the note in bootstrapAfterAuth. Manual button only.
     // Drain any downloads deferred by the Wi-Fi-only toggle —
     // each one re-enters downloadTrack and re-checks the network
     // (so if we're STILL on cellular here, they stay queued).
