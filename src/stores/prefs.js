@@ -134,40 +134,21 @@ export const usePrefsStore = defineStore('prefs', {
         if (this.locale === 'en' && !p.mobileLocaleMigrated) {
           this.locale = 'fr';
         }
-        if (p.themeId && THEME_IDS.includes(p.themeId)) {
-          this.themeId = p.themeId;
-        } else if (p.theme === 'light') {
-          // Legacy `theme: 'light'` string from a very-old install —
-          // map onto the current Dawn default. Any saved themeId that
-          // was removed (cream, sable, peche, lavende, ardoise, vinyle,
-          // studio, dracula, nord, tokyo-night, rose-pine, gruvbox,
-          // neon) just falls through and the store keeps its initial
-          // DEFAULT_THEME_ID (also dawn).
-          this.themeId = 'dawn';
-        } else if (p.theme === 'dark') {
-          this.themeId = 'dark';
-        }
         if (p.eq && typeof p.eq === 'object') this.eq = { ...this.eq, ...p.eq };
         if (typeof p.sidebarExpanded === 'boolean') this.sidebarExpanded = p.sidebarExpanded;
-        if (typeof p.accentColor === 'string' && /^#?[0-9a-f]{6}$/i.test(p.accentColor)) {
-          this.accentColor = p.accentColor;
-        }
         if (['128', '192', '320'].includes(p.downloadQuality)) {
           this.downloadQuality = p.downloadQuality;
         }
         if (typeof p.downloadsWifiOnly === 'boolean') {
           this.downloadsWifiOnly = p.downloadsWifiOnly;
         }
-        // One-time migration to the v0.19 Spotify-style redesign: land
-        // every existing install on the new default theme + green accent
-        // once. The flag is stamped by save(), so any later theme/accent
-        // pick sticks normally.
-        if (!p.uiSpotifyMigrated) {
-          this.themeId = DEFAULT_THEME_ID;
-          this.accentColor = '#1ED760';
-          this.save();
-        }
       } catch {}
+      // Theme is LOCKED to the Spotify look — the theme/accent picker was
+      // removed. Force it on every boot regardless of any value a previous
+      // version may have stored, so everyone lands on the same default
+      // appearance.
+      this.themeId = DEFAULT_THEME_ID; // 'spotify'
+      this.accentColor = '#1ED760';
       this.applyTheme();
       applyAccent(this.accentColor);
       setLocale(this.locale);

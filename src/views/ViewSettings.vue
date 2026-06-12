@@ -1,16 +1,15 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Check, Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
+import { Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
 import { usePlaylistsStore } from '@/stores/playlists';
-import { usePrefsStore, ACCENT_SWATCHES } from '@/stores/prefs';
+import { usePrefsStore } from '@/stores/prefs';
 import { useProfileStore } from '@/stores/profile';
 import { useActionSheetStore } from '@/stores/actionSheet';
 import { useAuthStore } from '@/stores/auth';
-import { THEMES } from '@/lib/themes';
 import { SUPPORTED_LOCALES } from '@/lib/i18n';
 import { haptics } from '@/lib/haptics';
 import { exportToFile, readImportFile, importFromData, wipeAllData } from '@/lib/backup';
@@ -77,19 +76,6 @@ function reopenOnboarding() {
   haptics.light();
   // App.vue listens to this and re-opens the overlay with `rerun=true`.
   window.dispatchEvent(new CustomEvent('wax:reopen-onboarding'));
-}
-
-// ── Theme picker ──────────────────────────────────────────────────
-const darkThemes = computed(() => THEMES.filter((t) => t.kind === 'dark'));
-const lightThemes = computed(() => THEMES.filter((t) => t.kind === 'light'));
-function pickTheme(id) {
-  haptics.selection();
-  prefs.setTheme(id);
-}
-
-function pickAccent(hex) {
-  haptics.selection();
-  prefs.setAccentColor(hex);
 }
 
 // ── Language picker ───────────────────────────────────────────────
@@ -401,61 +387,6 @@ async function onLogout() {
       </div>
       <ChevronRight :size="20" :stroke-width="2" color="var(--text-muted)" />
     </button>
-
-    <van-cell-group inset title="Apparence">
-      <van-cell title="Thème" :value="darkThemes.find((t) => t.id === prefs.themeId)?.id || lightThemes.find((t) => t.id === prefs.themeId)?.id || '—'" />
-      <div class="theme-section">
-        <div class="theme-row-label">Sombres</div>
-        <div class="theme-grid">
-          <button
-            v-for="t in darkThemes"
-            :key="t.id"
-            class="theme-pill"
-            :class="{ active: prefs.themeId === t.id }"
-            :aria-label="t.id"
-            @click="pickTheme(t.id)"
-          >
-            <span class="stripe" :style="{ background: t.swatch[0] }" />
-            <span class="stripe" :style="{ background: t.swatch[1] }" />
-            <span class="stripe" :style="{ background: t.swatch[2] }" />
-            <Check v-if="prefs.themeId === t.id" class="theme-pill-check" :size="14" :stroke-width="3" color="#fff" />
-          </button>
-        </div>
-        <div class="theme-row-label">Clairs</div>
-        <div class="theme-grid">
-          <button
-            v-for="t in lightThemes"
-            :key="t.id"
-            class="theme-pill"
-            :class="{ active: prefs.themeId === t.id }"
-            :aria-label="t.id"
-            @click="pickTheme(t.id)"
-          >
-            <span class="stripe" :style="{ background: t.swatch[0] }" />
-            <span class="stripe" :style="{ background: t.swatch[1] }" />
-            <span class="stripe" :style="{ background: t.swatch[2] }" />
-            <Check v-if="prefs.themeId === t.id" class="theme-pill-check" :size="14" :stroke-width="3" color="#fff" />
-          </button>
-        </div>
-      </div>
-      <div class="accent-row">
-        <button
-          v-for="s in ACCENT_SWATCHES"
-          :key="s.id"
-          class="swatch"
-          :style="{ background: s.hex }"
-          :aria-label="s.label"
-          @click="pickAccent(s.hex)"
-        >
-          <Check
-            v-if="prefs.accentColor.toLowerCase() === s.hex.toLowerCase()"
-            :size="16"
-            :stroke-width="3"
-            color="#fff"
-          />
-        </button>
-      </div>
-    </van-cell-group>
 
     <van-cell-group inset title="Langue">
       <van-cell
@@ -883,62 +814,6 @@ async function onLogout() {
   border-radius: 999px;
   transition: width var(--motion-mid) var(--ease);
 }
-
-/* Theme picker */
-.theme-section { padding: 4px 16px 14px; }
-.theme-row-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.6px;
-  color: var(--text-muted);
-  margin: 12px 0 8px;
-}
-.theme-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: 8px;
-}
-.theme-pill {
-  position: relative;
-  height: 44px;
-  border-radius: 10px;
-  border: 2px solid transparent;
-  cursor: pointer;
-  display: flex;
-  overflow: hidden;
-  padding: 0;
-  transition: transform 0.15s ease, border-color 0.15s ease;
-}
-.theme-pill:active { transform: scale(0.94); }
-.theme-pill.active { border-color: var(--accent); }
-.theme-pill .stripe { flex: 1 1 0; height: 100%; }
-.theme-pill-check {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
-}
-
-/* Accent swatches (kept from before) */
-.accent-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 6px 16px 16px;
-  justify-content: center;
-}
-.swatch {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.08);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  transition: transform 0.15s ease;
-}
-.swatch:active { transform: scale(0.92); }
 
 /* Profile pill in the Profil cell */
 .profile-pill {

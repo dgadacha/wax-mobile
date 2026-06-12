@@ -678,29 +678,40 @@ function cardIcon(card) {
 .lib-card-cover.is-circle { border-radius: 50%; }
 .lib-card-cover img { width: 100%; height: 100%; object-fit: cover; }
 
-/* === Card grid === */
+/* === Card grid === 2 equal columns. minmax(0, 1fr) — NOT 1fr — is
+ * critical: 1fr = minmax(auto, 1fr), where `auto` grows a column to its
+ * content's min-content width. A long unbreakable playlist name (nowrap)
+ * then blows the column past the viewport, so you see one giant card with
+ * the rest off-screen. minmax(0,...) lets columns shrink to a true 50/50,
+ * and the name's ellipsis clips inside the half-width cell. */
 .card-list.is-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--sp-4) var(--sp-3);
-  padding: var(--sp-1) var(--sp-4) var(--sp-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-5) var(--sp-3);
+  padding: var(--sp-2) var(--sp-4) var(--sp-4);
 }
 .card-list.is-grid .lib-card {
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: var(--sp-2);
   padding: 0;
   border-radius: 0;
+  min-width: 0; /* allow the grid item to shrink below its content width */
 }
 .card-list.is-grid .lib-card:active { background: transparent; opacity: 0.7; }
 .card-list.is-grid .lib-card-cover {
   width: 100%;
   height: auto;
   aspect-ratio: 1 / 1;
-  border-radius: 4px;
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
 }
-.card-list.is-grid .lib-card-cover.is-circle { border-radius: 50%; }
-.card-list.is-grid .lib-card-meta { width: 100%; }
+.card-list.is-grid .lib-card-cover.is-circle { border-radius: 50%; box-shadow: none; }
+.card-list.is-grid .lib-card-cover :deep(svg),
+.card-list.is-grid .lib-card-cover > svg { width: 38px; height: 38px; }
+.card-list.is-grid .lib-card-meta { width: 100%; min-width: 0; }
+.card-list.is-grid .lib-card-name { font-size: 15px; font-weight: 600; }
+.card-list.is-grid .lib-card-sub { font-size: 12px; }
 
 .lib-card-meta { flex: 1 1 auto; min-width: 0; }
 .lib-card-name {
