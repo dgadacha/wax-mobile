@@ -90,6 +90,12 @@ export const usePlayerStore = defineStore('player', {
     // backgrounded / the screen is locked.
     _planned: null,   // { idx, trackId } — pre-drawn next queue position
     _preloaded: null, // { trackId, url, isBlob } — resolved play URL for it
+    // Real-listening accumulator for the Wrapped stats. We sum content-time
+    // deltas (currentTime progression) while playing and flush to the
+    // server every ~15s — so a 30s listen of a 5-min track counts 30s, not
+    // the full 5 min (unlike playCount, which over-counts).
+    _listenBuffer: 0,  // seconds heard, not yet flushed
+    _listenLastT: null, // last seen currentTime (null = reset on track change)
     // Sleep timer state. `sleepEndAt` is a Date.now()-style ms timestamp
     // when playback should stop (null = no timer running). The timer
     // itself is stored in `_sleepTimer` so we can cancel/reschedule.
@@ -235,6 +241,10 @@ export const usePlayerStore = defineStore('player', {
       }
       this.visible = true;
       this.loading = true;
+      // Bank the heard-seconds of the outgoing track, then reset the
+      // accumulator so the new track's currentTime=0 doesn't count as a jump.
+      this._flushListen();
+      this._listenLastT = null;
       // loadAndPlay handles NON-sequential loads (tap a track, playFromList,
       // prev, restore-resume) — it loads on the ACTIVE element. The natural
       // ended → next sequential step goes through _swapToPreloaded instead,
@@ -331,6 +341,8 @@ export const usePlayerStore = defineStore('player', {
         this._lastBlobUrl = null;
       }
       this._clearStallWatchdog();
+      this._flushListen();
+      this._listenLastT = null;
       this._discardPreloaded();
       this.playing = false;
       this.loading = false;
@@ -464,6 +476,7 @@ export const usePlayerStore = defineStore('player', {
     _onAudioPause() {
       this.playing = false;
       this._clearStallWatchdog();
+      this._flushListen(); // persist heard-seconds at every pause
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       this.savePlayerState();
     },
@@ -578,10 +591,30 @@ export const usePlayerStore = defineStore('player', {
       if (!this.audioEl?.duration) return;
       this.currentTime = this.audioEl.currentTime;
       this.duration = this.audioEl.duration;
+      this._accumulateListen();
       this._trackPlayProgress();
       this._maybeCrossfade();
       this._updateMediaPosition();
       this.savePlayerState();
+    },
+    // Sum the real content-time heard (currentTime progression) for the
+    // Wrapped "écoute cumulée". Ignores seeks/rewinds/track resets (dt
+    // outside 0..2s) and flushes to the server every ~15s.
+    _accumulateListen() {
+      const ct = this.audioEl.currentTime;
+      if (this._listenLastT != null) {
+        const dt = ct - this._listenLastT;
+        if (dt > 0 && dt < 2) {
+          this._listenBuffer += dt;
+          if (this._listenBuffer >= 15) this._flushListen();
+        }
+      }
+      this._listenLastT = ct;
+    },
+    _flushListen() {
+      const sec = this._listenBuffer;
+      this._listenBuffer = 0;
+      if (sec > 0) { try { useLibraryStore().recordListen(sec); } catch {} }
     },
     // Track finished. Promote the pre-buffered spare element (gapless,
     // synchronous, no fetch) so the audio session has the best chance of
@@ -698,6 +731,9 @@ export const usePlayerStore = defineStore('player', {
       this.audioEl = markRaw(newActive);
       this.audioEl2 = markRaw(oldActive);
       this.index = plan.idx;
+      // Bank the finished track's heard-seconds and reset for the new one.
+      this._flushListen();
+      this._listenLastT = null;
       this._lastBlobUrl = pre.isBlob ? pre.url : null;
       this._preloaded = null;
       this._planned = null;

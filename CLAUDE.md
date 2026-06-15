@@ -134,6 +134,15 @@ Vérifié en preview : spare bufferisé+muté pendant la lecture, swap synchrone
 
 `src/composables/useLyrics.js` — fetch des paroles synchronisées (LRC format) et calcul de la ligne active en fonction du `currentTime` de l'audio. Affiché dans le fullscreen player.
 
+## Stats d'écoute réelles (Wrapped — `ViewWrapped.vue`)
+
+**Temps d'écoute réel, pas l'estimation.** Avant, le hero "écoute cumulée" du Wrapped valait `Σ (durée × playCount)` — sur-compte (un `playCount` est posé à 30s, puis on créditait la durée **entière** du morceau). Depuis 0.19.16 on track le **vrai temps de contenu entendu** :
+- **Player** (`stores/player.js`) : `_accumulateListen()` (appelé en tête de `_onAudioTimeUpdate`) somme les deltas de `currentTime` dans `_listenBuffer`, en **ignorant les seeks/resets** (`dt` hors `0..2s`). Flush vers le serveur tous les ~15s (`_flushListen` → `library.recordListen`). Flush **aussi** sur pause (`_onAudioPause`), `stop()`, et au changement de piste (`loadAndPlay`/`_swapToPreloaded`), avec reset de `_listenLastT = null` pour que le `currentTime=0` de la nouvelle piste ne compte pas comme un saut.
+- **Store** (`stores/library.js`) : état `listenedSeconds`, `fetchStats()` (GET au mount du Wrapped) + `recordListen(sec)` (bump optimiste + POST fire-and-forget).
+- **Serveur** (`server.cjs`) : `GET /api/stats` + `POST /api/stats/listen` (clamp 0..7200s/appel), par profil dans `library/users/<id>/stats.json`. ⚠️ **Seed au premier accès** : `getStats` initialise `listenedSeconds` depuis l'ancienne estimation `Σ durée×playCount` → les profils existants ne voient pas leur total tomber à zéro, le vrai temps s'accumule par-dessus. Supprimer `stats.json` re-seede depuis l'estimation.
+
+**Wrapped UI** : hero = `lib.listenedSeconds` (fallback estimate tant que le fetch n'a pas répondu) ; classements top titres/artistes avec **barres de progression** (largeur relative au #1, min 8%) + **médailles** or/argent/bronze (`.wp-rank-1/2/3`) ; 3e stat = **artistes différents** (`distinctArtists`, vrai indicateur de variété) au lieu de l'ancien "découvertes (12 mois)" qui doublonnait la taille de la biblio. **Pas de header interne** : comme `ViewSettings`, la vue s'appuie sur la `van-nav-bar` d'`App.vue` (sub-view plate, titre "Ta sélection" + chevron retour) — ne pas re-rendre de header dans la vue (doublon).
+
 ## Docker / k8s
 
 ### Dockerfile

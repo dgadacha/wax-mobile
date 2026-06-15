@@ -891,6 +891,27 @@ const saveLibrary = (profileId, lib) => writeJson(libraryFile(profileId), lib);
 const getPlaylists = (profileId) => readJson(playlistsFile(profileId));
 const savePlaylists = (profileId, pls) => writeJson(playlistsFile(profileId), pls);
 
+// Per-profile listening stats — real seconds actually heard, accumulated
+// from the client (which sends content-time deltas as the user plays).
+// Distinct from playCount (a play is counted at 30s, then over-counts the
+// full track duration). On first access we SEED listenedSeconds from the
+// legacy playCount×duration estimate so existing users don't see their
+// "écoute cumulée" crater to zero; real deltas accumulate accurately on top.
+function statsFile(profileId) {
+  return path.join(USERS_DIR, sanitizeProfileId(profileId), 'stats.json');
+}
+function getStats(profileId) {
+  const f = statsFile(profileId);
+  try {
+    if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
+  } catch {}
+  const lib = getLibrary(profileId);
+  const seed = lib.reduce((s, t) => s + (t.duration || 0) * (t.playCount || 0), 0);
+  const stats = { listenedSeconds: Math.round(seed), seededAt: Date.now() };
+  try { writeJson(f, stats); } catch {}
+  return stats;
+}
+
 function fetchJson(url) {
   return new Promise((resolve, reject) => {
     https.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
@@ -1765,6 +1786,20 @@ app.post('/api/library/:id/play', (req, res) => {
   track.lastPlayedAt = Date.now();
   saveLibrary(req.profileId, lib);
   res.json({ track });
+});
+
+// Listening stats — accurate seconds heard.
+app.get('/api/stats', (req, res) => {
+  res.json(getStats(req.profileId));
+});
+app.post('/api/stats/listen', (req, res) => {
+  // Clamp per-call so a buggy/hostile client can't inflate the total; the
+  // client flushes every ~15s, so even a generous cap is never hit legit.
+  const sec = Math.max(0, Math.min(7200, parseFloat(req.body?.seconds) || 0));
+  const stats = getStats(req.profileId);
+  stats.listenedSeconds = Math.round((stats.listenedSeconds || 0) + sec);
+  try { writeJson(statsFile(req.profileId), stats); } catch {}
+  res.json(stats);
 });
 
 app.delete('/api/library/:id', (req, res) => {

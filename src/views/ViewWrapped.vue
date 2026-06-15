@@ -1,16 +1,15 @@
 <script setup>
 // "Wrapped" — yearly recap-style stats view, Spotify Wrapped-lite.
 // Triggered from a Settings cell so the user can re-open it any
-// time (not gated on end-of-year). Computes stats locally from the
-// library store using the existing per-track playCount + addedAt
-// + lastPlayedAt fields. No server roundtrip.
+// time (not gated on end-of-year). Top tracks/artists are computed
+// locally from the per-track playCount; the listened-time hero comes
+// from the server-tracked lib.listenedSeconds (real content-time).
 //
-// Scope: "all-time" by default since we don't track a play HISTORY
-// (just totals). New-this-year discoveries are filtered by addedAt
-// in the last 365 days. Could become a real per-year breakdown if
-// we ever start writing play-event timestamps server-side.
-import { computed } from 'vue';
-import { ChevronLeft, Music, Clock, Heart, Sparkles, Mic2, Disc3 } from 'lucide-vue-next';
+// Scope: "all-time" since we don't track a play HISTORY (just totals).
+// Could become a real per-year breakdown if we ever start writing
+// play-event timestamps server-side.
+import { computed, onMounted } from 'vue';
+import { Music, Clock, Heart, Sparkles, Mic2, Disc3, Users } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
@@ -22,6 +21,10 @@ const lib = useLibraryStore();
 const player = usePlayerStore();
 const view = useViewStore();
 
+// Pull the real per-profile listened-seconds counter (server-tracked,
+// content-time). Seeds from the old estimate on first access server-side.
+onMounted(() => { lib.fetchStats(); });
+
 // ── Aggregates ────────────────────────────────────────────────────
 
 const playedTracks = computed(() =>
@@ -32,15 +35,19 @@ const totalPlays = computed(() =>
   playedTracks.value.reduce((sum, t) => sum + (t.playCount || 0), 0),
 );
 
-// Total listening time = sum of (duration × playCount). Each track's
-// playCount is bumped by the server after 30 s of audible play, so
-// this is a fair approximation (slight over-count: the user could
-// have skipped at 31 s, but matches Spotify's logic).
-const totalSeconds = computed(() =>
+// Legacy estimate = sum of (duration × playCount). Kept as a fallback
+// while the real counter is still loading (or for very old profiles
+// before the server seed ran). The real value comes from
+// lib.listenedSeconds — actual content-time heard, tracked by the
+// player (delta of currentTime, flushed every ~15 s).
+const estimateSeconds = computed(() =>
   playedTracks.value.reduce(
     (sum, t) => sum + (t.duration || 0) * (t.playCount || 0),
     0,
   ),
+);
+const totalSeconds = computed(() =>
+  lib.listenedSeconds > 0 ? lib.listenedSeconds : estimateSeconds.value,
 );
 
 const totalHours = computed(() => Math.floor(totalSeconds.value / 3600));
@@ -52,6 +59,7 @@ const topTracks = computed(() =>
     .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
     .slice(0, 5),
 );
+const maxTrackPlays = computed(() => topTracks.value[0]?.playCount || 1);
 
 // Top artists — group by normalized key so different YouTube channels
 // for the same artist count as one. Returns {name, plays, top:track}.
@@ -71,13 +79,27 @@ const topArtists = computed(() => {
   }
   return [...byArtist.values()].sort((a, b) => b.plays - a.plays).slice(0, 5);
 });
+const maxArtistPlays = computed(() => topArtists.value[0]?.plays || 1);
 
-// Discoveries — tracks added in the last 365 days. Useful as a
-// "you discovered N new tracks this year" stat.
-const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
-const discoveries = computed(() => {
-  const cutoff = Date.now() - ONE_YEAR_MS;
-  return lib.tracks.filter((t) => (t.addedAt || 0) > cutoff);
+// Ranking-bar widths (relative to the #1) — min 8% so the smallest
+// entry still shows a sliver of fill.
+function barPct(value, max) {
+  return Math.max(8, Math.round((value / (max || 1)) * 100));
+}
+
+// Distinct artists across the whole library — a genuine "variety"
+// stat, unlike the old "discoveries (12 mois)" which just mirrored
+// the library size.
+const distinctArtists = computed(() => {
+  const keys = new Set();
+  for (const t of lib.tracks) {
+    const parsed = parseTrackTitle(t);
+    const name = parsed.artist || t.uploader;
+    if (!name) continue;
+    const key = normalizeArtistKey(name);
+    if (key) keys.add(key);
+  }
+  return keys.size;
 });
 
 // Favorite ratio — % of library that's marked as favori.
@@ -104,13 +126,6 @@ const hasData = computed(() => totalPlays.value > 0);
 
 <template>
   <div class="wrapped-view">
-    <div class="wrapped-header">
-      <button class="wrapped-back" aria-label="Retour" @click="view.back()">
-        <ChevronLeft :size="24" :stroke-width="2" color="var(--text)" />
-      </button>
-      <h1 class="wrapped-title">Ta sélection</h1>
-    </div>
-
     <div v-if="!hasData" class="wrapped-empty">
       <Sparkles :size="56" :stroke-width="1.5" color="var(--text-muted)" />
       <h2>Pas encore d'historique</h2>
@@ -131,7 +146,7 @@ const hasData = computed(() => totalPlays.value > 0);
         <div class="wp-hero-sub">d'écoute cumulée</div>
       </section>
 
-      <!-- Stat row: plays + tracks + discoveries -->
+      <!-- Stat row: plays + tracks + distinct artists -->
       <section class="wp-stats">
         <div class="wp-stat">
           <Music :size="20" :stroke-width="1.8" color="var(--accent)" />
@@ -144,9 +159,9 @@ const hasData = computed(() => totalPlays.value > 0);
           <div class="wp-stat-l">titres en biblio</div>
         </div>
         <div class="wp-stat">
-          <Sparkles :size="20" :stroke-width="1.8" color="var(--accent)" />
-          <div class="wp-stat-n">{{ discoveries.length }}</div>
-          <div class="wp-stat-l">découvertes (12 mois)</div>
+          <Users :size="20" :stroke-width="1.8" color="var(--accent)" />
+          <div class="wp-stat-n">{{ distinctArtists }}</div>
+          <div class="wp-stat-l">artistes différents</div>
         </div>
       </section>
 
@@ -162,12 +177,15 @@ const hasData = computed(() => totalPlays.value > 0);
           class="wp-row"
           @click="playTrack(t)"
         >
-          <div class="wp-row-rank">{{ i + 1 }}</div>
+          <div class="wp-row-rank" :class="`wp-rank-${i + 1}`">{{ i + 1 }}</div>
           <div class="wp-row-cover">
             <img v-if="t.thumbnail" :src="apiUrl(t.thumbnail)" alt="" loading="lazy" />
           </div>
           <div class="wp-row-meta">
             <div class="wp-row-title text-ellipsis">{{ t.title }}</div>
+            <div class="wp-bar">
+              <div class="wp-bar-fill" :style="{ width: barPct(t.playCount || 0, maxTrackPlays) + '%' }"></div>
+            </div>
             <div class="wp-row-sub">{{ t.playCount }} écoute{{ t.playCount > 1 ? 's' : '' }} · {{ fmtDuration(t.duration || 0) }}</div>
           </div>
         </button>
@@ -185,12 +203,15 @@ const hasData = computed(() => totalPlays.value > 0);
           class="wp-row"
           @click="openArtist(a.name)"
         >
-          <div class="wp-row-rank">{{ i + 1 }}</div>
+          <div class="wp-row-rank" :class="`wp-rank-${i + 1}`">{{ i + 1 }}</div>
           <div class="wp-row-cover wp-row-cover-circle">
             <img v-if="a.top?.thumbnail" :src="apiUrl(a.top.thumbnail)" alt="" loading="lazy" />
           </div>
           <div class="wp-row-meta">
             <div class="wp-row-title text-ellipsis">{{ a.name }}</div>
+            <div class="wp-bar">
+              <div class="wp-bar-fill" :style="{ width: barPct(a.plays || 0, maxArtistPlays) + '%' }"></div>
+            </div>
             <div class="wp-row-sub">{{ a.plays }} écoute{{ a.plays > 1 ? 's' : '' }}</div>
           </div>
         </button>
@@ -212,29 +233,6 @@ const hasData = computed(() => totalPlays.value > 0);
 .wrapped-view {
   min-height: 100%;
   padding-bottom: var(--sp-12);
-}
-.wrapped-header {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-3) var(--sp-4);
-}
-.wrapped-back {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--card);
-  border: 0;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-}
-.wrapped-title {
-  font-family: var(--font-display);
-  font-size: 22px;
-  font-weight: 700;
-  margin: 0;
-  color: var(--text);
 }
 
 .wrapped-empty {
@@ -350,9 +348,13 @@ const hasData = computed(() => totalPlays.value > 0);
   font-family: var(--font-display);
   font-size: 18px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--text-muted);
   flex: 0 0 auto;
 }
+/* Podium medals for the top 3 */
+.wp-rank-1 { color: #f6c945; }
+.wp-rank-2 { color: #c7ccd1; }
+.wp-rank-3 { color: #d68b54; }
 .wp-row-cover {
   width: 48px;
   height: 48px;
@@ -372,7 +374,21 @@ const hasData = computed(() => totalPlays.value > 0);
 .wp-row-sub {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 3px;
+}
+/* Ranking bar — width relative to the #1 entry */
+.wp-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--card-hover);
+  overflow: hidden;
+  margin-top: 6px;
+}
+.wp-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.4s ease;
 }
 
 /* Library health card */

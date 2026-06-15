@@ -58,6 +58,11 @@ export const useLibraryStore = defineStore('library', {
     // Album rescan progress driven by the server's SSE rescan events.
     // Settings UI watches this for the progress bar.
     albumRescan: { running: false, done: 0, total: 0 },
+    // Real accumulated listening time (seconds) for the active profile —
+    // fed by the player (content-time deltas) and shown in the Wrapped
+    // hero. Server-seeded from the legacy playCount×duration estimate on
+    // first access so it never starts at zero for existing users.
+    listenedSeconds: 0,
   }),
   getters: {
     inLibraryByYtId: (state) => (ytId) => state.tracks.some((t) => t.ytId === ytId),
@@ -170,6 +175,24 @@ export const useLibraryStore = defineStore('library', {
       } finally {
         this.loading = false;
       }
+    },
+    // Pull the real accumulated listening time for this profile (seeded
+    // server-side from the legacy estimate on first call). Used by Wrapped.
+    async fetchStats() {
+      try {
+        const s = await api('/api/stats');
+        if (typeof s.listenedSeconds === 'number') this.listenedSeconds = s.listenedSeconds;
+      } catch {}
+    },
+    // Record real seconds heard (content-time). Called by the player on
+    // flush. Optimistic local bump + fire-and-forget persist.
+    recordListen(seconds) {
+      const sec = Math.max(0, Math.round(seconds || 0));
+      if (sec <= 0) return;
+      this.listenedSeconds += sec;
+      api('/api/stats/listen', { method: 'POST', body: JSON.stringify({ seconds: sec }) })
+        .then((s) => { if (typeof s.listenedSeconds === 'number') this.listenedSeconds = s.listenedSeconds; })
+        .catch(() => {});
     },
     async add(r, opts = {}) {
       const liked = opts.liked !== false; // default true: explicit favorites
