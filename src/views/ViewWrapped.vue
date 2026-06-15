@@ -59,7 +59,6 @@ const topTracks = computed(() =>
     .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
     .slice(0, 5),
 );
-const maxTrackPlays = computed(() => topTracks.value[0]?.playCount || 1);
 
 // Top artists — group by normalized key so different YouTube channels
 // for the same artist count as one. Returns {name, plays, top:track}.
@@ -79,13 +78,6 @@ const topArtists = computed(() => {
   }
   return [...byArtist.values()].sort((a, b) => b.plays - a.plays).slice(0, 5);
 });
-const maxArtistPlays = computed(() => topArtists.value[0]?.plays || 1);
-
-// Ranking-bar widths (relative to the #1) — min 8% so the smallest
-// entry still shows a sliver of fill.
-function barPct(value, max) {
-  return Math.max(8, Math.round((value / (max || 1)) * 100));
-}
 
 // Distinct artists across the whole library — a genuine "variety"
 // stat, unlike the old "discoveries (12 mois)" which just mirrored
@@ -183,9 +175,6 @@ const hasData = computed(() => totalPlays.value > 0);
           </div>
           <div class="wp-row-meta">
             <div class="wp-row-title text-ellipsis">{{ t.title }}</div>
-            <div class="wp-bar">
-              <div class="wp-bar-fill" :style="{ width: barPct(t.playCount || 0, maxTrackPlays) + '%' }"></div>
-            </div>
             <div class="wp-row-sub">{{ t.playCount }} écoute{{ t.playCount > 1 ? 's' : '' }} · {{ fmtDuration(t.duration || 0) }}</div>
           </div>
         </button>
@@ -209,9 +198,6 @@ const hasData = computed(() => totalPlays.value > 0);
           </div>
           <div class="wp-row-meta">
             <div class="wp-row-title text-ellipsis">{{ a.name }}</div>
-            <div class="wp-bar">
-              <div class="wp-bar-fill" :style="{ width: barPct(a.plays || 0, maxArtistPlays) + '%' }"></div>
-            </div>
             <div class="wp-row-sub">{{ a.plays }} écoute{{ a.plays > 1 ? 's' : '' }}</div>
           </div>
         </button>
@@ -374,21 +360,7 @@ const hasData = computed(() => totalPlays.value > 0);
 .wp-row-sub {
   font-size: 12px;
   color: var(--text-muted);
-  margin-top: 3px;
-}
-/* Ranking bar — width relative to the #1 entry */
-.wp-bar {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--card-hover);
-  overflow: hidden;
-  margin-top: 6px;
-}
-.wp-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--accent);
-  transition: width 0.4s ease;
+  margin-top: 2px;
 }
 
 /* Library health card */
