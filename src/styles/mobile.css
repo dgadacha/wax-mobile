@@ -604,3 +604,30 @@ input, textarea, [contenteditable="true"],
   from { transform: translateY(20px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
 }
+
+/* ──────────────────────────────────────────────────────────────────
+ * Large-screen framing — centred phone-width column.
+ *
+ * The whole app is mobile-first; on a wide monitor it would stretch
+ * edge-to-edge and read as a zoomed-in phone. Rather than rebuild a
+ * desktop layout, we keep the EXACT mobile UI and just frame it: cap
+ * the shell to a phone width, centre it, and let the gutters fall
+ * back to a darker canvas. `transform` on .app-shell turns it into
+ * the containing block for its `position: fixed` children (tab bar,
+ * mini-player, action sheet, gates, modals) so they're confined to
+ * the column automatically. Vant popups teleported to <body> (the
+ * fullscreen player + queue) sit outside it and are re-framed in
+ * MobilePlayer.vue.
+ * ────────────────────────────────────────────────────────────────── */
+:root { --app-col: 480px; }
+
+@media (min-width: 600px) {
+  html, body { background: #000; }
+
+  .app-shell {
+    max-width: var(--app-col);
+    margin-inline: auto;
+    transform: translateZ(0);
+    border-inline: 1px solid rgba(255, 255, 255, 0.06);
+  }
+}

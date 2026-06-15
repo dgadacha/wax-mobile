@@ -1245,4 +1245,24 @@ watch(
 .muted { color: var(--text-muted); }
 .empty-state.small { padding: 30px 16px; text-align: center; }
 .empty-state.small .hint { font-size: 13px; color: var(--text-muted); }
+
+/* ── Large screen — centred phone-width column ────────────────────
+ * The fullscreen player and the queue are Vant popups teleported to
+ * <body>, so they live OUTSIDE the framed .app-shell column. Re-frame
+ * them to the same phone width on a centred black canvas so they match
+ * the rest of the app instead of spanning the whole monitor. */
+@media (min-width: 600px) {
+  .np-popup,
+  .queue-popup { background: #000 !important; }
+  .np-screen {
+    max-width: var(--app-col);
+    margin-inline: auto;
+    border-inline: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .queue-screen {
+    max-width: var(--app-col);
+    margin-inline: auto;
+    width: 100%;
+  }
+}
 </style>
