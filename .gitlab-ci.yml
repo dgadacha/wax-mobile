@@ -39,6 +39,16 @@ deploy:
     # — the server-side validation is the authoritative one anyway.
     - kubectl apply --validate=false -f k8s/namespace.yaml
     - kubectl apply --validate=false -f k8s/
+    # Clé IA : matérialise le secret wax-ai depuis la variable CI/CD
+    # masquée ANTHROPIC_API_KEY (Settings → CI/CD → Variables). Pattern
+    # create-or-update idempotent ; skippé si la variable n'est pas
+    # définie (un deploy sans clé ne casse rien — l'endpoint renvoie 503).
+    - |
+      if [ -n "$ANTHROPIC_API_KEY" ]; then
+        kubectl create secret generic wax-ai -n wax \
+          --from-literal=anthropic-api-key="$ANTHROPIC_API_KEY" \
+          --dry-run=client -o yaml | kubectl apply --validate=false -f -
+      fi
     - kubectl rollout restart deployment/wax -n wax
     - kubectl rollout status deployment/wax -n wax --timeout=120s
   rules:

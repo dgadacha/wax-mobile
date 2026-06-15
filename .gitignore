@@ -25,9 +25,14 @@ ios/
 android/
 
 # Env (VITE_API_BASE_URL etc.). `.env.example` is the only committed copy.
+# NOTE: dot-less variants too (env.local) — a missing dot once leaked a key.
 .env
 .env.local
 .env.*.local
+env.local
+env.*.local
+*.aikey
+secret.txt
 
 # Local Claude Code settings (per-machine permission overrides)
 .claude/settings.local.json

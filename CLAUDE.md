@@ -45,6 +45,7 @@ Runtime deps : `yt-dlp`, `ffmpeg`. Override avec `WAX_YT_DLP` / `WAX_FFMPEG`.
 - **Secrets K8s** :
   - `gitlab-registry` — deploy token pour puller l'image depuis le registry GitLab.
   - `wax-auth` — clés `email` + `password` pour l'auth app (injectées dans le pod via `WAX_AUTH_EMAIL` / `WAX_AUTH_PASSWORD`).
+  - `wax-ai` — clé `anthropic-api-key` pour la génération de playlist IA (injectée via `ANTHROPIC_API_KEY`, `optional: true`). **N'est PAS créé à la main** : le stage `deploy` de la CI le matérialise (create-or-update) depuis la **variable CI/CD GitLab masquée `ANTHROPIC_API_KEY`** (Settings → CI/CD → Variables), juste avant le `rollout restart`. Étape skippée si la variable n'existe pas. Donc poser la clé en prod = ajouter la variable GitLab, pas de kubectl.
 
 ## Authentification
 
