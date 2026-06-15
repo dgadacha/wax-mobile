@@ -53,6 +53,17 @@ spec:
                 secretKeyRef:
                   name: wax-auth
                   key: password
+            # Claude Haiku key for the AI playlist generator. optional:true
+            # so the pod still boots without it — the /api/ai/* endpoints
+            # just return 503 until the secret exists. Create with:
+            #   kubectl -n wax create secret generic wax-ai \
+            #     --from-literal=anthropic-api-key='sk-ant-...'
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: wax-ai
+                  key: anthropic-api-key
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data

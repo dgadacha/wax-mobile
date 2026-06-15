@@ -9,6 +9,7 @@ import ModalRoot from './components/ModalRoot.vue';
 import ProfileGate from './components/ProfileGate.vue';
 import LoginGate from './components/LoginGate.vue';
 import OnboardingOverlay from './components/OnboardingOverlay.vue';
+import AiPlaylistSheet from './components/AiPlaylistSheet.vue';
 
 import ViewHome from './views/ViewHome.vue';
 import ViewSearch from './views/ViewSearch.vue';
@@ -447,6 +448,7 @@ watch(() => auth.loggedIn, async (isLogged, was) => {
     </van-tabbar>
 
     <ModalRoot />
+    <AiPlaylistSheet />
     <ProfileGate />
     <LoginGate />
     <OnboardingOverlay

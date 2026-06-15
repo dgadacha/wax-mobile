@@ -288,6 +288,21 @@ function playFavoritesFrom(track) {
   player.playFromList(track.id, ids);
 }
 
+async function onCreatePlaylist() {
+  haptics.light();
+  try {
+    const { index } = await sheet.open(
+      [
+        { name: 'Nouvelle playlist', icon: Plus },
+        { name: 'Créer avec l’IA', icon: Sparkles, color: 'var(--accent)' },
+      ],
+      { title: 'Créer' },
+    );
+    if (index === 0) playlists.create();
+    else if (index === 1) view.openAi();
+  } catch { /* dismissed */ }
+}
+
 async function addToPlaylistFlow(track) {
   const actions = [
     { name: 'Nouvelle playlist', icon: Plus, color: 'var(--accent)' },
@@ -372,7 +387,7 @@ function cardIcon(card) {
       <button class="lib-action" aria-label="Rechercher" @click="toggleSearch">
         <SearchIcon :size="22" :stroke-width="2.2" color="var(--text)" />
       </button>
-      <button class="lib-action" aria-label="Nouvelle playlist" @click="playlists.create()">
+      <button class="lib-action" aria-label="Créer une playlist" @click="onCreatePlaylist">
         <Plus :size="26" :stroke-width="2" color="var(--text)" />
       </button>
     </header>

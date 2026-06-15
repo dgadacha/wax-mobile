@@ -143,6 +143,11 @@ function goLibrary(filter) {
 }
 const browseCards = computed(() => [
   {
+    id: 'ai', label: 'Playlist IA', color: '#7b3ff2',
+    cover: '',
+    go: () => view.openAi(), icon: Sparkles,
+  },
+  {
     id: 'favorites', label: 'Favoris', color: '#8d67ab',
     cover: lib.favorites[0]?.thumbnail || '',
     go: () => view.switchTo('playlist', 'favorites'), icon: Heart,

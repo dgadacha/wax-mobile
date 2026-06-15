@@ -40,8 +40,9 @@
 ### Une fois installée
 
 - **Accueil** : tuiles de reprise rapide + carrousels (récemment joués, tes titres du moment, artistes) + "Pour toi" généré depuis tes favoris. La roue dentée en haut ouvre les Réglages, l'étoile ouvre tes stats.
-- **Rechercher** : barre blanche en haut — tape un titre, un artiste, ou colle une URL YouTube. En dessous, les cartes "Parcourir" sautent direct dans tes favoris / albums / artistes.
-- **Bibliothèque** : tes playlists, albums et artistes regroupés derrière des chips (re-tape une chip pour tout réafficher). Le "+" en haut crée une playlist, la loupe filtre.
+- **Rechercher** : barre blanche en haut — tape un titre, un artiste, ou colle une URL YouTube. En dessous, les cartes "Parcourir" sautent direct dans tes favoris / albums / artistes, et **"Playlist IA"** génère une playlist à partir d'une simple description.
+- **Bibliothèque** : tes playlists, albums et artistes regroupés derrière des chips (re-tape une chip pour tout réafficher). Le "+" en haut crée une playlist (vide ou **générée par l'IA** : décris une ambiance, Claude compose la tracklist), la loupe filtre.
+- **Playlist IA** : décris un mood ("road trip années 2000", "deep work électro") → Claude Haiku propose 15 titres → Wax les retrouve sur YouTube et crée la playlist. Nécessite une clé `ANTHROPIC_API_KEY` côté serveur (voir self-host).
 - **Réglages** (roue dentée sur l'Accueil) : thème, couleur d'accent, EQ, export/import JSON.
 - **Multi-profil** : depuis Réglages → ligne profil en haut, tu peux créer plusieurs profils. Chacun a ses propres favoris et playlists.
 
@@ -246,6 +247,8 @@ Le workflow `.github/workflows/deploy-pages.yml` peut publier `dist/` sur GitHub
 | `WAX_FRONTEND_DIR` | backend | Répertoire du frontend buildé (sert au root + SPA fallback). Défaut `./dist`, image Docker `/app/dist`. Si absent, le serving frontend est désactivé (utile en dev quand Vite tourne sur :5173). |
 | `WAX_YT_DLP` | backend | Override du chemin `yt-dlp`. |
 | `WAX_FFMPEG` | backend | Override du chemin `ffmpeg`. |
+| `WAX_AUTH_EMAIL` / `WAX_AUTH_PASSWORD` | backend | Identifiants du gate de login. Les deux vides = pas de gate. |
+| `ANTHROPIC_API_KEY` | backend | Clé Claude pour la **génération de playlist IA** (`claude-haiku-4-5`). Absente = la fonctionnalité renvoie 503, le reste de l'app marche. Sur k8s, secret `wax-ai` / clé `anthropic-api-key` (`optional: true`). |
 
 ## Architecture (résumé)
 

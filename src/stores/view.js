@@ -13,6 +13,8 @@ export const useViewStore = defineStore('view', {
     // cards ("Albums" → library with the Albums chip active). The
     // library view consumes + clears it.
     libraryFilter: null,
+    // AI playlist generator overlay (AiPlaylistSheet, singleton in App.vue).
+    aiOpen: false,
     // Stack of { name, arg } describing where we came from. Pushed by
     // `switchTo`, popped by `back`. Capped soft at 50 entries to avoid
     // unbounded growth on heavy navigation sessions.
@@ -22,6 +24,8 @@ export const useViewStore = defineStore('view', {
     canGoBack: (state) => state.history.length > 0,
   },
   actions: {
+    openAi() { this.aiOpen = true; },
+    closeAi() { this.aiOpen = false; },
     switchTo(name, arg) {
       this._goto(name, arg, /* pushHistory */ true);
     },

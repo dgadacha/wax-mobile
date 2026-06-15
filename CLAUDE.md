@@ -143,6 +143,14 @@ Vérifié en preview : spare bufferisé+muté pendant la lecture, swap synchrone
 
 **Wrapped UI** : hero = `lib.listenedSeconds` (fallback estimate tant que le fetch n'a pas répondu) ; classements top titres/artistes en **liste numérotée** avec **médailles** or/argent/bronze (`.wp-rank-1/2/3`), façon "Top Songs" du vrai Spotify Wrapped ; 3e stat = **artistes différents** (`distinctArtists`, vrai indicateur de variété) au lieu de l'ancien "découvertes (12 mois)" qui doublonnait la taille de la biblio. ⛔ **Pas de barre de progression par ligne** : testée en 0.19.16 puis retirée — une barre verte fine sous chaque titre se confond avec le scrubber de lecture (chaque ligne semble "en cours de lecture"). **Pas de header interne** : comme `ViewSettings`, la vue s'appuie sur la `van-nav-bar` d'`App.vue` (sub-view plate, titre "Ta sélection" + chevron retour) — ne pas re-rendre de header dans la vue (doublon).
 
+## IA — génération de playlist (Claude Haiku)
+
+Décris une ambiance → Claude Haiku compose une tracklist → le serveur résout chaque titre sur YouTube → playlist créée.
+
+- **Serveur** (`server.cjs`, `POST /api/ai/playlist`) : `getAnthropic()` = client **lazy** (`require('@anthropic-ai/sdk')` + `new Anthropic()` seulement si `ANTHROPIC_API_KEY` présente, sinon **null** → endpoint renvoie **503**, le serveur boote toujours sans clé). Modèle `claude-haiku-4-5` (rapide/pas cher, 1$/5$ par M tokens), **structured outputs** (`output_config.format` + `AI_PLAYLIST_SCHEMA`) → JSON garanti `{name, tracks:[{title,artist}]}`. ⚠️ Haiku **ne supporte pas** `effort` ni le thinking — ne pas les passer. Chaque suggestion est résolue via `aiResolveTrack()` (= `ytsearch1` à travers le sémaphore `runYtDlp`, résout `null` en cas de miss → `Promise.all` ne casse jamais), pliée en biblio en `liked:false` (de-dup par `ytId`), puis la playlist (`aiPrompt` gardé en méta) pointe sur les ids. Tolérant aux échecs partiels (titres introuvables skippés). Renvoie `{playlist, requested, resolved}`. **La clé ne quitte JAMAIS le backend.**
+- **Front** : overlay singleton `AiPlaylistSheet.vue` (monté dans `App.vue`), piloté par `view.aiOpen` / `view.openAi()` / `view.closeAi()`. Textarea + chips d'exemples + état loading (~10-15s : Haiku + N recherches yt-dlp). Au succès : `playlists.fetch()` + `lib.fetch()` → toast → `view.switchTo('playlist', id)`. Deux points d'entrée : carte "Playlist IA" de la grille **Parcourir** (Search) + le **"+"** de la Bibliothèque (action sheet "Nouvelle playlist" / "Créer avec l'IA").
+- **Déploiement** : `ANTHROPIC_API_KEY` via secret K8s `wax-ai` (clé `anthropic-api-key`), injectée dans le pod en `optional: true` (cf. `k8s/deployment.yaml`). `@anthropic-ai/sdk` est en `dependencies` mais **uniquement `require` par `server.cjs`** → jamais bundlé côté front (Vite n'importe rien depuis `src/`).
+
 ## Docker / k8s
 
 ### Dockerfile

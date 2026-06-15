@@ -1208,6 +1208,148 @@ app.get('/api/search', (req, res) => {
   });
 });
 
+// ── IA : génération de playlist (Claude Haiku) ──────────────────────
+// Lazy client so the server boots fine without a key (mode dev). The
+// API key lives in ANTHROPIC_API_KEY (secret K8s wax-ai en prod).
+let _anthropic;
+function getAnthropic() {
+  if (_anthropic !== undefined) return _anthropic;
+  try {
+    const key = process.env.ANTHROPIC_API_KEY;
+    _anthropic = key ? new (require('@anthropic-ai/sdk'))({ apiKey: key }) : null;
+  } catch { _anthropic = null; }
+  return _anthropic;
+}
+
+// Resolve one "artist - title" string to its top YouTube hit. Always
+// resolves (null on miss) so Promise.all never rejects on one bad query.
+function aiResolveTrack(query) {
+  return runYtDlp(() => new Promise((resolve) => {
+    const ytdlp = spawn(YT_DLP_BIN, [
+      `ytsearch1:${query}`,
+      '--flat-playlist', '--skip-download',
+      '--print', '%(id)s|||%(title)s|||%(uploader)s|||%(duration)s',
+      '--no-warnings',
+    ]);
+    let out = '';
+    ytdlp.stdout.on('data', (d) => { out += d; });
+    ytdlp.on('error', () => resolve(null));
+    const killTimer = setTimeout(() => { try { ytdlp.kill('SIGKILL'); } catch {} resolve(null); }, 20000);
+    ytdlp.on('close', () => {
+      clearTimeout(killTimer);
+      const line = out.split('\n').find((l) => l.trim());
+      if (!line) return resolve(null);
+      const [id, title, uploader, duration] = line.split('|||');
+      if (!id) return resolve(null);
+      resolve({
+        id,
+        title: title || query,
+        uploader: uploader === 'NA' ? '' : (uploader || ''),
+        duration: parseFloat(duration) || 0,
+      });
+    });
+  }));
+}
+
+const AI_PLAYLIST_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: { type: 'string' },
+    tracks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          artist: { type: 'string' },
+        },
+        required: ['title', 'artist'],
+      },
+    },
+  },
+  required: ['name', 'tracks'],
+};
+
+app.post('/api/ai/playlist', async (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const prompt = String(req.body?.prompt || '').trim().slice(0, 500);
+  if (!prompt) return res.status(400).json({ error: 'Décris la playlist que tu veux' });
+
+  // 1. Claude Haiku → { name, tracks:[{title, artist}] } (structured output).
+  let suggestion;
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 2000,
+      system:
+        "Tu es un expert musical. À partir d'une description, tu proposes une "
+        + "playlist cohérente de 15 titres RÉELS et identifiables (jamais d'inventions), "
+        + "variés mais fidèles à l'ambiance demandée. Donne un nom court et accrocheur "
+        + "à la playlist.",
+      messages: [{ role: 'user', content: `Crée une playlist pour : ${prompt}` }],
+      output_config: { format: { type: 'json_schema', schema: AI_PLAYLIST_SCHEMA } },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    suggestion = JSON.parse(text);
+  } catch (e) {
+    console.error('[ai/playlist] claude:', e.message);
+    return res.status(502).json({ error: 'Génération IA échouée', details: e.message });
+  }
+
+  const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 20) : [];
+  if (wanted.length === 0) return res.status(502).json({ error: 'Aucun titre généré' });
+
+  // 2. Resolve each suggestion to a real YouTube video (parallel, yt-dlp-gated).
+  const hits = await Promise.all(
+    wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`)),
+  );
+
+  // 3. Fold the hits into the library (liked:false) and collect ids, de-duped.
+  const lib = getLibrary(req.profileId);
+  const ids = [];
+  const seen = new Set();
+  for (const v of hits) {
+    if (!v || seen.has(v.id)) continue;
+    seen.add(v.id);
+    let track = lib.find((t) => t.ytId === v.id);
+    if (!track) {
+      track = {
+        id: crypto.randomBytes(6).toString('hex'),
+        title: String(v.title).slice(0, 200),
+        uploader: v.uploader || '',
+        duration: v.duration || 0,
+        thumbnail: coverUrl(v.id),
+        ytId: v.id,
+        url: `https://www.youtube.com/watch?v=${v.id}`,
+        file: null,
+        liked: false,
+        addedAt: Date.now(),
+      };
+      lib.unshift(track);
+    }
+    ids.push(track.id);
+  }
+  if (ids.length === 0) return res.status(502).json({ error: 'Aucun titre trouvé sur YouTube' });
+  saveLibrary(req.profileId, lib);
+
+  // 4. Create the playlist pointing at the resolved tracks.
+  const pls = getPlaylists(req.profileId);
+  const playlist = {
+    id: crypto.randomBytes(6).toString('hex'),
+    name: String(suggestion.name || prompt).slice(0, 100),
+    trackIds: ids,
+    createdAt: Date.now(),
+    aiPrompt: prompt,
+  };
+  pls.push(playlist);
+  savePlaylists(req.profileId, pls);
+  res.json({ playlist, requested: wanted.length, resolved: ids.length });
+  scheduleAutoBackfill();
+});
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });
