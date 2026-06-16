@@ -1512,6 +1512,80 @@ async function runAiTagJob(job, profileId, force) {
   }
 }
 
+// IA : réordonne les titres d'une playlist pour un meilleur flow (ouverture
+// → montée → pic → redescente). Un SEUL appel Claude qui renvoie une
+// permutation des index → réponse JSON simple (pas de stream, donc pas de
+// pattern job). Préserve TOUS les titres (réordonnés + ceux que Claude
+// oublie + orphelins) : aucune perte.
+app.post('/api/ai/playlists/:id/reorder', async (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const pls = getPlaylists(req.profileId);
+  const pl = pls.find((p) => p.id === req.params.id);
+  if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
+
+  const lib = getLibrary(req.profileId);
+  const known = new Map(lib.map((t) => [t.id, t]));
+  const present = (pl.trackIds || []).filter((id) => known.has(id));
+  const orphans = (pl.trackIds || []).filter((id) => !known.has(id));
+  if (present.length < 4) return res.status(400).json({ error: 'Trop peu de titres pour réorganiser' });
+
+  const tracks = present.map((id) => known.get(id));
+  const listText = tracks
+    .map((t, i) => {
+      const p = parseTrackTitle(t.title, t.uploader);
+      const label = p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
+      const tags = t.mood ? ` [${t.mood}, énergie ${t.energy || '?'}]` : '';
+      return `${i}. ${label}${tags}`.slice(0, 180);
+    })
+    .join('\n');
+
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 3000,
+      system:
+        "Tu es un DJ. Réordonne une playlist pour une écoute fluide : ouverture "
+        + "accrocheuse, montée progressive de l'énergie vers un pic, puis redescente. "
+        + "Transitions douces (énergie/ambiance proches d'un titre au suivant), évite "
+        + "de coller deux titres du même artiste. Utilise les tags [ambiance, énergie] "
+        + "quand ils sont fournis. Renvoie l'ordre comme la liste COMPLÈTE des index de "
+        + "départ — une permutation où chaque index apparaît une seule fois.",
+      messages: [{ role: 'user', content: `Réordonne ces ${tracks.length} titres :\n${listText}` }],
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { order: { type: 'array', items: { type: 'integer' } } },
+            required: ['order'],
+          },
+        },
+      },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const parsed = JSON.parse(text);
+    const order = Array.isArray(parsed.order) ? parsed.order : [];
+    const seen = new Set();
+    const newIds = [];
+    for (const i of order) {
+      if (Number.isInteger(i) && i >= 0 && i < tracks.length && !seen.has(i)) {
+        seen.add(i);
+        newIds.push(tracks[i].id);
+      }
+    }
+    tracks.forEach((t, i) => { if (!seen.has(i)) newIds.push(t.id); }); // dropped → keep
+    newIds.push(...orphans);
+    pl.trackIds = newIds;
+    savePlaylists(req.profileId, pls);
+    res.json({ playlist: pl, reordered: newIds.length });
+  } catch (e) {
+    console.error('[ai/reorder]', e.message);
+    res.status(502).json({ error: 'Réorganisation échouée : ' + e.message });
+  }
+});
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

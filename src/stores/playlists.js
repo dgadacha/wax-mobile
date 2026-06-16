@@ -129,6 +129,13 @@ export const usePlaylistsStore = defineStore('playlists', {
         showToast(e.message, 'error');
       }
     },
+    // AI reorder — server returns the new track order; refetch to apply it.
+    // Throws on failure (caller shows the toast).
+    async reorderWithAI(id) {
+      const res = await api(`/api/ai/playlists/${id}/reorder`, { method: 'POST' });
+      await this.fetch();
+      return res;
+    },
     async addTrack(playlistId, trackId) {
       try {
         await api(`/api/playlists/${playlistId}/tracks`, {

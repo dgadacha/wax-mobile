@@ -158,7 +158,13 @@ Décris une ambiance → Claude Haiku compose une tracklist → le serveur réso
 
 2e feature IA : classe chaque titre par **ambiance** (`mood`, enum) + **énergie** (1-5), pour filtrer la biblio.
 - **Serveur** (`POST /api/ai/tag-library` → `runAiTagJob`, même **pattern de job** que ci-dessus) : tague les titres **sans `mood`** (ou tous si `{force:true}`), par **batch de 25** via Haiku (structured output `AI_TAG_SCHEMA` = `{tags:[{i,mood,energy}]}`). Écrit `track.mood`/`track.energy`/`track.taggedAt` dans `library.json`, **sauvegarde après chaque batch** (resumable). Un batch qui plante est skippé (re-pris au prochain run). Events : `total` → `progress {done,total}` (par batch) → `done {tagged,total}`. **Pas de yt-dlp** (pure classification) → ne sature pas le pool. ⚠️ `AI_MOODS` (serveur) doit rester synchro avec `src/lib/moods.js` (front).
-- **Front** : déclencheur dans **Réglages → Bibliothèque → "Analyser ma bibliothèque"** (`lib.tagLibrary(onProgress)` via `apiStream`, barre de progression façon "Vérifier le cache", refetch en fin). Consommation : **chips d'ambiance** sous le chip "Titres" de la Bibliothèque (`ViewLibrary` — `moodFilter` + `availableMoods` = uniquement les moods présents, jamais de chip vide ; filtre `displayedTracks` hors recherche).
+- **Front** : déclencheur dans **Réglages → Bibliothèque → "Analyser ma bibliothèque"** (`lib.tagLibrary(onProgress)` via `runAiJob`, barre de progression façon "Vérifier le cache", refetch en fin). Consommation : **chips d'ambiance** sous le chip "Titres" de la Bibliothèque (`ViewLibrary` — `moodFilter` + `availableMoods` = uniquement les moods présents, jamais de chip vide ; filtre `displayedTracks` hors recherche).
+
+### Réorganisation de playlist (DJ flow)
+
+3e feature IA : réordonne les titres d'une playlist (ouverture → montée → pic → redescente).
+- **Serveur** (`POST /api/ai/playlists/:id/reorder`) : **un seul appel Claude** qui renvoie une **permutation** des index (structured output `{order:[int]}`) → **réponse JSON simple, PAS de SSE/job** (un POST non-streamé passe les proxies sans souci, contrairement au SSE-sur-POST). Prompt = la tracklist avec les tags `[ambiance, énergie]` quand présents. Réécrit `pl.trackIds`. **Aucune perte** : réordonne les titres connus, **append** ceux que Claude oublie (ordre d'origine) puis les orphelins. Garde-fous : 404 (playlist absente), 400 (<4 titres), 502 (Claude KO). Playlists **réelles** uniquement (pas Favoris/Hors-ligne virtuels).
+- **Front** : `playlists.reorderWithAI(id)` (POST + refetch), déclenché par "Réorganiser avec l'IA" dans le menu ⋮ de `ViewPlaylist` (branche playlists réelles). Toast loading → succès/erreur.
 
 ## Docker / k8s
 

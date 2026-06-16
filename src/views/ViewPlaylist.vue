@@ -148,15 +148,32 @@ async function onMore() {
   try {
     const { index } = await sheet.open([
       { name: 'Ajouter des titres', icon: ListPlus },
+      { name: 'Réorganiser avec l’IA', icon: Sparkles, color: 'var(--accent)' },
       { name: 'Tout télécharger', icon: DownloadIcon },
       { name: 'Renommer', icon: Pencil },
       { name: 'Supprimer la playlist', icon: Trash2, color: 'var(--danger)' },
     ], header);
     if (index === 0) addTracks();
-    else if (index === 1) downloadAll();
-    else if (index === 2) playlists.rename(playlist.value.id);
-    else if (index === 3) deleteThis();
+    else if (index === 1) reorderWithAI();
+    else if (index === 2) downloadAll();
+    else if (index === 3) playlists.rename(playlist.value.id);
+    else if (index === 4) deleteThis();
   } catch { /* dismissed */ }
+}
+
+// AI reorder — DJ-style flow (uses mood/energy tags when present).
+async function reorderWithAI() {
+  const pl = playlist.value;
+  if (!pl || virtual.value) return; // real playlists only
+  const toast = showToast({ message: 'Réorganisation…', type: 'loading', duration: 0, forbidClick: true });
+  try {
+    const { reordered } = await playlists.reorderWithAI(pl.id);
+    toast.close();
+    showToast({ message: `Playlist réorganisée · ${reordered} titres`, position: 'bottom' });
+  } catch (e) {
+    toast.close();
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), position: 'bottom' });
+  }
 }
 
 // Track-level action sheet — same options across every track context,
