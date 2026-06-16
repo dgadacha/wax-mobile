@@ -1272,31 +1272,63 @@ const AI_PLAYLIST_SCHEMA = {
   required: ['name', 'tracks'],
 };
 
-// Streams its progress as SSE frames (data: {type,...}) over the POST
-// response body — the client reads it via apiStream() and drives a real
-// "N/50 titres trouvés" bar. We stay on POST (not a GET + EventSource):
-// this endpoint creates a playlist, and EventSource would auto-reconnect on
-// a blip and re-run the whole generation.
-app.post('/api/ai/playlist', async (req, res) => {
+// ── Jobs IA (génération + tagging) ──────────────────────────────────
+// Pattern POST-démarre / GET-EventSource-observe, comme les téléchargements.
+// On NE streame PAS sur la réponse du POST : en prod, les reverse-proxies
+// (Cloudflare & co) bufferisent les réponses POST → les frames SSE n'arrivent
+// jamais. Les GET text/event-stream, eux, passent (cf. /api/jobs/:id/progress).
+// Le travail tourne en arrière-plan dans le job ; le GET ne fait qu'observer
+// (donc une reconnexion EventSource ré-attache, ne RELANCE rien).
+const aiJobs = new Map(); // id -> { status, total, done, name, result, error, listeners:Set }
+
+function aiEmit(job, payload) {
+  const line = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const res of job.listeners) { try { res.write(line); } catch {} }
+}
+function aiFinishOk(job, result) {
+  job.status = 'done';
+  job.result = result;
+  aiEmit(job, { type: 'done', ...result });
+  aiCloseJob(job);
+}
+function aiFinishErr(job, error) {
+  job.status = 'error';
+  job.error = error;
+  aiEmit(job, { type: 'error', error });
+  aiCloseJob(job);
+}
+function aiCloseJob(job) {
+  for (const res of job.listeners) { try { res.end(); } catch {} }
+  job.listeners.clear();
+  setTimeout(() => aiJobs.delete(job.id), 60000); // GC after a minute
+}
+
+// GET SSE — observe a job. Sends current state on connect (covers late
+// joins / reconnects after a proxy blip), then live updates.
+app.get('/api/ai/jobs/:id', (req, res) => {
+  const job = aiJobs.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'Job introuvable' });
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {} };
-  const fail = (error) => { send({ type: 'error', error }); res.end(); };
+  if (job.total) res.write(`data: ${JSON.stringify({ type: 'total', total: job.total, name: job.name })}\n\n`);
+  res.write(`data: ${JSON.stringify({ type: 'progress', done: job.done, total: job.total })}\n\n`);
+  if (job.status === 'done') { res.write(`data: ${JSON.stringify({ type: 'done', ...job.result })}\n\n`); return res.end(); }
+  if (job.status === 'error') { res.write(`data: ${JSON.stringify({ type: 'error', error: job.error })}\n\n`); return res.end(); }
+  job.listeners.add(res);
+  // Heartbeat — keeps proxies from idle-closing during the Claude call
+  // (the one long gap with no progress events).
+  const hb = setInterval(() => { try { res.write(': hb\n\n'); } catch {} }, 15000);
+  req.on('close', () => { clearInterval(hb); job.listeners.delete(res); });
+});
 
-  let aborted = false;
-  req.on('close', () => { aborted = true; });
-
+// Background worker: Claude → resolve on YouTube → library + playlist.
+async function runAiPlaylistJob(job, profileId, prompt) {
   const ai = getAnthropic();
-  if (!ai) return fail('IA non configurée (ANTHROPIC_API_KEY manquante)');
-  const prompt = String(req.body?.prompt || '').trim().slice(0, 500);
-  if (!prompt) return fail('Décris la playlist que tu veux');
-
-  // 1. Claude Haiku → { name, tracks:[{title, artist}] } (structured output).
-  send({ type: 'status', phase: 'thinking' });
-  let suggestion;
   try {
+    let suggestion;
     const msg = await ai.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 3000,
@@ -1310,71 +1342,79 @@ app.post('/api/ai/playlist', async (req, res) => {
     });
     const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
     suggestion = JSON.parse(text);
-  } catch (e) {
-    console.error('[ai/playlist] claude:', e.message);
-    return fail('Génération IA échouée : ' + e.message);
-  }
-  if (aborted) return res.end();
 
-  const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 60) : [];
-  if (wanted.length === 0) return fail('Aucun titre généré');
+    const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 60) : [];
+    if (wanted.length === 0) return aiFinishErr(job, 'Aucun titre généré');
 
-  // 2. Resolve each suggestion to a real YouTube video (parallel, yt-dlp-gated),
-  //    emitting a progress frame as each one lands.
-  const total = wanted.length;
-  let done = 0;
-  send({ type: 'total', total, name: suggestion.name || prompt });
-  const hits = await Promise.all(
-    wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`).then((v) => {
-      done++;
-      send({ type: 'progress', done, total, found: !!v });
-      return v;
-    })),
-  );
-  if (aborted) return res.end();
+    job.total = wanted.length;
+    job.name = suggestion.name || prompt;
+    aiEmit(job, { type: 'total', total: job.total, name: job.name });
 
-  // 3. Fold the hits into the library (liked:false) and collect ids, de-duped.
-  const lib = getLibrary(req.profileId);
-  const ids = [];
-  const seen = new Set();
-  for (const v of hits) {
-    if (!v || seen.has(v.id)) continue;
-    seen.add(v.id);
-    let track = lib.find((t) => t.ytId === v.id);
-    if (!track) {
-      track = {
-        id: crypto.randomBytes(6).toString('hex'),
-        title: String(v.title).slice(0, 200),
-        uploader: v.uploader || '',
-        duration: v.duration || 0,
-        thumbnail: coverUrl(v.id),
-        ytId: v.id,
-        url: `https://www.youtube.com/watch?v=${v.id}`,
-        file: null,
-        liked: false,
-        addedAt: Date.now(),
-      };
-      lib.unshift(track);
+    const hits = await Promise.all(
+      wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`).then((v) => {
+        job.done++;
+        aiEmit(job, { type: 'progress', done: job.done, total: job.total, found: !!v });
+        return v;
+      })),
+    );
+
+    const lib = getLibrary(profileId);
+    const ids = [];
+    const seen = new Set();
+    for (const v of hits) {
+      if (!v || seen.has(v.id)) continue;
+      seen.add(v.id);
+      let track = lib.find((t) => t.ytId === v.id);
+      if (!track) {
+        track = {
+          id: crypto.randomBytes(6).toString('hex'),
+          title: String(v.title).slice(0, 200),
+          uploader: v.uploader || '',
+          duration: v.duration || 0,
+          thumbnail: coverUrl(v.id),
+          ytId: v.id,
+          url: `https://www.youtube.com/watch?v=${v.id}`,
+          file: null,
+          liked: false,
+          addedAt: Date.now(),
+        };
+        lib.unshift(track);
+      }
+      ids.push(track.id);
     }
-    ids.push(track.id);
-  }
-  if (ids.length === 0) return fail('Aucun titre trouvé sur YouTube');
-  saveLibrary(req.profileId, lib);
+    if (ids.length === 0) return aiFinishErr(job, 'Aucun titre trouvé sur YouTube');
+    saveLibrary(profileId, lib);
 
-  // 4. Create the playlist pointing at the resolved tracks.
-  const pls = getPlaylists(req.profileId);
-  const playlist = {
-    id: crypto.randomBytes(6).toString('hex'),
-    name: String(suggestion.name || prompt).slice(0, 100),
-    trackIds: ids,
-    createdAt: Date.now(),
-    aiPrompt: prompt,
-  };
-  pls.push(playlist);
-  savePlaylists(req.profileId, pls);
-  send({ type: 'done', playlist, requested: total, resolved: ids.length });
-  res.end();
-  scheduleAutoBackfill();
+    const pls = getPlaylists(profileId);
+    const playlist = {
+      id: crypto.randomBytes(6).toString('hex'),
+      name: String(job.name).slice(0, 100),
+      trackIds: ids,
+      createdAt: Date.now(),
+      aiPrompt: prompt,
+    };
+    pls.push(playlist);
+    savePlaylists(profileId, pls);
+    aiFinishOk(job, { playlist, requested: job.total, resolved: ids.length });
+    scheduleAutoBackfill();
+  } catch (e) {
+    console.error('[ai/playlist] job:', e.message);
+    aiFinishErr(job, 'Génération IA échouée : ' + e.message);
+  }
+}
+
+// POST starts the job + returns its id (immediate JSON). The client then
+// opens GET /api/ai/jobs/:id to watch progress.
+app.post('/api/ai/playlist', (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const prompt = String(req.body?.prompt || '').trim().slice(0, 500);
+  if (!prompt) return res.status(400).json({ error: 'Décris la playlist que tu veux' });
+  const id = crypto.randomBytes(6).toString('hex');
+  const job = { id, type: 'playlist', status: 'running', total: 0, done: 0, name: '', result: null, error: null, listeners: new Set() };
+  aiJobs.set(id, job);
+  res.json({ jobId: id });
+  runAiPlaylistJob(job, req.profileId, prompt);
 });
 
 // ── IA : tagging d'ambiance / énergie (Claude Haiku) ────────────────
@@ -1403,75 +1443,74 @@ const AI_TAG_SCHEMA = {
   required: ['tags'],
 };
 
-app.post('/api/ai/tag-library', async (req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {} };
-  const fail = (error) => { send({ type: 'error', error }); res.end(); };
-
-  let aborted = false;
-  req.on('close', () => { aborted = true; });
-
+app.post('/api/ai/tag-library', (req, res) => {
   const ai = getAnthropic();
-  if (!ai) return fail('IA non configurée (ANTHROPIC_API_KEY manquante)');
-
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
   const force = req.body?.force === true;
-  const lib = getLibrary(req.profileId);
-  const todo = lib.filter((t) => force || !t.mood);
-  const total = todo.length;
-  send({ type: 'total', total });
-  if (total === 0) { send({ type: 'done', tagged: 0, total: 0 }); return res.end(); }
-
-  const BATCH = 25;
-  let done = 0;
-  for (let start = 0; start < todo.length; start += BATCH) {
-    if (aborted) return res.end();
-    const chunk = todo.slice(start, start + BATCH); // elements are refs into lib
-    const listText = chunk
-      .map((t, idx) => {
-        const p = parseTrackTitle(t.title, t.uploader);
-        const label = p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
-        return `${idx}. ${label}`.slice(0, 160);
-      })
-      .join('\n');
-    try {
-      const msg = await ai.messages.create({
-        model: 'claude-haiku-4-5',
-        max_tokens: 2000,
-        system:
-          "Tu classes des morceaux de musique. Pour CHAQUE entrée numérotée, renvoie "
-          + "son ambiance (mood) parmi EXACTEMENT cette liste : chill, energie, fete, "
-          + "focus, triste, romance, sombre ; et son énergie de 1 (très calme) à 5 (très "
-          + "intense). Renvoie une entrée par morceau, avec son index `i`.",
-        messages: [{ role: 'user', content: `Classe ces morceaux :\n${listText}` }],
-        output_config: { format: { type: 'json_schema', schema: AI_TAG_SCHEMA } },
-      });
-      const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
-      const parsed = JSON.parse(text);
-      const byIdx = new Map((parsed.tags || []).map((x) => [x.i, x]));
-      for (let idx = 0; idx < chunk.length; idx++) {
-        const tag = byIdx.get(idx);
-        if (!tag) continue;
-        const track = chunk[idx];
-        if (AI_MOODS.includes(tag.mood)) track.mood = tag.mood;
-        track.energy = Math.max(1, Math.min(5, parseInt(tag.energy, 10) || 3));
-        track.taggedAt = Date.now();
-      }
-    } catch (e) {
-      console.error('[ai/tag] batch:', e.message);
-      // Tolerate a bad batch — keep going, those tracks stay untagged and
-      // get picked up on the next run.
-    }
-    done += chunk.length;
-    saveLibrary(req.profileId, lib); // persist after each batch (resumable)
-    send({ type: 'progress', done, total });
-  }
-  const tagged = todo.filter((t) => !!t.mood).length;
-  send({ type: 'done', tagged, total });
-  res.end();
+  const id = crypto.randomBytes(6).toString('hex');
+  const job = { id, type: 'tag', status: 'running', total: 0, done: 0, name: '', result: null, error: null, listeners: new Set() };
+  aiJobs.set(id, job);
+  res.json({ jobId: id });
+  runAiTagJob(job, req.profileId, force);
 });
+
+async function runAiTagJob(job, profileId, force) {
+  const ai = getAnthropic();
+  try {
+    const lib = getLibrary(profileId);
+    const todo = lib.filter((t) => force || !t.mood); // elements are refs into lib
+    job.total = todo.length;
+    aiEmit(job, { type: 'total', total: job.total });
+    if (job.total === 0) return aiFinishOk(job, { tagged: 0, total: 0 });
+
+    const BATCH = 25;
+    for (let start = 0; start < todo.length; start += BATCH) {
+      const chunk = todo.slice(start, start + BATCH);
+      const listText = chunk
+        .map((t, idx) => {
+          const p = parseTrackTitle(t.title, t.uploader);
+          const label = p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
+          return `${idx}. ${label}`.slice(0, 160);
+        })
+        .join('\n');
+      try {
+        const msg = await ai.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 2000,
+          system:
+            "Tu classes des morceaux de musique. Pour CHAQUE entrée numérotée, renvoie "
+            + "son ambiance (mood) parmi EXACTEMENT cette liste : chill, energie, fete, "
+            + "focus, triste, romance, sombre ; et son énergie de 1 (très calme) à 5 (très "
+            + "intense). Renvoie une entrée par morceau, avec son index `i`.",
+          messages: [{ role: 'user', content: `Classe ces morceaux :\n${listText}` }],
+          output_config: { format: { type: 'json_schema', schema: AI_TAG_SCHEMA } },
+        });
+        const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+        const parsed = JSON.parse(text);
+        const byIdx = new Map((parsed.tags || []).map((x) => [x.i, x]));
+        for (let idx = 0; idx < chunk.length; idx++) {
+          const tag = byIdx.get(idx);
+          if (!tag) continue;
+          const track = chunk[idx];
+          if (AI_MOODS.includes(tag.mood)) track.mood = tag.mood;
+          track.energy = Math.max(1, Math.min(5, parseInt(tag.energy, 10) || 3));
+          track.taggedAt = Date.now();
+        }
+      } catch (e) {
+        console.error('[ai/tag] batch:', e.message);
+        // Tolerate a bad batch — those tracks stay untagged, re-picked next run.
+      }
+      job.done += chunk.length;
+      saveLibrary(profileId, lib); // persist after each batch (resumable)
+      aiEmit(job, { type: 'progress', done: job.done, total: job.total });
+    }
+    const tagged = todo.filter((t) => !!t.mood).length;
+    aiFinishOk(job, { tagged, total: job.total });
+  } catch (e) {
+    console.error('[ai/tag] job:', e.message);
+    aiFinishErr(job, 'Analyse échouée : ' + e.message);
+  }
+}
 
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();

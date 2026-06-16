@@ -36,51 +36,44 @@ export function apiUrl(path) {
   return API_BASE + (path.startsWith('/') ? path : '/' + path);
 }
 
-// Streaming POST: parses Server-Sent-Event `data:` frames from the response
-// body and calls onEvent(parsedJson) for each. Used by the AI playlist
-// generator for per-track progress. We use fetch (not EventSource) because
-// the endpoint has a side effect (creates a playlist) — EventSource would
-// auto-reconnect on a blip and re-run the whole generation. Auth + body ride
-// normally. Resolves when the stream ends; throws on non-OK status / network
-// failure (errors mid-stream arrive as a `{type:'error'}` event instead).
-export async function apiStream(path, body, onEvent) {
-  const t = authToken();
-  const res = await fetch(apiUrl(path), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Wax-Profile': activeProfileId(),
-      ...(t ? { Authorization: 'Bearer ' + t } : {}),
-    },
-    body: JSON.stringify(body || {}),
+// Run a long AI job: POST to start it (returns {jobId}), then observe its
+// progress over a GET EventSource — the same pattern as downloads. We do NOT
+// stream over the POST response: in prod, reverse-proxies (Cloudflare) buffer
+// POST bodies, so the SSE frames never reach the client (they let GET
+// text/event-stream through). The work runs server-side in the job, so an
+// EventSource reconnect just re-attaches (never re-runs the job).
+// onEvent gets `total`/`progress` frames; resolves with the `done` payload,
+// rejects on `error`.
+export async function runAiJob(startPath, body, onEvent) {
+  const { jobId } = await api(startPath, { method: 'POST', body: JSON.stringify(body || {}) });
+  return new Promise((resolve, reject) => {
+    let es;
+    try { es = new EventSource(apiUrlWithProfile(`/api/ai/jobs/${jobId}`)); }
+    catch (e) { reject(e); return; }
+    let settled = false;
+    es.onmessage = (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      if (data.type === 'done') {
+        settled = true; es.close();
+        try { onEvent && onEvent(data); } catch {}
+        resolve(data);
+      } else if (data.type === 'error') {
+        settled = true; es.close();
+        reject(new Error(data.error || 'Erreur IA'));
+      } else {
+        try { onEvent && onEvent(data); } catch {}
+      }
+    };
+    es.onerror = () => {
+      // EventSource auto-reconnects on a transient drop (readyState CONNECTING)
+      // and re-attaches to the still-running job. Only fail if it closed
+      // fatally (job gone / 404) before any terminal event.
+      if (es.readyState === EventSource.CLOSED && !settled) {
+        reject(new Error('Connexion perdue'));
+      }
+    };
   });
-  if (res.status === 401) {
-    try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {}
-    try { window.dispatchEvent(new CustomEvent('wax:auth-expired')); } catch {}
-  }
-  if (!res.ok || !res.body) {
-    let msg = `HTTP ${res.status}`;
-    try { const d = await res.json(); if (d.error) msg = d.error; } catch {}
-    throw new Error(msg);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let idx;
-    while ((idx = buf.indexOf('\n\n')) >= 0) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-      if (!dataLine) continue;
-      let parsed;
-      try { parsed = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
-      onEvent(parsed);
-    }
-  }
 }
 
 // Variant for EventSource / image src — appends `?profile=<id>` and, when

@@ -1,6 +1,6 @@
 // Library: tracks the user has favorited or downloaded.
 import { defineStore } from 'pinia';
-import { api, apiUrl, apiUrlWithProfile, apiStream } from '@/lib/api';
+import { api, apiUrl, apiUrlWithProfile, runAiJob } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { confirmModal } from '@/lib/modal';
 import { t } from '@/lib/i18n';
@@ -197,12 +197,9 @@ export const useLibraryStore = defineStore('library', {
     // AI mood/energy tagging — streams progress; resolves to {tagged, total}.
     // Refetches the library at the end so track.mood is available locally.
     async tagLibrary(onProgress) {
-      let result = null;
-      await apiStream('/api/ai/tag-library', {}, (ev) => {
+      const result = await runAiJob('/api/ai/tag-library', {}, (ev) => {
         if (ev.type === 'total') { if (onProgress) onProgress(0, ev.total); }
         else if (ev.type === 'progress') { if (onProgress) onProgress(ev.done, ev.total); }
-        else if (ev.type === 'done') { result = ev; }
-        else if (ev.type === 'error') { throw new Error(ev.error); }
       });
       await this.fetch();
       return result || { tagged: 0, total: 0 };

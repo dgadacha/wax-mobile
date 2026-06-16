@@ -7,7 +7,7 @@ import { Sparkles, X } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { useLibraryStore } from '@/stores/library';
-import { apiStream } from '@/lib/api';
+import { runAiJob } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { haptics } from '@/lib/haptics';
 
@@ -62,21 +62,14 @@ async function generate() {
   loading.value = true;
   error.value = '';
   progress.value = { done: 0, total: 0 };
-  let result = null;
+  let result;
   try {
-    await apiStream('/api/ai/playlist', { prompt: p }, (ev) => {
+    result = await runAiJob('/api/ai/playlist', { prompt: p }, (ev) => {
       if (ev.type === 'total') progress.value = { done: 0, total: ev.total };
       else if (ev.type === 'progress') progress.value = { done: ev.done, total: ev.total };
-      else if (ev.type === 'done') result = ev;
-      else if (ev.type === 'error') throw new Error(ev.error);
     });
   } catch (e) {
     error.value = e.message || 'Échec de la génération';
-    loading.value = false;
-    return;
-  }
-  if (!result) {
-    error.value = 'Génération interrompue';
     loading.value = false;
     return;
   }
