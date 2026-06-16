@@ -144,6 +144,8 @@ Vérifié en preview : spare bufferisé+muté pendant la lecture, swap synchrone
 
 **Wrapped UI** : hero = `lib.listenedSeconds` (fallback estimate tant que le fetch n'a pas répondu) ; classements top titres/artistes en **liste numérotée** avec **médailles** or/argent/bronze (`.wp-rank-1/2/3`), façon "Top Songs" du vrai Spotify Wrapped ; 3e stat = **artistes différents** (`distinctArtists`, vrai indicateur de variété) au lieu de l'ancien "découvertes (12 mois)" qui doublonnait la taille de la biblio. ⛔ **Pas de barre de progression par ligne** : testée en 0.19.16 puis retirée — une barre verte fine sous chaque titre se confond avec le scrubber de lecture (chaque ligne semble "en cours de lecture"). **Pas de header interne** : comme `ViewSettings`, la vue s'appuie sur la `van-nav-bar` d'`App.vue` (sub-view plate, titre "Ta sélection" + chevron retour) — ne pas re-rendre de header dans la vue (doublon).
 
+**Portrait musical IA** (carte "Ton portrait" sous le hero) : paragraphe généré en **français** (tutoiement, façon Wrapped). `ViewWrapped` construit un **résumé de stats** côté client (temps d'écoute, top artistes/titres, `distinctArtists`, % favoris, ambiances dominantes via les tags mood, **tendance horaire calculée depuis `lastPlayedAt` en fuseau LOCAL** — le serveur est UTC) et POST à `/api/ai/wrapped` (un appel Claude, JSON `{text}`). Caché en localStorage par profil (`wax:wrapped-narrative:<id>`), re-roll = `fetchNarrative(true)`. Silencieusement masqué si pas de clé (503 → carte cachée). ⚠️ Narratif = **français** ; seul le *nommage* des playlists est en anglais.
+
 ## IA — génération de playlist (Claude Haiku)
 
 Décris une ambiance → Claude Haiku compose une tracklist → le serveur résout chaque titre sur YouTube → playlist créée.

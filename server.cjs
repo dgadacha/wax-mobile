@@ -1783,6 +1783,37 @@ app.post('/api/ai/playlist/from-library', async (req, res) => {
   }
 });
 
+// IA : « portrait musical » du Wrapped — un paragraphe fun généré depuis un
+// résumé de stats fourni par le client (qui calcule les buckets horaires en
+// fuseau local). Un seul appel Claude, réponse JSON. Narratif en FRANÇAIS.
+app.post('/api/ai/wrapped', async (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const summary = String(req.body?.summary || '').trim().slice(0, 2000);
+  if (!summary) return res.status(400).json({ error: 'summary requis' });
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      system:
+        "Tu écris le « portrait musical » d'un utilisateur, façon Spotify Wrapped. "
+        + "À partir de ses stats, écris UN seul paragraphe court (2 à 4 phrases), fun, "
+        + "complice et imagé, EN FRANÇAIS, au TUTOIEMENT, en t'adressant directement à "
+        + "lui (« Tu es… »). Pas de liste, pas de titre, juste le paragraphe. Reste "
+        + "fidèle aux stats fournies — n'invente aucun chiffre.",
+      messages: [{ role: 'user', content: `Stats d'écoute :\n${summary}` }],
+      output_config: { format: { type: 'json_schema', schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] } } },
+    });
+    const raw = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const out = String(JSON.parse(raw).text || '').trim();
+    if (!out) return res.status(502).json({ error: 'Portrait vide' });
+    res.json({ text: out });
+  } catch (e) {
+    console.error('[ai/wrapped]', e.message);
+    res.status(502).json({ error: 'Portrait échoué : ' + e.message });
+  }
+});
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

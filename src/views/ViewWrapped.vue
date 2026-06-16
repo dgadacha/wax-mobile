@@ -8,13 +8,14 @@
 // Scope: "all-time" since we don't track a play HISTORY (just totals).
 // Could become a real per-year breakdown if we ever start writing
 // play-event timestamps server-side.
-import { computed, onMounted } from 'vue';
-import { Music, Clock, Heart, Sparkles, Mic2, Disc3, Users } from 'lucide-vue-next';
+import { computed, onMounted, ref } from 'vue';
+import { Music, Clock, Heart, Sparkles, Mic2, Disc3, Users, RotateCcw } from 'lucide-vue-next';
 import { useLibraryStore } from '@/stores/library';
 import { usePlayerStore } from '@/stores/player';
 import { useViewStore } from '@/stores/view';
 import { fmtDuration, parseTrackTitle, normalizeArtistKey } from '@/lib/format';
-import { apiUrl } from '@/lib/api';
+import { apiUrl, api } from '@/lib/api';
+import { MOOD_LABEL } from '@/lib/moods';
 import { haptics } from '@/lib/haptics';
 
 const lib = useLibraryStore();
@@ -23,7 +24,7 @@ const view = useViewStore();
 
 // Pull the real per-profile listened-seconds counter (server-tracked,
 // content-time). Seeds from the old estimate on first access server-side.
-onMounted(() => { lib.fetchStats(); });
+onMounted(() => { lib.fetchStats(); fetchNarrative(); });
 
 // ── Aggregates ────────────────────────────────────────────────────
 
@@ -114,6 +115,91 @@ function openArtist(name) {
 // Empty state — user hasn't played anything yet. Cheeky message
 // rather than a sad blank screen.
 const hasData = computed(() => totalPlays.value > 0);
+
+// ── AI "portrait musical" (narrative) ─────────────────────────────
+// One Claude call from a stat summary the client builds. Cached per
+// profile in localStorage; re-roll forces a fresh one. Silently hidden
+// if the AI isn't configured (no key → 503).
+const narrative = ref('');
+const narrativeLoading = ref(false);
+
+function profileKey() {
+  try { return localStorage.getItem('wax:active-profile') || 'default'; } catch { return 'default'; }
+}
+
+// Mood distribution (only once the library's been AI-tagged).
+const moodSummary = computed(() => {
+  const tagged = lib.tracks.filter((t) => t.mood);
+  if (tagged.length < 3) return '';
+  const counts = {};
+  let eSum = 0, eN = 0;
+  for (const t of tagged) {
+    counts[t.mood] = (counts[t.mood] || 0) + 1;
+    if (t.energy) { eSum += t.energy; eN += 1; }
+  }
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => MOOD_LABEL[k] || k);
+  const avg = eN ? (eSum / eN).toFixed(1) : null;
+  return `Ambiances dominantes : ${top.join(', ')}${avg ? ` (énergie moyenne ${avg}/5)` : ''}.`;
+});
+
+// Rough time-of-day tendency from lastPlayedAt — computed CLIENT-side so the
+// hours are in the user's local timezone (the server runs UTC).
+const timeSummary = computed(() => {
+  const played = lib.tracks.filter((t) => t.lastPlayedAt);
+  if (played.length < 4) return '';
+  const b = { matin: 0, 'après-midi': 0, soir: 0, nuit: 0 };
+  for (const t of played) {
+    const h = new Date(t.lastPlayedAt).getHours();
+    if (h >= 6 && h < 12) b.matin += 1;
+    else if (h >= 12 && h < 18) b['après-midi'] += 1;
+    else if (h >= 18 && h < 24) b.soir += 1;
+    else b.nuit += 1;
+  }
+  const [dom, n] = Object.entries(b).sort((x, y) => y[1] - x[1])[0];
+  const share = Math.round((n / played.length) * 100);
+  const label = dom === 'nuit' ? 'la nuit' : dom === 'matin' ? 'le matin' : dom === 'soir' ? 'le soir' : "l'après-midi";
+  return `Tendance : tu écoutes surtout ${label} (~${share}%).`;
+});
+
+function buildSummary() {
+  const parts = [`Temps d'écoute total : ${totalHours.value}h${totalMinutes.value}min.`];
+  if (topArtists.value.length) {
+    parts.push(`Artistes les plus écoutés : ${topArtists.value.map((a) => a.name).slice(0, 6).join(', ')}.`);
+  }
+  if (topTracks.value.length) {
+    parts.push(`Titres les plus joués : ${topTracks.value.slice(0, 5).map((t) => {
+      const p = parseTrackTitle(t);
+      return p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
+    }).join(' | ')}.`);
+  }
+  parts.push(`${distinctArtists.value} artistes différents, ${totalPlays.value} écoutes au total, ${favoriteRatio.value}% de la biblio en favoris.`);
+  if (moodSummary.value) parts.push(moodSummary.value);
+  if (timeSummary.value) parts.push(timeSummary.value);
+  return parts.join(' ');
+}
+
+async function fetchNarrative(force = false) {
+  if (narrativeLoading.value) return;
+  const key = `wax:wrapped-narrative:${profileKey()}`;
+  if (!force) {
+    try { const c = localStorage.getItem(key); if (c) { narrative.value = c; return; } } catch {}
+  }
+  if (!hasData.value) return;
+  narrativeLoading.value = true;
+  if (force) haptics.light();
+  try {
+    const { text } = await api('/api/ai/wrapped', {
+      method: 'POST',
+      body: JSON.stringify({ summary: buildSummary() }),
+    });
+    narrative.value = text;
+    try { localStorage.setItem(key, text); } catch {}
+  } catch {
+    // No key / error → leave the card hidden (it's a bonus, not core).
+  } finally {
+    narrativeLoading.value = false;
+  }
+}
 </script>
 
 <template>
@@ -136,6 +222,24 @@ const hasData = computed(() => totalPlays.value > 0);
           {{ totalMinutes }}<span class="wp-hero-unit">min</span>
         </div>
         <div class="wp-hero-sub">d'écoute cumulée</div>
+      </section>
+
+      <!-- AI "portrait musical" — generated paragraph from the stats. -->
+      <section v-if="narrative || narrativeLoading" class="wp-narrative">
+        <div class="wp-narr-head">
+          <Sparkles :size="16" :stroke-width="2.2" color="var(--accent)" />
+          <span>Ton portrait</span>
+          <button
+            v-if="narrative && !narrativeLoading"
+            class="wp-narr-reroll"
+            aria-label="Régénérer"
+            @click="fetchNarrative(true)"
+          >
+            <RotateCcw :size="15" :stroke-width="2.2" color="var(--text-muted)" />
+          </button>
+        </div>
+        <p v-if="narrativeLoading" class="wp-narr-text muted">✨ Analyse de ton profil…</p>
+        <p v-else class="wp-narr-text">{{ narrative }}</p>
       </section>
 
       <!-- Stat row: plays + tracks + distinct artists -->
@@ -268,6 +372,44 @@ const hasData = computed(() => totalPlays.value > 0);
   color: var(--text-muted);
   margin-top: var(--sp-2);
 }
+
+/* AI narrative card */
+.wp-narrative {
+  background: var(--card);
+  border-radius: var(--r-3);
+  padding: var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.wp-narr-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+.wp-narr-head span {
+  font: 700 12px/1 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--accent);
+}
+.wp-narr-reroll {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: 0;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.wp-narr-reroll:active { background: var(--card-hover); }
+.wp-narr-text {
+  margin: 0;
+  font: 500 15px/1.5 var(--font-body);
+  color: var(--text);
+}
+.wp-narr-text.muted { color: var(--text-muted); }
 
 /* Three-stat row */
 .wp-stats {
