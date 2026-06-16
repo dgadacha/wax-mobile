@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted, computed, ref } from 'vue';
+import { showToast } from 'vant';
 import { RotateCcw, Sparkles, Settings } from 'lucide-vue-next';
 import { haptics } from '@/lib/haptics';
 import { useDiscoverStore } from '@/stores/discover';
@@ -97,8 +98,21 @@ function playFromSection(t, list) {
 }
 
 onMounted(() => {
-  if (discover.tracks.length === 0 && !discover.loading) discover.refresh();
+  // Already populated this session → leave it. Else re-hydrate cached AI
+  // recos; if none, fall back to the instant (key-free) Deezer mix.
+  if (discover.tracks.length > 0 || discover.loading) return;
+  if (!discover.loadAiCache()) discover.refresh();
 });
+
+async function regenAI() {
+  if (discover.loading) return;
+  haptics.medium();
+  try {
+    await discover.refreshAI();
+  } catch (e) {
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), position: 'bottom' });
+  }
+}
 
 const hello = computed(() => {
   const h = new Date().getHours();
@@ -215,16 +229,33 @@ async function onRefresh() {
     <section class="home-section">
       <div class="section-head">
         <h2>Pour toi</h2>
-        <button
-          class="head-btn small"
-          :disabled="discover.loading"
-          aria-label="Re-rouler la sélection"
-          @click="discover.refresh()"
-        >
-          <RotateCcw :size="17" :stroke-width="2.2" color="var(--text-muted)" :class="{ spinning: discover.loading }" />
-        </button>
+        <div class="home-head-actions">
+          <button
+            class="head-btn small"
+            :disabled="discover.loading"
+            aria-label="Recommandations IA"
+            @click="regenAI"
+          >
+            <Sparkles
+              :size="17"
+              :stroke-width="2.2"
+              :color="discover.aiActive ? 'var(--accent)' : 'var(--text-muted)'"
+              :class="{ spinning: discover.aiLoading }"
+            />
+          </button>
+          <button
+            class="head-btn small"
+            :disabled="discover.loading"
+            aria-label="Re-rouler la sélection"
+            @click="discover.refresh()"
+          >
+            <RotateCcw :size="17" :stroke-width="2.2" color="var(--text-muted)" :class="{ spinning: discover.loading && !discover.aiLoading }" />
+          </button>
+        </div>
       </div>
-      <div v-if="discover.seedTrack" class="seed">d'après «&nbsp;{{ discover.seedTrack.title }}&nbsp;»</div>
+      <div v-if="discover.aiLoading && discover.aiProgress.total" class="seed">✨&nbsp;Génération… {{ discover.aiProgress.done }}/{{ discover.aiProgress.total }}</div>
+      <div v-else-if="discover.aiActive" class="seed">✨&nbsp;Sélection d'après tes écoutes</div>
+      <div v-else-if="discover.seedTrack" class="seed">d'après «&nbsp;{{ discover.seedTrack.title }}&nbsp;»</div>
 
       <MobileSkeleton v-if="discover.loading && discover.tracks.length === 0" variant="card" :count="6" />
 

@@ -1586,6 +1586,95 @@ app.post('/api/ai/playlists/:id/reorder', async (req, res) => {
   }
 });
 
+// IA : « Pour toi » v2 — recommandations à partir du PROFIL d'écoute réel
+// (top artistes par playCount, titres favoris, ambiances dominantes) plutôt
+// que du mix Deezer. Même pattern de job (résolution YouTube). Ne sauvegarde
+// rien : renvoie des tracks éphémères pour le carrousel (comme le discover
+// Deezer), pliées en biblio seulement si écoutées (>30s, via le player).
+app.post('/api/ai/discover', (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const id = crypto.randomBytes(6).toString('hex');
+  const job = { id, type: 'discover', status: 'running', total: 0, done: 0, name: '', result: null, error: null, listeners: new Set() };
+  aiJobs.set(id, job);
+  res.json({ jobId: id });
+  runAiDiscoverJob(job, req.profileId);
+});
+
+async function runAiDiscoverJob(job, profileId) {
+  const ai = getAnthropic();
+  try {
+    const lib = getLibrary(profileId);
+    if (lib.length === 0) return aiFinishErr(job, 'Bibliothèque vide — écoute quelques titres d\'abord');
+
+    // Build a taste profile: top artists (weighted by playCount), top tracks.
+    const byArtist = new Map();
+    for (const t of lib) {
+      const p = parseTrackTitle(t.title, t.uploader);
+      const name = p.artist || t.uploader;
+      if (!name) continue;
+      const k = name.toLowerCase();
+      const cur = byArtist.get(k) || { name, plays: 0 };
+      cur.plays += (t.playCount || 0) + 1; // +1 so unplayed still weigh a bit
+      byArtist.set(k, cur);
+    }
+    const topArtists = [...byArtist.values()].sort((a, b) => b.plays - a.plays).slice(0, 12).map((a) => a.name);
+    const topTracks = lib
+      .filter((t) => (t.playCount || 0) > 0)
+      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+      .slice(0, 15)
+      .map((t) => { const p = parseTrackTitle(t.title, t.uploader); return p.artist ? `${p.artist} - ${p.song || t.title}` : t.title; });
+    const moods = [...new Set(lib.map((t) => t.mood).filter(Boolean))];
+
+    const profileText =
+      `Artistes les plus écoutés : ${topArtists.join(', ')}.`
+      + (topTracks.length ? `\nTitres favoris : ${topTracks.join(' | ')}.` : '')
+      + (moods.length ? `\nAmbiances dominantes : ${moods.join(', ')}.` : '');
+
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 2000,
+      system:
+        "Tu es un curateur musical pointu. À partir d'un profil d'écoute, recommande "
+        + "20 titres RÉELS et identifiables que l'utilisateur ne connaît probablement PAS "
+        + "encore mais qui collent à ses goûts (artistes proches, même énergie/ambiance). "
+        + "Élargis intelligemment plutôt que de répéter ses artistes évidents. Jamais "
+        + "d'inventions. Le champ `name` peut être vide.",
+      messages: [{ role: 'user', content: `Profil d'écoute :\n${profileText}\n\nRecommande 20 titres à découvrir.` }],
+      output_config: { format: { type: 'json_schema', schema: AI_PLAYLIST_SCHEMA } },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const suggestion = JSON.parse(text);
+    const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 25) : [];
+    if (wanted.length === 0) return aiFinishErr(job, 'Aucune reco générée');
+
+    job.total = wanted.length;
+    aiEmit(job, { type: 'total', total: job.total });
+
+    const haveYt = new Set(lib.map((t) => t.ytId).filter(Boolean));
+    const hits = await Promise.all(
+      wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`).then((v) => {
+        job.done++;
+        aiEmit(job, { type: 'progress', done: job.done, total: job.total, found: !!v });
+        return v;
+      })),
+    );
+
+    const seen = new Set();
+    const tracks = [];
+    for (const v of hits) {
+      if (!v || seen.has(v.id) || haveYt.has(v.id)) continue; // skip dupes + already-owned
+      seen.add(v.id);
+      tracks.push({ id: v.id, title: v.title, uploader: v.uploader, duration: v.duration, thumbnail: coverUrl(v.id) });
+    }
+    if (tracks.length === 0) return aiFinishErr(job, 'Aucune reco trouvée sur YouTube');
+    aiFinishOk(job, { tracks });
+  } catch (e) {
+    console.error('[ai/discover] job:', e.message);
+    aiFinishErr(job, 'Reco IA échouée : ' + e.message);
+  }
+}
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

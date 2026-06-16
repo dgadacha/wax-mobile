@@ -166,6 +166,12 @@ Décris une ambiance → Claude Haiku compose une tracklist → le serveur réso
 - **Serveur** (`POST /api/ai/playlists/:id/reorder`) : **un seul appel Claude** qui renvoie une **permutation** des index (structured output `{order:[int]}`) → **réponse JSON simple, PAS de SSE/job** (un POST non-streamé passe les proxies sans souci, contrairement au SSE-sur-POST). Prompt = la tracklist avec les tags `[ambiance, énergie]` quand présents. Réécrit `pl.trackIds`. **Aucune perte** : réordonne les titres connus, **append** ceux que Claude oublie (ordre d'origine) puis les orphelins. Garde-fous : 404 (playlist absente), 400 (<4 titres), 502 (Claude KO). Playlists **réelles** uniquement (pas Favoris/Hors-ligne virtuels).
 - **Front** : `playlists.reorderWithAI(id)` (POST + refetch), déclenché par "Réorganiser avec l'IA" dans le menu ⋮ de `ViewPlaylist` (branche playlists réelles). Toast loading → succès/erreur.
 
+### « Pour toi » v2 — recos depuis le profil d'écoute
+
+4e feature IA : le carrousel "Pour toi" de l'Accueil peut sortir des recos **raisonnées sur la vraie biblio** (top artistes pondérés par `playCount`, titres favoris, ambiances dominantes) au lieu du mix Deezer.
+- **Serveur** (`POST /api/ai/discover` → `runAiDiscoverJob`, **pattern de job**) : construit un profil de goût depuis `getLibrary`, Haiku recommande 20 titres **hors biblio** (réutilise `AI_PLAYLIST_SCHEMA`, `name` ignoré), résolus via `aiResolveTrack`, filtrés (de-dup + exclut les `ytId` déjà possédés). Renvoie `{tracks:[{id,title,uploader,duration,thumbnail}]}` — **éphémère, rien n'est sauvé** (comme le discover Deezer ; plié en biblio seulement si écouté >30s par le player).
+- **Front** (`stores/discover.js`) : `refreshAI(onProgress)` via `runAiJob` → mappe en stream-tracks (`_mapStreams`, même shape que le discover Deezer) → `tracks` + `aiActive`. **Cache localStorage** par profil (`wax:ai-discover:<id>`) → `loadAiCache()` rehydrate au mount avant de retomber sur Deezer (`refresh()`). `ViewHome` : section "Pour toi" = bouton **✨** (`regenAI`) + **↻** (Deezer) ; sous-titre "✨ Sélection d'après tes écoutes" / "Génération… N/20" pendant le job. `aiLoading` distingue quel bouton spinne.
+
 ## Docker / k8s
 
 ### Dockerfile
