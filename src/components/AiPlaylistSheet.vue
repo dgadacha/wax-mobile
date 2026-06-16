@@ -2,12 +2,12 @@
 // AI playlist generator — describe a vibe, Claude Haiku composes a
 // tracklist, the server resolves each title on YouTube and builds the
 // playlist. Singleton overlay driven by view.aiOpen (mounted in App.vue).
-import { ref, watch, nextTick } from 'vue';
+import { ref, computed, watch, nextTick } from 'vue';
 import { Sparkles, X } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlaylistsStore } from '@/stores/playlists';
 import { useLibraryStore } from '@/stores/library';
-import { api } from '@/lib/api';
+import { apiStream } from '@/lib/api';
 import { showToast } from '@/lib/toast';
 import { haptics } from '@/lib/haptics';
 
@@ -19,6 +19,10 @@ const prompt = ref('');
 const loading = ref(false);
 const error = ref('');
 const inputRef = ref(null);
+const progress = ref({ done: 0, total: 0 });
+const pct = computed(() =>
+  progress.value.total ? Math.round((progress.value.done / progress.value.total) * 100) : 0,
+);
 
 const EXAMPLES = [
   'road trip années 2000',
@@ -57,20 +61,30 @@ async function generate() {
   haptics.medium();
   loading.value = true;
   error.value = '';
+  progress.value = { done: 0, total: 0 };
+  let result = null;
   try {
-    const { playlist, resolved } = await api('/api/ai/playlist', {
-      method: 'POST',
-      body: JSON.stringify({ prompt: p }),
+    await apiStream('/api/ai/playlist', { prompt: p }, (ev) => {
+      if (ev.type === 'total') progress.value = { done: 0, total: ev.total };
+      else if (ev.type === 'progress') progress.value = { done: ev.done, total: ev.total };
+      else if (ev.type === 'done') result = ev;
+      else if (ev.type === 'error') throw new Error(ev.error);
     });
-    await Promise.all([playlists.fetch(), lib.fetch()]);
-    view.closeAi();
-    showToast(`Playlist « ${playlist.name} » créée · ${resolved} titres`);
-    view.switchTo('playlist', playlist.id);
   } catch (e) {
     error.value = e.message || 'Échec de la génération';
-  } finally {
     loading.value = false;
+    return;
   }
+  if (!result) {
+    error.value = 'Génération interrompue';
+    loading.value = false;
+    return;
+  }
+  await Promise.all([playlists.fetch(), lib.fetch()]);
+  view.closeAi();
+  showToast(`Playlist « ${result.playlist.name} » créée · ${result.resolved} titres`);
+  view.switchTo('playlist', result.playlist.id);
+  loading.value = false;
 }
 </script>
 
@@ -85,8 +99,15 @@ async function generate() {
         <!-- Loading state -->
         <div v-if="loading" class="ai-loading">
           <div class="ai-orb"><Sparkles :size="34" :stroke-width="1.8" color="var(--on-accent)" /></div>
-          <h2>Génération en cours…</h2>
-          <p>Claude compose ta playlist et cherche les titres sur YouTube. Ça prend quelques secondes.</p>
+          <template v-if="!progress.total">
+            <h2>Génération en cours…</h2>
+            <p>Claude compose ta playlist…</p>
+          </template>
+          <template v-else>
+            <h2>Recherche des titres…</h2>
+            <div class="ai-bar"><div class="ai-bar-fill" :style="{ width: pct + '%' }"></div></div>
+            <div class="ai-count">{{ progress.done }} / {{ progress.total }} titres trouvés</div>
+          </template>
         </div>
 
         <!-- Prompt state -->
@@ -258,6 +279,26 @@ async function generate() {
   color: var(--text-muted);
   margin: 0 auto;
   max-width: 30ch;
+}
+.ai-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--card-hover);
+  overflow: hidden;
+  margin: var(--sp-4) auto 0;
+  max-width: 280px;
+}
+.ai-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+.ai-count {
+  margin-top: var(--sp-3);
+  font: 700 14px/1 var(--font-display);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 @keyframes ai-pulse {
   0%, 100% { transform: scale(1); opacity: 1; }

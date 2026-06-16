@@ -36,6 +36,53 @@ export function apiUrl(path) {
   return API_BASE + (path.startsWith('/') ? path : '/' + path);
 }
 
+// Streaming POST: parses Server-Sent-Event `data:` frames from the response
+// body and calls onEvent(parsedJson) for each. Used by the AI playlist
+// generator for per-track progress. We use fetch (not EventSource) because
+// the endpoint has a side effect (creates a playlist) — EventSource would
+// auto-reconnect on a blip and re-run the whole generation. Auth + body ride
+// normally. Resolves when the stream ends; throws on non-OK status / network
+// failure (errors mid-stream arrive as a `{type:'error'}` event instead).
+export async function apiStream(path, body, onEvent) {
+  const t = authToken();
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Wax-Profile': activeProfileId(),
+      ...(t ? { Authorization: 'Bearer ' + t } : {}),
+    },
+    body: JSON.stringify(body || {}),
+  });
+  if (res.status === 401) {
+    try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch {}
+    try { window.dispatchEvent(new CustomEvent('wax:auth-expired')); } catch {}
+  }
+  if (!res.ok || !res.body) {
+    let msg = `HTTP ${res.status}`;
+    try { const d = await res.json(); if (d.error) msg = d.error; } catch {}
+    throw new Error(msg);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      let parsed;
+      try { parsed = JSON.parse(dataLine.slice(5).trim()); } catch { continue; }
+      onEvent(parsed);
+    }
+  }
+}
+
 // Variant for EventSource / image src — appends `?profile=<id>` and, when
 // available, `&_token=<token>` so the server's middleware can read both
 // the profile context and the auth token (Authorization header can't be

@@ -1272,40 +1272,66 @@ const AI_PLAYLIST_SCHEMA = {
   required: ['name', 'tracks'],
 };
 
+// Streams its progress as SSE frames (data: {type,...}) over the POST
+// response body — the client reads it via apiStream() and drives a real
+// "N/50 titres trouvés" bar. We stay on POST (not a GET + EventSource):
+// this endpoint creates a playlist, and EventSource would auto-reconnect on
+// a blip and re-run the whole generation.
 app.post('/api/ai/playlist', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {} };
+  const fail = (error) => { send({ type: 'error', error }); res.end(); };
+
+  let aborted = false;
+  req.on('close', () => { aborted = true; });
+
   const ai = getAnthropic();
-  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  if (!ai) return fail('IA non configurée (ANTHROPIC_API_KEY manquante)');
   const prompt = String(req.body?.prompt || '').trim().slice(0, 500);
-  if (!prompt) return res.status(400).json({ error: 'Décris la playlist que tu veux' });
+  if (!prompt) return fail('Décris la playlist que tu veux');
 
   // 1. Claude Haiku → { name, tracks:[{title, artist}] } (structured output).
+  send({ type: 'status', phase: 'thinking' });
   let suggestion;
   try {
     const msg = await ai.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 2000,
+      max_tokens: 3000,
       system:
         "Tu es un expert musical. À partir d'une description, tu proposes une "
-        + "playlist cohérente de 15 titres RÉELS et identifiables (jamais d'inventions), "
-        + "variés mais fidèles à l'ambiance demandée. Donne un nom court et accrocheur "
-        + "à la playlist.",
-      messages: [{ role: 'user', content: `Crée une playlist pour : ${prompt}` }],
+        + "playlist cohérente de 50 titres RÉELS et identifiables (jamais d'inventions), "
+        + "sans doublons, variés mais fidèles à l'ambiance demandée. Donne un nom court "
+        + "et accrocheur à la playlist.",
+      messages: [{ role: 'user', content: `Crée une playlist de 50 titres pour : ${prompt}` }],
       output_config: { format: { type: 'json_schema', schema: AI_PLAYLIST_SCHEMA } },
     });
     const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
     suggestion = JSON.parse(text);
   } catch (e) {
     console.error('[ai/playlist] claude:', e.message);
-    return res.status(502).json({ error: 'Génération IA échouée', details: e.message });
+    return fail('Génération IA échouée : ' + e.message);
   }
+  if (aborted) return res.end();
 
-  const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 20) : [];
-  if (wanted.length === 0) return res.status(502).json({ error: 'Aucun titre généré' });
+  const wanted = Array.isArray(suggestion.tracks) ? suggestion.tracks.slice(0, 60) : [];
+  if (wanted.length === 0) return fail('Aucun titre généré');
 
-  // 2. Resolve each suggestion to a real YouTube video (parallel, yt-dlp-gated).
+  // 2. Resolve each suggestion to a real YouTube video (parallel, yt-dlp-gated),
+  //    emitting a progress frame as each one lands.
+  const total = wanted.length;
+  let done = 0;
+  send({ type: 'total', total, name: suggestion.name || prompt });
   const hits = await Promise.all(
-    wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`)),
+    wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`).then((v) => {
+      done++;
+      send({ type: 'progress', done, total, found: !!v });
+      return v;
+    })),
   );
+  if (aborted) return res.end();
 
   // 3. Fold the hits into the library (liked:false) and collect ids, de-duped.
   const lib = getLibrary(req.profileId);
@@ -1332,7 +1358,7 @@ app.post('/api/ai/playlist', async (req, res) => {
     }
     ids.push(track.id);
   }
-  if (ids.length === 0) return res.status(502).json({ error: 'Aucun titre trouvé sur YouTube' });
+  if (ids.length === 0) return fail('Aucun titre trouvé sur YouTube');
   saveLibrary(req.profileId, lib);
 
   // 4. Create the playlist pointing at the resolved tracks.
@@ -1346,7 +1372,8 @@ app.post('/api/ai/playlist', async (req, res) => {
   };
   pls.push(playlist);
   savePlaylists(req.profileId, pls);
-  res.json({ playlist, requested: wanted.length, resolved: ids.length });
+  send({ type: 'done', playlist, requested: total, resolved: ids.length });
+  res.end();
   scheduleAutoBackfill();
 });
 
