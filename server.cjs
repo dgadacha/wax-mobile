@@ -1335,8 +1335,8 @@ async function runAiPlaylistJob(job, profileId, prompt) {
       system:
         "Tu es un expert musical. À partir d'une description, tu proposes une "
         + "playlist cohérente de 50 titres RÉELS et identifiables (jamais d'inventions), "
-        + "sans doublons, variés mais fidèles à l'ambiance demandée. Donne un nom court "
-        + "et accrocheur à la playlist.",
+        + "sans doublons, variés mais fidèles à l'ambiance demandée. Donne à la playlist "
+        + "un nom court et accrocheur, EN ANGLAIS (jamais en français).",
       messages: [{ role: 'user', content: `Crée une playlist de 50 titres pour : ${prompt}` }],
       output_config: { format: { type: 'json_schema', schema: AI_PLAYLIST_SCHEMA } },
     });
@@ -1696,8 +1696,8 @@ app.post('/api/ai/playlists/:id/rename', async (req, res) => {
       max_tokens: 200,
       system:
         "Tu nommes des playlists. À partir d'une liste de titres, propose UN nom court "
-        + "(2 à 4 mots), accrocheur, qui évoque l'ambiance générale. Sans guillemets ni "
-        + "ponctuation finale.",
+        + "(2 à 4 mots) EN ANGLAIS (jamais en français), accrocheur, qui évoque l'ambiance "
+        + "générale. Sans guillemets ni ponctuation finale.",
       messages: [{ role: 'user', content: `Nomme cette playlist :\n${listText}` }],
       output_config: { format: { type: 'json_schema', schema: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' } }, required: ['name'] } } },
     });
@@ -1740,7 +1740,8 @@ app.post('/api/ai/playlist/from-library', async (req, res) => {
         "Tu composes une playlist en SÉLECTIONNANT des titres dans une bibliothèque "
         + "EXISTANTE numérotée. Choisis 15 à 30 titres qui collent à la demande "
         + "(ambiance/énergie/genre), dans un ordre d'écoute agréable. Renvoie UNIQUEMENT "
-        + "des index présents dans la liste (n'en invente aucun) + un nom court.",
+        + "des index présents dans la liste (n'en invente aucun) + un nom court EN ANGLAIS "
+        + "(jamais en français).",
       messages: [{ role: 'user', content: `Bibliothèque :\n${listText}\n\nDemande : ${prompt}` }],
       output_config: {
         format: {
