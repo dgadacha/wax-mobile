@@ -1377,6 +1377,102 @@ app.post('/api/ai/playlist', async (req, res) => {
   scheduleAutoBackfill();
 });
 
+// ── IA : tagging d'ambiance / énergie (Claude Haiku) ────────────────
+// Classe chaque titre de la biblio : mood (enum) + energy (1-5). En batch
+// pour limiter le nombre d'appels. Les CLÉS de AI_MOODS doivent rester
+// synchronisées avec src/lib/moods.js (côté front).
+const AI_MOODS = ['chill', 'energie', 'fete', 'focus', 'triste', 'romance', 'sombre'];
+const AI_TAG_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    tags: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          i: { type: 'integer' },
+          mood: { type: 'string', enum: AI_MOODS },
+          energy: { type: 'integer' },
+        },
+        required: ['i', 'mood', 'energy'],
+      },
+    },
+  },
+  required: ['tags'],
+};
+
+app.post('/api/ai/tag-library', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch {} };
+  const fail = (error) => { send({ type: 'error', error }); res.end(); };
+
+  let aborted = false;
+  req.on('close', () => { aborted = true; });
+
+  const ai = getAnthropic();
+  if (!ai) return fail('IA non configurée (ANTHROPIC_API_KEY manquante)');
+
+  const force = req.body?.force === true;
+  const lib = getLibrary(req.profileId);
+  const todo = lib.filter((t) => force || !t.mood);
+  const total = todo.length;
+  send({ type: 'total', total });
+  if (total === 0) { send({ type: 'done', tagged: 0, total: 0 }); return res.end(); }
+
+  const BATCH = 25;
+  let done = 0;
+  for (let start = 0; start < todo.length; start += BATCH) {
+    if (aborted) return res.end();
+    const chunk = todo.slice(start, start + BATCH); // elements are refs into lib
+    const listText = chunk
+      .map((t, idx) => {
+        const p = parseTrackTitle(t.title, t.uploader);
+        const label = p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
+        return `${idx}. ${label}`.slice(0, 160);
+      })
+      .join('\n');
+    try {
+      const msg = await ai.messages.create({
+        model: 'claude-haiku-4-5',
+        max_tokens: 2000,
+        system:
+          "Tu classes des morceaux de musique. Pour CHAQUE entrée numérotée, renvoie "
+          + "son ambiance (mood) parmi EXACTEMENT cette liste : chill, energie, fete, "
+          + "focus, triste, romance, sombre ; et son énergie de 1 (très calme) à 5 (très "
+          + "intense). Renvoie une entrée par morceau, avec son index `i`.",
+        messages: [{ role: 'user', content: `Classe ces morceaux :\n${listText}` }],
+        output_config: { format: { type: 'json_schema', schema: AI_TAG_SCHEMA } },
+      });
+      const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+      const parsed = JSON.parse(text);
+      const byIdx = new Map((parsed.tags || []).map((x) => [x.i, x]));
+      for (let idx = 0; idx < chunk.length; idx++) {
+        const tag = byIdx.get(idx);
+        if (!tag) continue;
+        const track = chunk[idx];
+        if (AI_MOODS.includes(tag.mood)) track.mood = tag.mood;
+        track.energy = Math.max(1, Math.min(5, parseInt(tag.energy, 10) || 3));
+        track.taggedAt = Date.now();
+      }
+    } catch (e) {
+      console.error('[ai/tag] batch:', e.message);
+      // Tolerate a bad batch — keep going, those tracks stay untagged and
+      // get picked up on the next run.
+    }
+    done += chunk.length;
+    saveLibrary(req.profileId, lib); // persist after each batch (resumable)
+    send({ type: 'progress', done, total });
+  }
+  const tagged = todo.filter((t) => !!t.mood).length;
+  send({ type: 'done', tagged, total });
+  res.end();
+});
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

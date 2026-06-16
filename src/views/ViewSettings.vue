@@ -294,6 +294,38 @@ async function repairOfflineCache() {
   }
 }
 
+// AI mood/energy tagging — same live-progress UX as the cache warmer.
+const tagging = ref(false);
+const tagDone = ref(0);
+const tagTotal = ref(0);
+const tagSummary = ref('');
+const tagPct = computed(() =>
+  tagTotal.value > 0 ? Math.round((tagDone.value / tagTotal.value) * 100) : 0,
+);
+async function analyzeLibrary() {
+  if (tagging.value) return;
+  tagging.value = true;
+  tagDone.value = 0;
+  tagTotal.value = 0;
+  tagSummary.value = '';
+  haptics.light();
+  try {
+    const result = await lib.tagLibrary((done, total) => {
+      tagDone.value = done;
+      tagTotal.value = total;
+    });
+    tagSummary.value = result.total === 0
+      ? 'Déjà à jour'
+      : `${result.tagged} titre${result.tagged > 1 ? 's' : ''} analysé${result.tagged > 1 ? 's' : ''}`;
+    showToast({ message: tagSummary.value, position: 'bottom' });
+  } catch (e) {
+    tagSummary.value = '';
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), type: 'fail', position: 'bottom' });
+  } finally {
+    tagging.value = false;
+  }
+}
+
 // Diagnostic: list every cache + their entry count. Useful for
 // proving "the cache is empty" vs. "the cache is full but Settings
 // is reading the wrong name". Tap the cell to refresh.
@@ -496,6 +528,29 @@ async function onLogout() {
       >
         <template #icon>
           <Sparkles :size="18" :stroke-width="2" color="var(--accent)" class="cell-icon" />
+        </template>
+      </van-cell>
+      <!-- AI mood/energy tagging — classifies each track so the library can
+           be filtered by ambiance. Live progress like the cache warmer. -->
+      <van-cell
+        :title="tagging ? 'Analyse en cours' : 'Analyser ma bibliothèque'"
+        :value="tagging ? `${tagDone}/${tagTotal}` : (tagSummary || 'Détecter l’ambiance de chaque titre (IA)')"
+        is-link
+        @click="analyzeLibrary"
+      >
+        <template #icon>
+          <Sparkles
+            :size="18"
+            :stroke-width="2"
+            :color="tagging ? 'var(--accent)' : 'var(--text-muted)'"
+            class="cell-icon"
+            :class="{ 'spin-anim': tagging }"
+          />
+        </template>
+        <template v-if="tagging" #label>
+          <div class="warm-bar">
+            <div class="warm-bar-fill" :style="{ width: tagPct + '%' }" />
+          </div>
         </template>
       </van-cell>
     </van-cell-group>

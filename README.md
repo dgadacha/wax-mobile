@@ -42,7 +42,8 @@
 - **Accueil** : tuiles de reprise rapide + carrousels (récemment joués, tes titres du moment, artistes) + "Pour toi" généré depuis tes favoris. La roue dentée en haut ouvre les Réglages, l'étoile ouvre tes stats.
 - **Rechercher** : barre blanche en haut — tape un titre, un artiste, ou colle une URL YouTube. En dessous, les cartes "Parcourir" sautent direct dans tes favoris / albums / artistes, et **"Playlist IA"** génère une playlist à partir d'une simple description.
 - **Bibliothèque** : tes playlists, albums et artistes regroupés derrière des chips (re-tape une chip pour tout réafficher). Le "+" en haut crée une playlist (vide ou **générée par l'IA** : décris une ambiance, Claude compose la tracklist), la loupe filtre.
-- **Playlist IA** : décris un mood ("road trip années 2000", "deep work électro") → Claude Haiku propose 15 titres → Wax les retrouve sur YouTube et crée la playlist. Nécessite une clé `ANTHROPIC_API_KEY` côté serveur (voir self-host).
+- **Playlist IA** : décris un mood ("road trip années 2000", "deep work électro") → Claude Haiku propose 50 titres → Wax les retrouve sur YouTube et crée la playlist (barre de progression en direct). Nécessite une clé `ANTHROPIC_API_KEY` côté serveur (voir self-host).
+- **Analyse d'ambiance (IA)** : Réglages → "Analyser ma bibliothèque" classe chaque titre par ambiance (chill, énergie, fête, focus…) ; ensuite des chips d'ambiance apparaissent sous l'onglet "Titres" pour filtrer ta biblio par mood. Même clé `ANTHROPIC_API_KEY`.
 - **Réglages** (roue dentée sur l'Accueil) : thème, couleur d'accent, EQ, export/import JSON.
 - **Multi-profil** : depuis Réglages → ligne profil en haut, tu peux créer plusieurs profils. Chacun a ses propres favoris et playlists.
 

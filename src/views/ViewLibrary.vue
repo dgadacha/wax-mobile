@@ -13,6 +13,7 @@ import { useMixStore } from '@/stores/mix';
 import { useProfileStore } from '@/stores/profile';
 import { parseTrackTitle, normalizeArtistKey, gradientFromString } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
+import { MOODS } from '@/lib/moods';
 import { haptics } from '@/lib/haptics';
 import MobileTrackCell from '@/components/MobileTrackCell.vue';
 import MobileSkeleton from '@/components/MobileSkeleton.vue';
@@ -68,6 +69,18 @@ const filter = ref('playlists'); // 'playlists' | 'tracks' (+ external 'albums'/
 function tapChip(id) {
   haptics.selection();
   filter.value = id;
+}
+
+// Mood sub-filter for the Titres list (AI tags, cf. Réglages → Analyser).
+// Only the moods actually present in the library are offered, so there are
+// never empty-result chips.
+const moodFilter = ref(null);
+const availableMoods = computed(() =>
+  MOODS.filter((m) => lib.tracks.some((t) => t.mood === m.key)),
+);
+function setMood(key) {
+  haptics.selection();
+  moodFilter.value = moodFilter.value === key ? null : key;
 }
 
 // Browse cards on the Search tab preset a chip before switching here.
@@ -251,7 +264,9 @@ const displayedTracks = computed(() => {
       || (t.uploader || '').toLowerCase().includes(q),
     ));
   }
-  return sortTracks(lib.tracks);
+  let list = lib.tracks;
+  if (moodFilter.value) list = list.filter((t) => t.mood === moodFilter.value);
+  return sortTracks(list);
 });
 
 // Playlists matching the query — shown as a section above the tracks.
@@ -488,6 +503,18 @@ function cardIcon(card) {
 
     <!-- TITRES chip — TOUS les titres de la bibliothèque -->
     <template v-else-if="showingTracks">
+      <!-- Mood sub-filter (AI tags) — only shown once the library's been
+           analysed (Réglages → Analyser ma bibliothèque). -->
+      <div v-if="availableMoods.length" class="lib-moods">
+        <button class="mood-chip" :class="{ active: !moodFilter }" @click="setMood(null)">Tout</button>
+        <button
+          v-for="m in availableMoods"
+          :key="m.key"
+          class="mood-chip"
+          :class="{ active: moodFilter === m.key }"
+          @click="setMood(m.key)"
+        >{{ m.label }}</button>
+      </div>
       <MobileSkeleton v-if="lib.loading && lib.tracks.length === 0" variant="row" :count="8" />
       <div v-else-if="displayedTracks.length === 0" class="empty-state">
         <ListMusic class="icon" :size="48" :stroke-width="1.5" />
@@ -629,6 +656,33 @@ function cardIcon(card) {
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 700;
+}
+
+/* Mood sub-filter — smaller, outlined pills under the Titres list. */
+.lib-moods {
+  display: flex;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-4) var(--sp-3);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.lib-moods::-webkit-scrollbar { display: none; }
+.mood-chip {
+  flex: 0 0 auto;
+  padding: 6px 13px;
+  border-radius: var(--r-pill);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  font: 600 12px/1.2 var(--font-body);
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+}
+.mood-chip:active { transform: scale(0.95); }
+.mood-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .lib-search-row :deep(.van-search) {
