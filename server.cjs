@@ -1675,6 +1675,113 @@ async function runAiDiscoverJob(job, profileId) {
   }
 }
 
+// IA : renomme une playlist d'après sa tracklist (parfait pour les mix
+// auto-nommés "Mix · …"). Un seul appel Claude, réponse JSON.
+app.post('/api/ai/playlists/:id/rename', async (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const pls = getPlaylists(req.profileId);
+  const pl = pls.find((p) => p.id === req.params.id);
+  if (!pl) return res.status(404).json({ error: 'Playlist introuvable' });
+  const known = new Map(getLibrary(req.profileId).map((t) => [t.id, t]));
+  const tracks = (pl.trackIds || []).map((id) => known.get(id)).filter(Boolean).slice(0, 40);
+  if (tracks.length === 0) return res.status(400).json({ error: 'Playlist vide' });
+  const listText = tracks
+    .map((t) => { const p = parseTrackTitle(t.title, t.uploader); return p.artist ? `${p.artist} - ${p.song || t.title}` : t.title; })
+    .join('\n')
+    .slice(0, 4000);
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 200,
+      system:
+        "Tu nommes des playlists. À partir d'une liste de titres, propose UN nom court "
+        + "(2 à 4 mots), accrocheur, qui évoque l'ambiance générale. Sans guillemets ni "
+        + "ponctuation finale.",
+      messages: [{ role: 'user', content: `Nomme cette playlist :\n${listText}` }],
+      output_config: { format: { type: 'json_schema', schema: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' } }, required: ['name'] } } },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const name = String(JSON.parse(text).name || '').trim().slice(0, 100);
+    if (!name) return res.status(502).json({ error: 'Nom vide' });
+    pl.name = name;
+    savePlaylists(req.profileId, pls);
+    res.json({ playlist: pl, name });
+  } catch (e) {
+    console.error('[ai/rename]', e.message);
+    res.status(502).json({ error: 'Renommage échoué : ' + e.message });
+  }
+});
+
+// IA : crée une playlist en PIOCHANT dans la bibliothèque existante (pas de
+// recherche YouTube). Claude reçoit la biblio numérotée (+ tags mood/énergie)
+// et renvoie les index choisis. Un seul appel, réponse JSON.
+app.post('/api/ai/playlist/from-library', async (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const prompt = String(req.body?.prompt || '').trim().slice(0, 500);
+  if (!prompt) return res.status(400).json({ error: 'Décris la playlist que tu veux' });
+  const lib = getLibrary(req.profileId);
+  if (lib.length < 5) return res.status(400).json({ error: 'Bibliothèque trop petite' });
+  const cand = lib.slice(0, 400); // cap for the prompt token budget
+  const listText = cand
+    .map((t, i) => {
+      const p = parseTrackTitle(t.title, t.uploader);
+      const label = p.artist ? `${p.artist} - ${p.song || t.title}` : t.title;
+      const tags = t.mood ? ` [${t.mood}/${t.energy || '?'}]` : '';
+      return `${i}. ${label}${tags}`.slice(0, 160);
+    })
+    .join('\n');
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1500,
+      system:
+        "Tu composes une playlist en SÉLECTIONNANT des titres dans une bibliothèque "
+        + "EXISTANTE numérotée. Choisis 15 à 30 titres qui collent à la demande "
+        + "(ambiance/énergie/genre), dans un ordre d'écoute agréable. Renvoie UNIQUEMENT "
+        + "des index présents dans la liste (n'en invente aucun) + un nom court.",
+      messages: [{ role: 'user', content: `Bibliothèque :\n${listText}\n\nDemande : ${prompt}` }],
+      output_config: {
+        format: {
+          type: 'json_schema',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { name: { type: 'string' }, indices: { type: 'array', items: { type: 'integer' } } },
+            required: ['name', 'indices'],
+          },
+        },
+      },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const parsed = JSON.parse(text);
+    const seen = new Set();
+    const ids = [];
+    for (const i of (Array.isArray(parsed.indices) ? parsed.indices : [])) {
+      if (Number.isInteger(i) && i >= 0 && i < cand.length && !seen.has(i)) {
+        seen.add(i);
+        ids.push(cand[i].id);
+      }
+    }
+    if (ids.length === 0) return res.status(502).json({ error: 'Aucun titre sélectionné' });
+    const pls = getPlaylists(req.profileId);
+    const playlist = {
+      id: crypto.randomBytes(6).toString('hex'),
+      name: String(parsed.name || prompt).slice(0, 100),
+      trackIds: ids,
+      createdAt: Date.now(),
+      aiPrompt: prompt,
+    };
+    pls.push(playlist);
+    savePlaylists(req.profileId, pls);
+    res.json({ playlist, count: ids.length });
+  } catch (e) {
+    console.error('[ai/from-library]', e.message);
+    res.status(502).json({ error: 'Génération échouée : ' + e.message });
+  }
+});
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

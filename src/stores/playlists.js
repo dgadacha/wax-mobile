@@ -136,6 +136,21 @@ export const usePlaylistsStore = defineStore('playlists', {
       await this.fetch();
       return res;
     },
+    // AI rename from the tracklist (great for auto-named mixes). Throws on failure.
+    async renameWithAI(id) {
+      const res = await api(`/api/ai/playlists/${id}/rename`, { method: 'POST' });
+      await this.fetch();
+      return res; // { playlist, name }
+    },
+    // AI playlist built from EXISTING library tracks (no YouTube). Throws on failure.
+    async generateFromLibrary(prompt) {
+      const res = await api('/api/ai/playlist/from-library', {
+        method: 'POST',
+        body: JSON.stringify({ prompt }),
+      });
+      await this.fetch();
+      return res; // { playlist, count }
+    },
     async addTrack(playlistId, trackId) {
       try {
         await api(`/api/playlists/${playlistId}/tracks`, {

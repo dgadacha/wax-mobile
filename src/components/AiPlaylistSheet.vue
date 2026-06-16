@@ -16,6 +16,7 @@ const playlists = usePlaylistsStore();
 const lib = useLibraryStore();
 
 const prompt = ref('');
+const mode = ref('discover'); // 'discover' = nouveaux titres (YouTube) | 'library' = pioche dans la biblio
 const loading = ref(false);
 const error = ref('');
 const inputRef = ref(null);
@@ -38,6 +39,7 @@ watch(
   (open) => {
     if (!open) return;
     prompt.value = '';
+    mode.value = 'discover';
     error.value = '';
     loading.value = false;
     nextTick(() => inputRef.value?.focus());
@@ -64,18 +66,26 @@ async function generate() {
   progress.value = { done: 0, total: 0 };
   let result;
   try {
-    result = await runAiJob('/api/ai/playlist', { prompt: p }, (ev) => {
-      if (ev.type === 'total') progress.value = { done: 0, total: ev.total };
-      else if (ev.type === 'progress') progress.value = { done: ev.done, total: ev.total };
-    });
+    if (mode.value === 'library') {
+      // Pick from existing library tracks — one Claude call, no YouTube
+      // resolution, so it's quick (the store refetches playlists itself).
+      const r = await playlists.generateFromLibrary(p);
+      result = { playlist: r.playlist, count: r.count };
+    } else {
+      const r = await runAiJob('/api/ai/playlist', { prompt: p }, (ev) => {
+        if (ev.type === 'total') progress.value = { done: 0, total: ev.total };
+        else if (ev.type === 'progress') progress.value = { done: ev.done, total: ev.total };
+      });
+      await Promise.all([playlists.fetch(), lib.fetch()]);
+      result = { playlist: r.playlist, count: r.resolved };
+    }
   } catch (e) {
     error.value = e.message || 'Échec de la génération';
     loading.value = false;
     return;
   }
-  await Promise.all([playlists.fetch(), lib.fetch()]);
   view.closeAi();
-  showToast(`Playlist « ${result.playlist.name} » créée · ${result.resolved} titres`);
+  showToast(`Playlist « ${result.playlist.name} » créée · ${result.count} titres`);
   view.switchTo('playlist', result.playlist.id);
   loading.value = false;
 }
@@ -93,8 +103,8 @@ async function generate() {
         <div v-if="loading" class="ai-loading">
           <div class="ai-orb"><Sparkles :size="34" :stroke-width="1.8" color="var(--on-accent)" /></div>
           <template v-if="!progress.total">
-            <h2>Génération en cours…</h2>
-            <p>Claude compose ta playlist…</p>
+            <h2>{{ mode === 'library' ? 'Sélection en cours…' : 'Génération en cours…' }}</h2>
+            <p>{{ mode === 'library' ? 'Claude pioche dans ta bibliothèque…' : 'Claude compose ta playlist…' }}</p>
           </template>
           <template v-else>
             <h2>Recherche des titres…</h2>
@@ -111,13 +121,20 @@ async function generate() {
             <p>Décris une ambiance, un mood, une occasion — Claude s'occupe du reste.</p>
           </div>
 
+          <div class="ai-modes">
+            <button class="ai-mode" :class="{ active: mode === 'discover' }" @click="mode = 'discover'">Découvrir</button>
+            <button class="ai-mode" :class="{ active: mode === 'library' }" @click="mode = 'library'">Ma bibliothèque</button>
+          </div>
+
           <textarea
             ref="inputRef"
             v-model="prompt"
             class="ai-input"
             rows="3"
             maxlength="500"
-            placeholder="ex : une playlist pour coder tard le soir, électro douce et instrumentale…"
+            :placeholder="mode === 'library'
+              ? 'ex : un truc calme pour bosser, parmi ce que j’ai déjà…'
+              : 'ex : une playlist pour coder tard le soir, électro douce et instrumentale…'"
             @keydown.meta.enter="generate"
             @keydown.ctrl.enter="generate"
           />
@@ -198,6 +215,29 @@ async function generate() {
   margin: 0;
   max-width: 32ch;
   margin-inline: auto;
+}
+
+.ai-modes {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.ai-mode {
+  flex: 1;
+  padding: 9px 8px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-soft);
+  font: 600 13px/1 var(--font-body);
+  cursor: pointer;
+  transition: all var(--motion-short) var(--ease);
+}
+.ai-mode:active { transform: scale(0.97); }
+.ai-mode.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 
 .ai-input {

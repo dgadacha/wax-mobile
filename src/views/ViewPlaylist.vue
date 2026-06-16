@@ -149,16 +149,33 @@ async function onMore() {
     const { index } = await sheet.open([
       { name: 'Ajouter des titres', icon: ListPlus },
       { name: 'Réorganiser avec l’IA', icon: Sparkles, color: 'var(--accent)' },
+      { name: 'Renommer avec l’IA', icon: Sparkles, color: 'var(--accent)' },
       { name: 'Tout télécharger', icon: DownloadIcon },
       { name: 'Renommer', icon: Pencil },
       { name: 'Supprimer la playlist', icon: Trash2, color: 'var(--danger)' },
     ], header);
     if (index === 0) addTracks();
     else if (index === 1) reorderWithAI();
-    else if (index === 2) downloadAll();
-    else if (index === 3) playlists.rename(playlist.value.id);
-    else if (index === 4) deleteThis();
+    else if (index === 2) renameWithAI();
+    else if (index === 3) downloadAll();
+    else if (index === 4) playlists.rename(playlist.value.id);
+    else if (index === 5) deleteThis();
   } catch { /* dismissed */ }
+}
+
+// AI rename — names the playlist from its tracklist (auto-named mixes etc.).
+async function renameWithAI() {
+  const pl = playlist.value;
+  if (!pl || virtual.value) return;
+  const toast = showToast({ message: 'Renommage…', type: 'loading', duration: 0, forbidClick: true });
+  try {
+    const { name } = await playlists.renameWithAI(pl.id);
+    toast.close();
+    showToast({ message: `Renommée : « ${name} »`, position: 'bottom' });
+  } catch (e) {
+    toast.close();
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), position: 'bottom' });
+  }
 }
 
 // AI reorder — DJ-style flow (uses mood/energy tags when present).
