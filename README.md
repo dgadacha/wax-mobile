@@ -14,8 +14,6 @@
   <a href="https://github.com/dgadacha/wax-mobile"><img alt="GitHub" src="https://img.shields.io/badge/GitHub-dgadacha%2Fwax--mobile-181717?logo=github"/></a>
   &nbsp;
   <a href="https://github.com/dgadacha/wax-mobile/actions/workflows/deploy-pages.yml"><img alt="Pages" src="https://img.shields.io/github/actions/workflow/status/dgadacha/wax-mobile/deploy-pages.yml?branch=main&label=Pages&logo=github"/></a>
-  &nbsp;
-  <a href="https://wax.nc-maiz.org"><img alt="Démo" src="https://img.shields.io/badge/d%C3%A9mo-wax.nc--maiz.org-7c5cff"/></a>
 </p>
 
 ---
@@ -24,7 +22,7 @@
 
 ### Sur iPhone (Safari)
 
-1. Ouvre <https://wax.nc-maiz.org> dans **Safari** (Chrome marche pas pour l'install — c'est Apple qui bloque).
+1. Ouvre <https://wax.ton-domaine.org> dans **Safari** (Chrome marche pas pour l'install — c'est Apple qui bloque).
 2. Bouton **Partager** (le carré avec la flèche vers le haut).
 3. Fais défiler et tape **Sur l'écran d'accueil**.
 4. Confirme. L'icône Wax apparaît, l'app s'ouvre en plein écran sans la barre Safari.
@@ -33,7 +31,7 @@
 
 ### Sur Android (Chrome)
 
-1. Ouvre <https://wax.nc-maiz.org> dans **Chrome**.
+1. Ouvre <https://wax.ton-domaine.org> dans **Chrome**.
 2. Menu (⋮) en haut à droite → **Installer l'application**, ou attends le prompt qui sort tout seul en bas.
 3. L'app s'installe comme un APK natif — apparaît dans le tiroir et l'écran d'accueil.
 
@@ -102,7 +100,7 @@ npm run cap:setup     # patches background audio (idempotent)
 Ensuite, pour reconstruire + ouvrir Xcode / Android Studio :
 
 ```bash
-echo "VITE_API_BASE_URL=https://wax-api.nc-maiz.org" > .env
+echo "VITE_API_BASE_URL=https://wax-api.ton-domaine.org" > .env
 
 npm run ios            # build + cap sync + cap:setup + cap open ios
 npm run android        # build + cap sync + cap:setup + cap open android
@@ -118,7 +116,7 @@ npm run android        # build + cap sync + cap:setup + cap open android
 
 ## Auto-hébergement (self-host)
 
-Une seule image Docker contient le frontend (build Vite baked-in via le stage `web-builder`) et le backend (`server.cjs` + `yt-dlp` + `ffmpeg`). Un conteneur, un URL public, pas de CORS, pas de host statique séparé. Exactement le pattern [kuro](https://gitlab.com/kidnar/kuro).
+Une seule image Docker contient le frontend (build Vite baked-in via le stage `web-builder`) et le backend (`server.cjs` + `yt-dlp` + `ffmpeg`). Un conteneur, un URL public, pas de CORS, pas de host statique séparé.
 
 ### Prérequis
 
@@ -146,7 +144,7 @@ docker push <ton-registry>/<ton-namespace>/wax:latest
 
 Édite [`k8s/deployment.yaml`](k8s/deployment.yaml) :
 
-- Ligne `image:` → remplace `registry.gitlab.com/kidnar/wax:latest` par ton image.
+- Ligne `image:` → remplace `registry.gitlab.com/<ton-namespace>/wax:latest` par ton image.
 - Ligne `imagePullSecrets: - name: gitlab-registry` → soit garde le nom, soit renomme. C'est juste un nom de secret k8s.
 
 Si ton image est sur GitHub Container Registry (ghcr.io), tu peux la rendre publique → pas besoin de pull secret du tout, supprime le bloc `imagePullSecrets`.
@@ -195,7 +193,7 @@ Dans ton dashboard Cloudflare Zero Trust :
 1. **Networks → Tunnels → ton tunnel existant** (ou nouveau si tu n'en as pas)
 2. **Public Hostnames → Add public hostname** :
    - Subdomain : `wax`
-   - Domain : ton domaine (ex. `nc-maiz.org`)
+   - Domain : ton domaine (ex. `ton-domaine.org`)
    - Service type : `HTTP`
    - URL : `wax.wax.svc.cluster.local:80` (nom DNS interne k8s : `<service>.<namespace>.svc.cluster.local`)
 3. Save. Cloudflare gère le TLS et le tunnel sortant — aucun port à exposer côté cluster.
@@ -234,7 +232,7 @@ Si tu veux juste un déploiement express sans monter un cluster :
 Le workflow `.github/workflows/deploy-pages.yml` peut publier `dist/` sur GitHub Pages à chaque push `main`. Utile comme **miroir static** si ton backend tombe — le shell PWA se charge quand même, juste sans données. Setup :
 
 1. **Settings → Pages → Source** = "GitHub Actions".
-2. **Settings → Secrets and variables → Actions → New repository secret** : `VITE_API_BASE_URL` = l'URL de ton backend (`https://wax.nc-maiz.org`).
+2. **Settings → Secrets and variables → Actions → New repository secret** : `VITE_API_BASE_URL` = l'URL de ton backend (`https://wax.ton-domaine.org`).
 3. Push sur `main`. CORS est permissif côté backend donc ça marche cross-origin.
 
 ## Variables d'environnement
@@ -262,7 +260,7 @@ Le workflow `.github/workflows/deploy-pages.yml` peut publier `dist/` sur GitHub
                                   ▼
                  ┌──────────────────────────────────────────┐
                  │  Cloudflare Tunnel (TLS, edge)           │
-                 │  wax-api.nc-maiz.org                     │
+                 │  wax-api.ton-domaine.org                     │
                  └────────────────┬─────────────────────────┘
                                   │ sortie chiffrée
                                   ▼
