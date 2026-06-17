@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { Heart, MoreVertical, Download as DownloadIcon, ArrowDownCircle } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
-import { fmtDuration } from '@/lib/format';
+import { fmtDuration, displayTitle, displayArtist } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 
 const props = defineProps({
@@ -46,7 +46,8 @@ const emit = defineEmits(['play', 'like', 'more']);
 const sub = computed(() => {
   const t = props.track;
   const bits = [];
-  if (t.uploader) bits.push(t.uploader);
+  const artist = displayArtist(t);
+  if (artist) bits.push(artist);
   if (t.duration) bits.push(fmtDuration(t.duration));
   return bits.join(' · ');
 });
@@ -104,7 +105,7 @@ function onLikeClick() {
           <i /><i /><i />
         </span>
         <van-loading v-else-if="loading && variant === 'plain'" size="13" color="var(--accent)" />
-        <span class="title">{{ track.title }}</span>
+        <span class="title">{{ displayTitle(track) }}</span>
       </div>
       <div class="sub">
         <span

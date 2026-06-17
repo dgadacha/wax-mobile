@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
+import { Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Wand2, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -326,6 +326,39 @@ async function analyzeLibrary() {
   }
 }
 
+// AI title cleanup — extracts a clean artist/title from messy YouTube
+// titles. Same live-progress UX as the tagger.
+const cleaning = ref(false);
+const cleanDone = ref(0);
+const cleanTotal = ref(0);
+const cleanSummary = ref('');
+const cleanPct = computed(() =>
+  cleanTotal.value > 0 ? Math.round((cleanDone.value / cleanTotal.value) * 100) : 0,
+);
+async function cleanTitles() {
+  if (cleaning.value) return;
+  cleaning.value = true;
+  cleanDone.value = 0;
+  cleanTotal.value = 0;
+  cleanSummary.value = '';
+  haptics.light();
+  try {
+    const result = await lib.cleanTitles((done, total) => {
+      cleanDone.value = done;
+      cleanTotal.value = total;
+    });
+    cleanSummary.value = result.total === 0
+      ? 'Déjà à jour'
+      : `${result.cleaned} titre${result.cleaned > 1 ? 's' : ''} nettoyé${result.cleaned > 1 ? 's' : ''}`;
+    showToast({ message: cleanSummary.value, position: 'bottom' });
+  } catch (e) {
+    cleanSummary.value = '';
+    showToast({ message: 'Erreur : ' + (e.message || 'inconnue'), type: 'fail', position: 'bottom' });
+  } finally {
+    cleaning.value = false;
+  }
+}
+
 // Diagnostic: list every cache + their entry count. Useful for
 // proving "the cache is empty" vs. "the cache is full but Settings
 // is reading the wrong name". Tap the cell to refresh.
@@ -550,6 +583,28 @@ async function onLogout() {
         <template v-if="tagging" #label>
           <div class="warm-bar">
             <div class="warm-bar-fill" :style="{ width: tagPct + '%' }" />
+          </div>
+        </template>
+      </van-cell>
+      <!-- AI title cleanup — clean artist/title from messy YouTube titles. -->
+      <van-cell
+        :title="cleaning ? 'Nettoyage en cours' : 'Nettoyer les titres (IA)'"
+        :value="cleaning ? `${cleanDone}/${cleanTotal}` : (cleanSummary || 'Artiste + titre propres depuis YouTube')"
+        is-link
+        @click="cleanTitles"
+      >
+        <template #icon>
+          <Wand2
+            :size="18"
+            :stroke-width="2"
+            :color="cleaning ? 'var(--accent)' : 'var(--text-muted)'"
+            class="cell-icon"
+            :class="{ 'spin-anim': cleaning }"
+          />
+        </template>
+        <template v-if="cleaning" #label>
+          <div class="warm-bar">
+            <div class="warm-bar-fill" :style="{ width: cleanPct + '%' }" />
           </div>
         </template>
       </van-cell>

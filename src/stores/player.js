@@ -3,8 +3,8 @@
 // callback (see init()).
 import { defineStore } from 'pinia';
 import { markRaw } from 'vue';
-import { api, apiUrl } from '@/lib/api';
-import { isStreamId, fmtDuration } from '@/lib/format';
+import { api, apiUrl, runAiJob } from '@/lib/api';
+import { isStreamId, fmtDuration, parseTrackTitle } from '@/lib/format';
 import { useLibraryStore } from './library';
 import { useStreamsStore } from './streams';
 import { usePrefsStore } from './prefs';
@@ -70,6 +70,8 @@ export const usePlayerStore = defineStore('player', {
     loading: false,  // true between loadAndPlay() and the first 'playing' event
     shuffle: false,
     repeat: 'off', // 'off' | 'all' | 'one'
+    radio: false, // radio infinie : l'IA prolonge la file en fin de queue
+    _radioBusy: false, // garde anti-réentrance pendant le fetch IA
     muted: false,
     nowPlayingOpen: true, // controls right-column visibility (cover + queue)
     bigPictureOpen: false, // fullscreen "Now Playing" mode triggered by clicking the player cover
@@ -299,6 +301,7 @@ export const usePlayerStore = defineStore('player', {
       this.playCountedFor = null;
       // Plan + pre-resolve the upcoming track while this one plays.
       this._prepareNext();
+      this._maybeExtendRadio();
     },
     togglePlay() {
       if (!this.audioEl?.src) return;
@@ -355,6 +358,72 @@ export const usePlayerStore = defineStore('player', {
       const order = ['off', 'all', 'one'];
       this.repeat = order[(order.indexOf(this.repeat) + 1) % order.length];
       this._prepareNext();
+    },
+    // Radio infinie : l'IA prolonge la file avec des titres dans la même
+    // veine quand on approche de la fin. Toggle de session (non persisté —
+    // la file contient des streams, donc savePlayerState la skip de toute
+    // façon). Activer déclenche une première extension immédiate.
+    toggleRadio() {
+      this.radio = !this.radio;
+      if (this.radio) {
+        showToast('Radio infinie activée', 'success');
+        this._maybeExtendRadio();
+      } else {
+        showToast('Radio infinie désactivée');
+      }
+    },
+    // Appelé à chaque avance (loadAndPlay / _swapToPreloaded). Quand il reste
+    // ≤2 titres après le courant, demande des recos. No-op si désactivé, déjà
+    // en cours, file vide, ou repeat actif (qui reboucle déjà tout seul).
+    _maybeExtendRadio() {
+      if (!this.radio || this._radioBusy) return;
+      if (this.repeat !== 'off') return;
+      if (this.queue.length === 0 || this.index < 0) return;
+      if (this.queue.length - 1 - this.index > 2) return;
+      this._extendRadio();
+    },
+    async _extendRadio() {
+      this._radioBusy = true;
+      try {
+        // Seeds = les derniers titres écoutés (du courant en remontant), en
+        // « Artiste - Titre » propre pour garder l'IA dans la même veine.
+        const seeds = [];
+        for (let i = this.index; i >= 0 && seeds.length < 5; i--) {
+          const tr = findTrack(this.queue[i]);
+          if (!tr) continue;
+          const { artist, song } = parseTrackTitle(tr);
+          seeds.push(artist ? `${artist} - ${song}` : song);
+        }
+        if (seeds.length === 0) return;
+        const { tracks } = await runAiJob('/api/ai/radio', { seeds });
+        const streams = useStreamsStore();
+        const have = new Set(this.queue);
+        let added = 0;
+        for (const m of tracks || []) {
+          const streamId = `stream-${m.id}`;
+          if (have.has(streamId)) continue;
+          if (!streams.get(streamId)) {
+            streams.set(streamId, {
+              id: streamId,
+              title: m.title,
+              uploader: m.uploader || '',
+              duration: m.duration,
+              thumbnail: m.thumbnail,
+              file: `/api/stream/${m.id}`,
+              ytId: m.id,
+              isStream: true,
+            });
+          }
+          this.queue.push(streamId);
+          have.add(streamId);
+          added++;
+        }
+        if (added > 0) this._prepareNext();
+      } catch (e) {
+        console.warn('[player] radio extend failed', e?.message || e);
+      } finally {
+        this._radioBusy = false;
+      }
     },
     toggleMute() {
       const prefs = usePrefsStore();
@@ -762,6 +831,7 @@ export const usePlayerStore = defineStore('player', {
       this.playCountedFor = null;
       // Buffer the NEW next into the now-free spare element.
       this._prepareNext();
+      this._maybeExtendRadio();
       return true;
     },
     _discardPreloaded() {

@@ -3,7 +3,7 @@ import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import {
   Play, Pause, SkipBack, SkipForward, Heart, ChevronDown, MoreVertical,
   ListMusic, MicVocal, Shuffle, Repeat, Repeat1, X, Gauge, ListPlus,
-  ListEnd, Sparkles, Mic2, Plus,
+  ListEnd, Sparkles, Mic2, Plus, Radio,
 } from 'lucide-vue-next';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -13,7 +13,7 @@ import { usePlaylistsStore } from '@/stores/playlists';
 import { useViewStore } from '@/stores/view';
 import { useMixStore } from '@/stores/mix';
 import { useActionSheetStore } from '@/stores/actionSheet';
-import { fmtDuration, parseTrackTitle } from '@/lib/format';
+import { fmtDuration, parseTrackTitle, displayTitle, displayArtist } from '@/lib/format';
 import { apiUrl } from '@/lib/api';
 import { haptics } from '@/lib/haptics';
 import { fetchLyrics } from '@/composables/useLyrics';
@@ -291,8 +291,8 @@ function jumpToQueue(idx) {
   player.index = idx;
   player.loadAndPlay();
 }
-const title = computed(() => player.currentTrack?.title || '');
-const sub = computed(() => player.currentTrack?.uploader || '');
+const title = computed(() => displayTitle(player.currentTrack));
+const sub = computed(() => displayArtist(player.currentTrack));
 const seekPct = computed(() => {
   if (!player.duration) return 0;
   return (player.currentTime / player.duration) * 100;
@@ -317,6 +317,7 @@ function onPrev()       { haptics.light(); player.prev(); }
 function onNext()       { haptics.light(); player.next(); }
 function onShuffle()    { haptics.selection(); player.toggleShuffle(); }
 function onRepeat()     { haptics.selection(); player.cycleRepeat(); }
+function onRadio()      { haptics.selection(); player.toggleRadio(); }
 
 const repeatLabel = computed(() => {
   if (player.repeat === 'one') return 'Répéter le titre';
@@ -571,6 +572,18 @@ watch(
             />
           </button>
           <div class="np-extras-right">
+            <button
+              class="np-extra"
+              :class="{ 'is-active': player.radio }"
+              :aria-label="player.radio ? 'Radio infinie active' : 'Radio infinie'"
+              @click="onRadio"
+            >
+              <Radio
+                :size="22"
+                :stroke-width="2"
+                :color="player.radio ? 'var(--accent)' : 'rgba(255,255,255,0.8)'"
+              />
+            </button>
             <button
               class="np-extra"
               :class="{ 'is-active': lyricsOpen }"

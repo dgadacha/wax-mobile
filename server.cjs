@@ -1814,6 +1814,146 @@ app.post('/api/ai/wrapped', async (req, res) => {
   }
 });
 
+// IA : radio infinie — prolonge la file à partir des derniers titres écoutés.
+// Pattern de job (résolution YouTube). Le client de-dup contre sa file.
+app.post('/api/ai/radio', (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const seeds = Array.isArray(req.body?.seeds) ? req.body.seeds.slice(0, 8).map((s) => String(s).slice(0, 160)) : [];
+  if (seeds.length === 0) return res.status(400).json({ error: 'seeds requis' });
+  const id = crypto.randomBytes(6).toString('hex');
+  const job = { id, type: 'radio', status: 'running', total: 0, done: 0, name: '', result: null, error: null, listeners: new Set() };
+  aiJobs.set(id, job);
+  res.json({ jobId: id });
+  runAiRadioJob(job, seeds);
+});
+
+async function runAiRadioJob(job, seeds) {
+  const ai = getAnthropic();
+  try {
+    const msg = await ai.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 1500,
+      system:
+        "Tu es une radio musicale intelligente. À partir des derniers titres écoutés, "
+        + "recommande 12 titres RÉELS et identifiables dans la même veine (artistes proches, "
+        + "même énergie/ambiance) pour prolonger l'écoute sans rupture. Ne répète pas les "
+        + "titres fournis. Jamais d'inventions. Le champ `name` peut être vide.",
+      messages: [{ role: 'user', content: `Derniers titres écoutés :\n${seeds.join('\n')}\n\nRecommande 12 titres pour continuer.` }],
+      output_config: { format: { type: 'json_schema', schema: AI_PLAYLIST_SCHEMA } },
+    });
+    const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+    const wanted = (JSON.parse(text).tracks || []).slice(0, 15);
+    if (wanted.length === 0) return aiFinishErr(job, 'Aucune reco générée');
+    job.total = wanted.length;
+    aiEmit(job, { type: 'total', total: job.total });
+    const hits = await Promise.all(
+      wanted.map((t) => aiResolveTrack(`${t.artist} - ${t.title}`).then((v) => {
+        job.done++;
+        aiEmit(job, { type: 'progress', done: job.done, total: job.total, found: !!v });
+        return v;
+      })),
+    );
+    const seen = new Set();
+    const tracks = [];
+    for (const v of hits) {
+      if (!v || seen.has(v.id)) continue;
+      seen.add(v.id);
+      tracks.push({ id: v.id, title: v.title, uploader: v.uploader, duration: v.duration, thumbnail: coverUrl(v.id) });
+    }
+    if (tracks.length === 0) return aiFinishErr(job, 'Aucune reco trouvée sur YouTube');
+    aiFinishOk(job, { tracks });
+  } catch (e) {
+    console.error('[ai/radio] job:', e.message);
+    aiFinishErr(job, 'Radio IA échouée : ' + e.message);
+  }
+}
+
+// IA : nettoyage des titres — extrait artiste/titre propres des titres
+// YouTube crades. Batch de 25, même pattern de job que le tagging. Écrit
+// track.artistClean / track.titleClean (sans toucher title/uploader, qui
+// servent à re-chercher sur YouTube).
+const AI_CLEAN_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    items: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { i: { type: 'integer' }, artist: { type: 'string' }, title: { type: 'string' } },
+        required: ['i', 'artist', 'title'],
+      },
+    },
+  },
+  required: ['items'],
+};
+
+app.post('/api/ai/clean-titles', (req, res) => {
+  const ai = getAnthropic();
+  if (!ai) return res.status(503).json({ error: 'IA non configurée (ANTHROPIC_API_KEY manquante)' });
+  const force = req.body?.force === true;
+  const id = crypto.randomBytes(6).toString('hex');
+  const job = { id, type: 'clean', status: 'running', total: 0, done: 0, name: '', result: null, error: null, listeners: new Set() };
+  aiJobs.set(id, job);
+  res.json({ jobId: id });
+  runAiCleanJob(job, req.profileId, force);
+});
+
+async function runAiCleanJob(job, profileId, force) {
+  const ai = getAnthropic();
+  try {
+    const lib = getLibrary(profileId);
+    const todo = lib.filter((t) => force || !t.titleClean);
+    job.total = todo.length;
+    aiEmit(job, { type: 'total', total: job.total });
+    if (job.total === 0) return aiFinishOk(job, { cleaned: 0, total: 0 });
+
+    const BATCH = 25;
+    for (let start = 0; start < todo.length; start += BATCH) {
+      const chunk = todo.slice(start, start + BATCH);
+      const listText = chunk
+        .map((t, idx) => `${idx}. ${t.title}${t.uploader ? ` — chaîne: ${t.uploader}` : ''}`.slice(0, 200))
+        .join('\n');
+      try {
+        const msg = await ai.messages.create({
+          model: 'claude-haiku-4-5',
+          max_tokens: 2000,
+          system:
+            "Tu nettoies des titres YouTube de musique. Pour CHAQUE entrée numérotée, "
+            + "extrais l'ARTISTE et le TITRE propres : retire 'Official Video/Audio', "
+            + "'[Lyrics]', '(slowed + reverb)', 'HD', les emojis et autres fioritures. "
+            + "Garde le vrai nom d'artiste (pas le nom de chaîne s'il diffère). Renvoie "
+            + "une entrée par morceau avec son index `i`.",
+          messages: [{ role: 'user', content: `Nettoie ces titres :\n${listText}` }],
+          output_config: { format: { type: 'json_schema', schema: AI_CLEAN_SCHEMA } },
+        });
+        const text = (msg.content.find((b) => b.type === 'text') || {}).text || '{}';
+        const byIdx = new Map((JSON.parse(text).items || []).map((x) => [x.i, x]));
+        for (let idx = 0; idx < chunk.length; idx++) {
+          const it = byIdx.get(idx);
+          if (!it) continue;
+          const track = chunk[idx];
+          if (it.artist) track.artistClean = String(it.artist).slice(0, 120);
+          if (it.title) track.titleClean = String(it.title).slice(0, 200);
+          track.cleanedAt = Date.now();
+        }
+      } catch (e) {
+        console.error('[ai/clean] batch:', e.message);
+      }
+      job.done += chunk.length;
+      saveLibrary(profileId, lib);
+      aiEmit(job, { type: 'progress', done: job.done, total: job.total });
+    }
+    const cleaned = todo.filter((t) => !!t.titleClean).length;
+    aiFinishOk(job, { cleaned, total: job.total });
+  } catch (e) {
+    console.error('[ai/clean] job:', e.message);
+    aiFinishErr(job, 'Nettoyage échoué : ' + e.message);
+  }
+}
+
 app.get('/api/playlist-info', (req, res) => {
   const url = String(req.query.url || '').trim();
   if (!YT_REGEX.test(url)) return res.status(400).json({ error: 'URL invalide' });

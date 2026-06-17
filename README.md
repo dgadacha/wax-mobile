@@ -42,6 +42,8 @@
 - **Bibliothèque** : tes playlists, albums et artistes regroupés derrière des chips (re-tape une chip pour tout réafficher). Le "+" en haut crée une playlist (vide ou **générée par l'IA** : décris une ambiance, Claude compose la tracklist), la loupe filtre.
 - **Playlist IA** : décris un mood ("road trip années 2000", "deep work électro") → Claude Haiku propose 50 titres → Wax les retrouve sur YouTube et crée la playlist (barre de progression en direct). Nécessite une clé `ANTHROPIC_API_KEY` côté serveur (voir self-host).
 - **Analyse d'ambiance (IA)** : Réglages → "Analyser ma bibliothèque" classe chaque titre par ambiance (chill, énergie, fête, focus…) ; ensuite des chips d'ambiance apparaissent sous l'onglet "Titres" pour filtrer ta biblio par mood. Même clé `ANTHROPIC_API_KEY`.
+- **Radio infinie (IA)** : le bouton radio du player plein écran prolonge la file tout seul — quand tu approches de la fin, Claude ajoute des titres dans la même veine pour que ça ne s'arrête jamais. Même clé `ANTHROPIC_API_KEY`.
+- **Nettoyage des titres (IA)** : Réglages → "Nettoyer les titres" extrait un artiste + titre propres des titres YouTube crades ("… [slowed + reverb] (lyrics)" devient juste l'artiste et le morceau). Même clé `ANTHROPIC_API_KEY`.
 - **Réglages** (roue dentée sur l'Accueil) : thème, couleur d'accent, EQ, export/import JSON.
 - **Multi-profil** : depuis Réglages → ligne profil en haut, tu peux créer plusieurs profils. Chacun a ses propres favoris et playlists.
 
@@ -247,7 +249,7 @@ Le workflow `.github/workflows/deploy-pages.yml` peut publier `dist/` sur GitHub
 | `WAX_YT_DLP` | backend | Override du chemin `yt-dlp`. |
 | `WAX_FFMPEG` | backend | Override du chemin `ffmpeg`. |
 | `WAX_AUTH_EMAIL` / `WAX_AUTH_PASSWORD` | backend | Identifiants du gate de login. Les deux vides = pas de gate. |
-| `ANTHROPIC_API_KEY` | backend | Clé Claude pour la **génération de playlist IA** (`claude-haiku-4-5`). Absente = la fonctionnalité renvoie 503, le reste de l'app marche. Sur k8s, secret `wax-ai` / clé `anthropic-api-key` (`optional: true`). |
+| `ANTHROPIC_API_KEY` | backend | Clé Claude pour les **features IA** (`claude-haiku-4-5`) : génération de playlist, analyse d'ambiance, radio infinie, nettoyage des titres, "Pour toi" v2, portrait Wrapped. Absente = ces fonctionnalités renvoient 503, le reste de l'app marche. Sur k8s, secret `wax-ai` / clé `anthropic-api-key` (`optional: true`). |
 
 ## Architecture (résumé)
 

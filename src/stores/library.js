@@ -204,6 +204,14 @@ export const useLibraryStore = defineStore('library', {
       await this.fetch();
       return result || { tagged: 0, total: 0 };
     },
+    async cleanTitles(onProgress) {
+      const result = await runAiJob('/api/ai/clean-titles', {}, (ev) => {
+        if (ev.type === 'total') { if (onProgress) onProgress(0, ev.total); }
+        else if (ev.type === 'progress') { if (onProgress) onProgress(ev.done, ev.total); }
+      });
+      await this.fetch();
+      return result || { cleaned: 0, total: 0 };
+    },
     async add(r, opts = {}) {
       const liked = opts.liked !== false; // default true: explicit favorites
       const silent = opts.silent === true;

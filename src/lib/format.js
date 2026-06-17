@@ -65,6 +65,11 @@ const TITLE_CRUFT = /\s*[\[\(](?:slowed|reverb(?:ed)?|reverb|lyrics?|official|au
 
 export function parseTrackTitle(track) {
   if (!track) return { artist: '', song: '' };
+  // AI title cleanup (POST /api/ai/clean-titles) pre-extracts artist + title.
+  // Prefer those when present, else parse the raw YouTube title heuristically.
+  if (track.titleClean) {
+    return { artist: (track.artistClean || track.uploader || '').trim(), song: track.titleClean.trim() };
+  }
   const raw = (track.title || '').trim();
   const cleaned = raw.replace(TITLE_CRUFT, '').replace(/\s+/g, ' ').trim();
   // Most YouTube music titles use " - ", " – ", " — ", or " | " between
@@ -73,6 +78,21 @@ export function parseTrackTitle(track) {
   const m = cleaned.match(/^(.+?)\s*[-–—|]\s*(.+)$/);
   if (m) return { artist: m[1].trim(), song: m[2].trim() };
   return { artist: track.uploader || '', song: cleaned };
+}
+
+// Display helpers — what to SHOW for a track's title/artist. Prefer the AI
+// clean fields when present, else fall back to the raw YouTube title /
+// channel so un-cleaned tracks never regress. NB: never mutate title/uploader
+// themselves — they're what re-resolves the track on YouTube.
+export function displayTitle(track) {
+  if (!track) return '';
+  return (track.titleClean || track.title || '').trim();
+}
+
+export function displayArtist(track) {
+  if (!track) return '';
+  if (track.artistClean) return track.artistClean.trim();
+  return (track.uploader || '').trim();
 }
 
 // Cluster artist names that differ only by suffix (TheWeekndVEVO, The Weeknd
