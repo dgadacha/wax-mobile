@@ -7,7 +7,7 @@ Ce fichier est pour **toi, Claude futur**. Lis-le en premier à chaque session s
 **Wax** est une app musicale web/mobile :
 - **Frontend** — Vue 3 + Vite + Pinia + **Vant** (UI kit mobile) + **Lucide** icons. **UI/UX calquée sur Spotify iOS** depuis la v0.19 : palette #121212 + vert #1ED760 (thème `spotify` par défaut), police Figtree, tab bar 3 onglets, heros en dégradé tiré de la cover, action sheets plein écran avec artwork. Multi-profil (picker en cercles). **Login obligatoire** avant le choix du profil. PWA offline-capable avec service worker Workbox.
 - **Backend** — `server.cjs` (Express) qui appelle `yt-dlp` + `ffmpeg`. Stockage par profil (`library/users/<id>/`). Audio MP3 partagé entre profils.
-- **Déployé** sur Kubernetes (namespace `wax`, ingress `wax.maiz.local`) via GitLab CI, image Docker dans le registry GitLab (`registry.gitlab.com/kidnar/wax:latest`).
+- **Déployé** sur Kubernetes (namespace `wax`, ingress `wax.ton-domaine.local`) via GitLab CI, image Docker dans le registry GitLab (`registry.gitlab.com/<ton-namespace>/wax:latest`).
 
 L'utilisateur est dev senior, communique en **français**, tutoiement, style informel.
 
@@ -22,10 +22,10 @@ npm run dev          # Vite sur :5173, proxy /api → :3000
 node server.cjs      # Express sur :3000 (yt-dlp + ffmpeg sur le PATH)
 
 # Docker (build local)
-docker build -t registry.gitlab.com/kidnar/wax:latest .
-docker push registry.gitlab.com/kidnar/wax:latest
+docker build -t registry.gitlab.com/<ton-namespace>/wax:latest .
+docker push registry.gitlab.com/<ton-namespace>/wax:latest
 
-# K8s (depuis le serveur 192.168.1.3)
+# K8s (depuis le serveur <ton-serveur>)
 kubectl apply -f k8s/
 kubectl rollout restart deployment/wax -n wax
 ```
@@ -37,11 +37,11 @@ Runtime deps : `yt-dlp`, `ffmpeg`. Override avec `WAX_YT_DLP` / `WAX_FFMPEG`.
 
 ## Déploiement
 
-- **GitLab** : `gitlab.com/kidnar/wax` (groupe `kidnar`)
+- **GitLab** : `gitlab.com/<ton-namespace>/wax` (groupe `<ton-namespace>`)
 - **CI** : `.gitlab-ci.yml` — stages `build` (docker build + push) et `deploy` (kubectl via l'agent `wax-agent`). Se déclenche sur push sur `main`. Le stage deploy fait `kubectl apply -f k8s/` (tout le dossier) — ajouter un manifest suffit, pas besoin de toucher la CI.
-- **Agent K8s** : `wax-agent` (helm `gitlab/gitlab-agent`, namespace `wax`). Context kubectl dans la CI : `kidnar/wax:wax-agent`.
-- **Namespace** : `wax` sur le cluster k3s du serveur `192.168.1.3` (user `salon`).
-- **Ingress** : `wax.maiz.local` via Traefik (k3s built-in).
+- **Agent K8s** : `wax-agent` (helm `gitlab/gitlab-agent`, namespace `wax`). Context kubectl dans la CI : `<ton-namespace>/wax:wax-agent`.
+- **Namespace** : `wax` sur le cluster k3s du serveur `<ton-serveur>` (user `<user>`).
+- **Ingress** : `wax.ton-domaine.local` via Traefik (k3s built-in).
 - **Secrets K8s** :
   - `gitlab-registry` — deploy token pour puller l'image depuis le registry GitLab.
   - `wax-auth` — clés `email` + `password` pour l'auth app (injectées dans le pod via `WAX_AUTH_EMAIL` / `WAX_AUTH_PASSWORD`).
@@ -191,9 +191,9 @@ Le backend sert `dist/` à la racine et fait le fallback SPA sur `index.html`.
 - `namespace.yaml` — namespace `wax`
 - `deployment.yaml` — `replicas: 1`, `strategy: Recreate` (PVC RWO ne supporte pas le rolling update). Env vars depuis secret `wax-auth`. Pull secret `gitlab-registry`.
 - `service.yaml` — ClusterIP :80 → :3000
-- `ingress.yaml` — Traefik, host `wax.maiz.local`, entrypoint `web`
+- `ingress.yaml` — Traefik, host `wax.ton-domaine.local`, entrypoint `web`
 - `pvc.yaml` — RWO 10 Gi sur `/data` (library JSON + MP3 + covers)
-- `networkpolicy.yaml` — **Ingress** sur port 3000 : Traefik (`kube-system`, accès LAN `wax.maiz.local`) **ET** cloudflared (`cloudflared` ns, accès public `wax.nc-maiz.org` — bypass Traefik, va direct sur le Service). **Egress** : DNS CoreDNS (`kube-system:53`) + internet public HTTP/HTTPS (RFC1918 exclu). Requiert k3s ≥ v1.21.
+- `networkpolicy.yaml` — **Ingress** sur port 3000 : Traefik (`kube-system`, accès LAN `wax.ton-domaine.local`) **ET** cloudflared (`cloudflared` ns, accès public `wax.ton-domaine.org` — bypass Traefik, va direct sur le Service). **Egress** : DNS CoreDNS (`kube-system:53`) + internet public HTTP/HTTPS (RFC1918 exclu). Requiert k3s ≥ v1.21.
 
 ## File map (src/)
 
