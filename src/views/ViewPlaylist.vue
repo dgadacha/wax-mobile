@@ -1,6 +1,6 @@
 <script setup>
 import { computed } from 'vue';
-import { showConfirmDialog, showToast } from 'vant';
+import { showToast } from 'vant';
 import {
   Plus, MoreVertical, ListMusic, ArrowDownCircle, ListPlus, ListEnd,
   Sparkles, Mic2, Trash2, Pencil, Download as DownloadIcon, Eraser,
@@ -284,16 +284,12 @@ async function downloadAll() {
 
 async function deleteThis() {
   if (!playlist.value) return;
-  try {
-    await showConfirmDialog({
-      title: 'Supprimer',
-      message: `Supprimer la playlist «${playlist.value.name}» ?`,
-      confirmButtonText: 'Supprimer',
-      cancelButtonText: 'Annuler',
-      confirmButtonColor: 'var(--danger)',
-    });
-    await playlists.remove.call(playlists, playlist.value.id);
-  } catch {}
+  // playlists.remove() shows its own confirm dialog. Navigate away only
+  // when it actually deleted — otherwise this view renders an empty
+  // (black) screen on the now-null playlist. Pop back to where we came
+  // from (falls back to the library).
+  const ok = await playlists.remove.call(playlists, playlist.value.id);
+  if (ok) view.back();
 }
 </script>
 
@@ -354,6 +350,15 @@ async function deleteThis() {
       />
     </div>
 
+  </div>
+
+  <!-- Safety net: a deleted/stale playlist id must never render an empty
+       (black) screen. The back chevron lives in App.vue's nav bar. -->
+  <div v-else class="playlist-view">
+    <div class="empty-state">
+      <div class="label">Playlist introuvable</div>
+      <div class="hint">Elle a peut-être été supprimée.</div>
+    </div>
   </div>
 </template>
 
