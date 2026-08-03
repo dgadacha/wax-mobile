@@ -1,7 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { showConfirmDialog, showToast } from 'vant';
-import { Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Wand2, Moon, ChevronRight, LogOut } from 'lucide-vue-next';
+import { Download, Upload, HardDrive, RefreshCw, Trash2, Sparkles, Wand2, Moon, ChevronRight, LogOut, Check } from 'lucide-vue-next';
 import { useViewStore } from '@/stores/view';
 import { usePlayerStore } from '@/stores/player';
 import { useLibraryStore } from '@/stores/library';
@@ -262,7 +262,77 @@ const warmingSummary = ref(''); // last summary like "92 prêts · 0 erreurs"
 const warmingPct = computed(() =>
   warmingTotal.value > 0 ? Math.round((warmingDone.value / warmingTotal.value) * 100) : 0,
 );
-async function repairOfflineCache() {
+// ── "Vérifier le cache" scope picker ─────────────────────────────
+// The user can warm the whole library or just specific playlists/Favoris.
+// Scoping keeps each run small, which is the strongest defense against iOS
+// killing the tab when Cache Storage fills up (see library.warmOfflineCache):
+// one playlist at a time writes far less than the whole library at once.
+const warmPickerOpen = ref(false);
+const warmSelection = ref(new Set()); // scope keys: 'favorites' | `pl:<id>`
+const downloadedTotal = computed(() => lib.tracks.filter((t) => t.file).length);
+
+// Only scopes that actually contain downloaded (offline-able) tracks — no
+// point offering a playlist with nothing to cache.
+const warmScopes = computed(() => {
+  const scopes = [];
+  const favIds = lib.favorites.filter((t) => t.file).map((t) => t.id);
+  if (favIds.length) scopes.push({ key: 'favorites', label: 'Favoris', ids: favIds });
+  for (const pl of playlists.items) {
+    const ids = (pl.trackIds || []).filter((id) => {
+      const t = lib.findById(id);
+      return t && t.file;
+    });
+    if (ids.length) scopes.push({ key: `pl:${pl.id}`, label: pl.name, ids });
+  }
+  return scopes;
+});
+// Unique ids across ticked scopes (a track in two playlists is warmed once).
+const warmSelectedIds = computed(() => {
+  const set = new Set();
+  for (const s of warmScopes.value) {
+    if (warmSelection.value.has(s.key)) s.ids.forEach((id) => set.add(id));
+  }
+  return set;
+});
+const warmSelectedCount = computed(() => warmSelectedIds.value.size);
+const warmAllSelected = computed(
+  () => warmScopes.value.length > 0 && warmScopes.value.every((s) => warmSelection.value.has(s.key)),
+);
+const warmConfirmLabel = computed(() =>
+  warmSelectedCount.value
+    ? `Vérifier ${warmSelectedCount.value} titre${warmSelectedCount.value > 1 ? 's' : ''}`
+    : 'Vérifier',
+);
+function toggleWarmScope(key) {
+  haptics.light();
+  const next = new Set(warmSelection.value);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  warmSelection.value = next;
+}
+function toggleWarmAll() {
+  haptics.light();
+  warmSelection.value = warmAllSelected.value
+    ? new Set()
+    : new Set(warmScopes.value.map((s) => s.key));
+}
+function openWarmPicker() {
+  if (warming.value) return;
+  haptics.light();
+  warmSelection.value = new Set();
+  warmPickerOpen.value = true;
+}
+function confirmWarmSelection() {
+  const ids = [...warmSelectedIds.value];
+  if (!ids.length) return;
+  warmPickerOpen.value = false;
+  repairOfflineCache(ids);
+}
+function warmEverything() {
+  warmPickerOpen.value = false;
+  repairOfflineCache(null);
+}
+
+async function repairOfflineCache(trackIds = null) {
   if (warming.value) return;
   warming.value = true;
   warmingProgress.value = '';
@@ -275,16 +345,20 @@ async function repairOfflineCache() {
       warmingDone.value = done;
       warmingTotal.value = total;
       warmingProgress.value = total > 0 ? `${done}/${total}` : '';
-    });
+    }, trackIds);
     await refreshStorage();
     // Detailed summary — important to surface failures so the user
-    // knows when the server has lost a file.
+    // knows when the server has lost a file or the cache is full.
     const parts = [`${result.cacheEntries} en cache`];
     if (result.fetched > 0) parts.push(`+${result.fetched} pré-téléchargés`);
     if (result.failed > 0) parts.push(`${result.failed} échec${result.failed > 1 ? 's' : ''}`);
-    // The warmer caps each run (iOS memory safety) — tell the user to
-    // re-tap when there's more to do.
-    if (result.remaining > 0) parts.push(`${result.remaining} restant${result.remaining > 1 ? 's' : ''} · re-tape pour continuer`);
+    if (result.quotaHit) {
+      parts.push('stockage plein — vide le cache ou libère de l\'espace');
+    } else if (result.remaining > 0) {
+      // The warmer caps each run (iOS memory safety) — tell the user to
+      // re-tap when there's more to do.
+      parts.push(`${result.remaining} restant${result.remaining > 1 ? 's' : ''} · re-tape pour continuer`);
+    }
     warmingSummary.value = parts.join(' · ');
     showToast({ message: warmingSummary.value, position: 'bottom' });
   } catch (e) {
@@ -668,9 +742,9 @@ async function onLogout() {
 
       <van-cell
         :title="warming ? 'Vérification en cours' : 'Vérifier le cache'"
-        :value="warming ? warmingProgress : (warmingSummary || 'Re-télécharger les manquants')"
+        :value="warming ? warmingProgress : (warmingSummary || 'Choisir quoi mettre hors-ligne')"
         is-link
-        @click="repairOfflineCache"
+        @click="openWarmPicker"
       >
         <template #icon>
           <RefreshCw
@@ -700,6 +774,60 @@ async function onLogout() {
         </template>
       </van-cell>
     </van-cell-group>
+
+    <!-- Scope picker for "Vérifier le cache": warm the whole library or just
+         chosen playlists/Favoris. Small scoped runs are the safest on iOS. -->
+    <van-popup
+      v-model:show="warmPickerOpen"
+      position="bottom"
+      round
+      teleport="body"
+      class="warm-picker-popup"
+    >
+      <div class="warm-picker">
+        <div class="warm-picker-title">Mettre hors-ligne</div>
+        <div class="warm-picker-sub">
+          Vérifie et re-télécharge les titres manquants. Sur iPhone, préfère
+          une playlist à la fois si l'app plante.
+        </div>
+
+        <button class="warm-all-btn" @click="warmEverything">
+          <span class="warm-all-label">Toute la bibliothèque</span>
+          <span class="warm-all-count">{{ downloadedTotal }} titre{{ downloadedTotal > 1 ? 's' : '' }}</span>
+        </button>
+
+        <div v-if="warmScopes.length" class="warm-or">ou une sélection</div>
+
+        <div v-if="warmScopes.length" class="warm-scope-list">
+          <button
+            v-for="s in warmScopes"
+            :key="s.key"
+            class="warm-scope-row"
+            :class="{ active: warmSelection.has(s.key) }"
+            @click="toggleWarmScope(s.key)"
+          >
+            <span class="warm-scope-check">
+              <Check v-if="warmSelection.has(s.key)" :size="13" :stroke-width="3.5" />
+            </span>
+            <span class="warm-scope-label">{{ s.label }}</span>
+            <span class="warm-scope-count">{{ s.ids.length }}</span>
+          </button>
+        </div>
+
+        <div class="warm-picker-foot">
+          <button
+            v-if="warmScopes.length"
+            class="warm-selectall-btn"
+            @click="toggleWarmAll"
+          >{{ warmAllSelected ? 'Tout décocher' : 'Tout cocher' }}</button>
+          <button
+            class="warm-confirm-btn"
+            :disabled="warmSelectedCount === 0"
+            @click="confirmWarmSelection"
+          >{{ warmConfirmLabel }}</button>
+        </div>
+      </div>
+    </van-popup>
 
     <van-cell-group inset title="Sauvegarde">
       <van-cell
@@ -1017,5 +1145,139 @@ async function onLogout() {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+/* ── "Vérifier le cache" scope picker ── */
+.warm-picker-popup {
+  background: #1c1c1e;
+  color: var(--text);
+}
+.warm-picker {
+  padding: 22px 18px calc(18px + var(--safe-bottom));
+}
+.warm-picker-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+}
+.warm-picker-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.warm-all-btn {
+  margin-top: 18px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 15px;
+  font-weight: 700;
+}
+.warm-all-count {
+  font-weight: 600;
+  opacity: 0.82;
+  font-variant-numeric: tabular-nums;
+}
+.warm-or {
+  margin: 18px 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+.warm-scope-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 42vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.warm-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.warm-scope-check {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--on-accent);
+  transition: background 0.12s, border-color 0.12s;
+}
+.warm-scope-row.active .warm-scope-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.warm-scope-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.warm-scope-count {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.warm-picker-foot {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.warm-selectall-btn {
+  flex: 0 0 auto;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.warm-confirm-btn {
+  flex: 1 1 auto;
+  padding: 13px 16px;
+  border-radius: 10px;
+  border: none;
+  background: #fff;
+  color: #000;
+  font-size: 15px;
+  font-weight: 700;
+}
+.warm-confirm-btn:disabled {
+  opacity: 0.4;
+}
+@media (min-width: 600px) {
+  .warm-picker-popup {
+    max-width: var(--app-col);
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+  }
 }
 </style>

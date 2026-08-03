@@ -396,7 +396,7 @@ export const useLibraryStore = defineStore('library', {
     // Returns `{ total, hits, fetched, failed, cacheEntries }` so
     // callers can show real feedback to the user instead of fake
     // "Préparation…" then no visible change.
-    async warmOfflineCache(onProgress) {
+    async warmOfflineCache(onProgress, trackIds = null) {
       const result = { total: 0, hits: 0, fetched: 0, failed: 0, cacheEntries: 0 };
       if (typeof caches === 'undefined') return result;
       if (typeof navigator !== 'undefined' && !navigator.onLine) return result;
@@ -408,7 +408,16 @@ export const useLibraryStore = defineStore('library', {
         return result;
       }
 
-      const downloaded = this.tracks.filter((tr) => tr.file);
+      // Optional scope: restrict to a set of track ids (e.g. the user picked
+      // specific playlists to verify). null/undefined = the whole library.
+      // Scoping the run is also the strongest crash mitigation on iOS — a
+      // 15-track playlist writes far less to Cache Storage in one go than
+      // 90+ tracks, so the user can warm what fits instead of blowing the quota.
+      let downloaded = this.tracks.filter((tr) => tr.file);
+      if (trackIds) {
+        const wanted = trackIds instanceof Set ? trackIds : new Set(trackIds);
+        downloaded = downloaded.filter((tr) => wanted.has(tr.id));
+      }
       result.total = downloaded.length;
 
       // Check which ones are already in cache. Don't re-fetch hits.
@@ -481,44 +490,76 @@ export const useLibraryStore = defineStore('library', {
           // workers. Guard it (a harmless no-op at POOL=1).
           if (i >= missing.length) break;
           const tr = missing[i];
+          const url = apiUrl(tr.file);
+          const breathe = () => new Promise((r) => setTimeout(r, BREATH_MS));
+          // Bypass the SW's CacheFirst rule for /audio/*.mp3 by fetching a
+          // query-string variant — its regex is $-anchored on `.mp3`, so
+          // `?warm=1` dodges it (and every other rule; they're all /api/*).
+          // WHY THIS MATTERS: without it, the SW ALSO intercepts this fetch
+          // and Workbox CacheFirst does its own `response.clone()` + cache.put
+          // — so each warm buffers the whole MP3 TWICE (SW clone tee + our
+          // put) and writes it to wax-audio TWICE, same bytes. That invisible
+          // SW-side clone is the exact tee-branch OOM the 0.19.12 fix removed
+          // on the page side but left running in the worker — which is why
+          // cutting POOL (0.19.13) never fully fixed the crash. We stay the
+          // SINGLE writer, storing under the clean `url` that playback
+          // (resolvePlayUrl → cache.match, ignoreSearch) looks up.
+          const fetchUrl = url + (url.includes('?') ? '&' : '?') + 'warm=1';
+          let res;
           try {
-            const url = apiUrl(tr.file);
-            // Bypass the SW's CacheFirst rule for /audio/*.mp3 by fetching a
-            // query-string variant — its regex is $-anchored on `.mp3`, so
-            // `?warm=1` dodges it (and every other rule; they're all /api/*).
-            // WHY THIS MATTERS: without it, the SW ALSO intercepts this fetch
-            // and Workbox CacheFirst does its own `response.clone()` + cache.put
-            // — so each warm buffers the whole MP3 TWICE (SW clone tee + our
-            // put) and writes it to wax-audio TWICE, same bytes. That invisible
-            // SW-side clone is the exact tee-branch OOM the 0.19.12 fix removed
-            // on the page side but left running in the worker — which is why
-            // cutting POOL (0.19.13) never fully fixed the crash. We stay the
-            // SINGLE writer, storing under the clean `url` that playback
-            // (resolvePlayUrl → cache.match, ignoreSearch) looks up.
-            const fetchUrl = url + (url.includes('?') ? '&' : '?') + 'warm=1';
-            const res = await fetch(fetchUrl, { cache: 'reload' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const len = parseInt(res.headers.get('content-length') || '0', 10) || 8 * 1024 * 1024;
-            // Pass `res` DIRECTLY — never `res.clone()` (cloning buffers the
-            // whole MP3 in JS memory; OOM). cache.put consumes the stream once.
-            await cache.put(url, res);
-            result.fetched++;
-            bytesThisRun += len;
-            if (bytesThisRun >= MAX_BYTES_PER_RUN) stopped = true; // hit the per-run ceiling
+            res = await fetch(fetchUrl, { cache: 'reload' });
           } catch (e) {
-            console.warn('[warmer] failed for', tr.title, e?.message || e);
+            // Network blip / went offline mid-run. The file is still
+            // downloaded server-side, so DON'T drop tr.file — just count it.
+            console.warn('[warmer] fetch failed for', tr.title, e?.message || e);
             result.failed++;
-            // Server may have lost the file (PVC wipe, server-side
-            // delete). Drop t.file locally so the UI reflects reality.
+            report();
+            await breathe();
+            continue;
+          }
+          if (res.status === 404) {
+            // File truly gone server-side (PVC wipe / server-side delete).
+            // THIS is the only case where dropping tr.file is correct.
+            console.warn('[warmer] 404 — dropping local file for', tr.title);
+            result.failed++;
             try {
               const live = store.findById(tr.id);
               if (live && live.file) live.file = null;
             } catch {}
+            report();
+            await breathe();
+            continue;
           }
+          if (!res.ok) {
+            console.warn('[warmer] HTTP', res.status, 'for', tr.title);
+            result.failed++;
+            report();
+            await breathe();
+            continue;
+          }
+          const len = parseInt(res.headers.get('content-length') || '0', 10) || 8 * 1024 * 1024;
+          try {
+            // Pass `res` DIRECTLY — never `res.clone()` (cloning buffers the
+            // whole MP3 in JS memory; OOM). cache.put consumes the stream once.
+            await cache.put(url, res);
+          } catch (e) {
+            // Almost always QuotaExceededError on iOS (Cache Storage full).
+            // Stop the run GRACEFULLY instead of pushing until WebKit kills
+            // the tab — and DON'T drop tr.file (the download is fine, we just
+            // can't cache more right now). The rest waits for a later run or
+            // the on-play CacheFirst rule.
+            console.warn('[warmer] cache.put failed (quota?) — stopping', e?.message || e);
+            result.quotaHit = true;
+            stopped = true;
+            break;
+          }
+          result.fetched++;
+          bytesThisRun += len;
+          if (bytesThisRun >= MAX_BYTES_PER_RUN) stopped = true; // hit the per-run ceiling
           report();
           // Breathe: yield the event loop so WebKit can flush the cache
           // write + reclaim memory before the next big fetch.
-          await new Promise((r) => setTimeout(r, BREATH_MS));
+          await breathe();
         }
       }
       await Promise.all(Array.from({ length: POOL }, () => worker()));
