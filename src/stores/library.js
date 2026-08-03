@@ -430,13 +430,16 @@ export const useLibraryStore = defineStore('library', {
 
       // GENTLE on purpose. Pre-caching MP3s on iOS Safari is the most
       // memory/storage-sensitive thing the app does: each file is ~5-12 MB,
-      // and caching dozens in a burst spikes memory + Cache Storage faster
-      // than WebKit reclaims it, which CRASHES the tab (white screen → the
-      // SW reloads → the user's seen "Vérifier le cache" kill the app).
-      // So we go nearly-sequential, breathe between files to let WebKit
-      // flush/GC, and stop before the storage quota overflows (iOS crashes
-      // on overflow rather than throwing).
-      const POOL = 2;
+      // and caching them faster than WebKit reclaims memory CRASHES the tab
+      // (white screen → SW reloads → the user's seen "Vérifier le cache" kill
+      // the app). So we go STRICTLY sequential (POOL=1 — a single full-file
+      // buffer in flight, ever), breathe between files to let WebKit flush/GC,
+      // and stop before the storage quota overflows (iOS crashes on overflow
+      // rather than throwing). Combined with the SW-bypass fetch below (which
+      // removes the invisible double-buffering), peak transient memory is one
+      // MP3. ⛔ Do NOT raise POOL back up — cutting it 6→4→2 across two prior
+      // "fixes" never stopped the crash because the real leak was the SW clone.
+      const POOL = 1;
       const BREATH_MS = 120; // pause after each file so WebKit can reclaim
       // Hard ceiling per click: never try to cache more than this in one
       // run, regardless of how big the offline library is. iOS Safari
@@ -472,18 +475,32 @@ export const useLibraryStore = defineStore('library', {
           // run (or for the on-play CacheFirst rule) instead of crashing.
           if (!(await storageHeadroomOk())) { stopped = true; break; }
           const i = idx++;
-          // POOL workers share `idx`; the while-check + idx++ aren't atomic
-          // across the awaits, so a worker can grab an index past the end
-          // when fewer items remain than workers. Guard it.
+          // If POOL is ever raised >1, workers share `idx` and the
+          // while-check + idx++ aren't atomic across the awaits, so a worker
+          // can grab an index past the end when fewer items remain than
+          // workers. Guard it (a harmless no-op at POOL=1).
           if (i >= missing.length) break;
           const tr = missing[i];
           try {
             const url = apiUrl(tr.file);
-            const res = await fetch(url, { cache: 'reload' });
+            // Bypass the SW's CacheFirst rule for /audio/*.mp3 by fetching a
+            // query-string variant — its regex is $-anchored on `.mp3`, so
+            // `?warm=1` dodges it (and every other rule; they're all /api/*).
+            // WHY THIS MATTERS: without it, the SW ALSO intercepts this fetch
+            // and Workbox CacheFirst does its own `response.clone()` + cache.put
+            // — so each warm buffers the whole MP3 TWICE (SW clone tee + our
+            // put) and writes it to wax-audio TWICE, same bytes. That invisible
+            // SW-side clone is the exact tee-branch OOM the 0.19.12 fix removed
+            // on the page side but left running in the worker — which is why
+            // cutting POOL (0.19.13) never fully fixed the crash. We stay the
+            // SINGLE writer, storing under the clean `url` that playback
+            // (resolvePlayUrl → cache.match, ignoreSearch) looks up.
+            const fetchUrl = url + (url.includes('?') ? '&' : '?') + 'warm=1';
+            const res = await fetch(fetchUrl, { cache: 'reload' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const len = parseInt(res.headers.get('content-length') || '0', 10) || 8 * 1024 * 1024;
             // Pass `res` DIRECTLY — never `res.clone()` (cloning buffers the
-            // whole MP3 in JS memory; OOM). `cache.put` streams to storage.
+            // whole MP3 in JS memory; OOM). cache.put consumes the stream once.
             await cache.put(url, res);
             result.fetched++;
             bytesThisRun += len;
